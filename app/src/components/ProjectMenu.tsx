@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { appBridge } from '../transport.ts';
-import { openSettings } from '../store.ts';
+import { openBackups, openSettings } from '../store.ts';
 import type { AppState } from '../transport.ts';
 
 import { configName } from '../lib/configName.ts';
@@ -53,6 +53,7 @@ export function ProjectMenu({ file }: { file: string | null }) {
           ))}
           <div className="ms" />
           <div className="mi" onClick={() => act('reveal')}>在文件夹中显示配置文件</div>
+          <div className="mi" onClick={() => { setOpen(false); openBackups(); }}>从备份恢复…</div>
           <div className="ms" />
           <div className="mi" onClick={() => { setOpen(false); openSettings(); }}>设置…（网卡、开机自启）</div>
           <div className="ms" />

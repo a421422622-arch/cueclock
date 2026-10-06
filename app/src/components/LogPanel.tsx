@@ -175,6 +175,7 @@ function Issues() {
 }
 
 function TestSend() {
+  const locked = useStore((s) => s.lock.enabled && !s.lock.unlocked);
   const project = useStore((s) => s.project)!;
   const [dev, setDev] = useState<string>('');
   const [ip, setIp] = useState('127.0.0.1');
@@ -198,7 +199,7 @@ function TestSend() {
   };
 
   return (
-    <div className="testsend">
+    <div className="testsend" inert={locked}>
       <span className="dim">测试发送</span>
       <select value={dev} onChange={(e) => { setDev(e.target.value); const d = project.devices.find((x) => x.id === e.target.value); if (d) { setFormat(d.format ?? 'ascii'); setTerm(d.terminator ?? 'none'); } }}>
         <option value="">自定义 IP…</option>

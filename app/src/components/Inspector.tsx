@@ -14,6 +14,7 @@ import { deviceColor, modeColor } from '../lib/colors.ts';
 
 export function Inspector() {
   const sel = useStore((s) => s.sel);
+  const locked = useStore((s) => s.lock.enabled && !s.lock.unlocked);
   const project = useStore((s) => s.project)!;
   let title = '检查器';
   let body: React.ReactNode = <div className="empty big">选中模式、目标或事件点进行编辑。双击目标小时间轴可以为该目标新建事件点。</div>;
@@ -46,7 +47,7 @@ export function Inspector() {
   return (
     <section className="insp">
       <h3>{title}</h3>
-      <div className="ibody">{body}</div>
+      <div className="ibody" inert={locked}>{body}</div>
     </section>
   );
 }

@@ -378,3 +378,9 @@ select.warnb { border-color: var(--warn); }
 .alrow .ts, .alrow .det, .alrow .subj { color: var(--muted); }
 .alrow .code { color: var(--ink); font-weight: 500; }
 .alrow .lv.error { color: var(--err); } .alrow .lv.warn { color: var(--warn); } .alrow .lv.info { color: var(--ok); }
+
+/* 编辑锁与备份 */
+.lockpill { color: var(--warn); border-color: #6b4a10; background: #2a1f0a; font-weight: 600; }
+.ibody[inert], .testsend[inert] { opacity: .55; }
+.bkrow { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--s2); }
+.modal input[type=password] { width: 100%; }

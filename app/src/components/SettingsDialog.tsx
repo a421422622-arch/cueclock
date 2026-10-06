@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { NetworkSettings, NicInfo } from '@engine/network.ts';
-import { closeSettings, rpc, toast, useStore } from '../store.ts';
+import { closeSettings, lockNow, openBackups, openUnlock, removeLockPassword, rpc, setLockPassword, toast, useStore } from '../store.ts';
+import { checkNewPassword } from '../lib/lockUi.ts';
 import { appBridge } from '../transport.ts';
 import type { AppState } from '../transport.ts';
 import { RpcFailure } from '../transport.ts';
@@ -25,6 +26,8 @@ export function SettingsDialog() {
           <EngineVersionSection />
           <NetworkSection />
           <StartupSection />
+          <LockSection />
+          <BackupSection />
         </div>
         <div className="mf"><button onClick={closeSettings}>关闭</button></div>
       </div>
@@ -196,6 +199,75 @@ function StartupSection() {
           </Field>
         </div>
       )}
+    </>
+  );
+}
+
+
+// ───────────── 编辑锁 ─────────────
+
+function LockSection() {
+  const lock = useStore((s) => s.lock);
+  const [cur, setCur] = useState('');
+  const [pw, setPw] = useState('');
+  const [pw2, setPw2] = useState('');
+  const [msg, setMsg] = useState<{ text: string; bad: boolean } | null>(null);
+  const locked = lock.enabled && !lock.unlocked;
+  const clear = () => { setCur(''); setPw(''); setPw2(''); };
+
+  const save = async () => {
+    const bad = checkNewPassword(pw, pw2);
+    if (bad) return setMsg({ text: bad, bad: true });
+    const err = await setLockPassword(pw, lock.enabled ? cur : undefined);
+    setMsg(err ? { text: err, bad: true } : { text: lock.enabled ? '密码已修改' : '编辑锁已启用', bad: false });
+    if (!err) clear();
+  };
+  const remove = async () => {
+    if (!window.confirm('移除编辑锁？之后任何人都能修改配置。')) return;
+    const err = await removeLockPassword(cur);
+    setMsg(err ? { text: err, bad: true } : { text: '编辑锁已移除', bad: false });
+    if (!err) clear();
+  };
+
+  return (
+    <>
+      <div className="sech" style={{ marginTop: 16 }}>编辑锁</div>
+      <div className="hint pad">
+        防止别人随手改日程。上锁后只能查看和急停，修改配置、测试发送、切换配置、停止引擎都要先输入密码；界面闲置 10 分钟自动重新上锁。
+        密码只存加盐哈希、保存在这台电脑上；忘记密码时，先停掉引擎，再运行 <code>node src/cli.ts reset-lock</code>。
+      </div>
+      {locked ? (
+        <div className="row" style={{ gap: 8 }}>
+          <span className="hint">当前已锁定（要修改密码需先解锁）</span>
+          <button onClick={openUnlock}>解锁…</button>
+        </div>
+      ) : (
+        <div className="form wide">
+          {lock.enabled && <Field label="当前密码"><input type="password" value={cur} onChange={(e) => setCur(e.target.value)} /></Field>}
+          <Field label={lock.enabled ? '新密码' : '设置密码'}><input type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="至少 4 个字符" /></Field>
+          <Field label="再输一次"><input type="password" value={pw2} onChange={(e) => setPw2(e.target.value)} /></Field>
+          <Field label="">
+            <span className="row">
+              <button className="primary" disabled={!pw} onClick={save}>{lock.enabled ? '修改密码' : '启用编辑锁'}</button>
+              {lock.enabled && <button onClick={() => void lockNow()}>立即锁定</button>}
+              {lock.enabled && <button className="danger" disabled={!cur} onClick={remove}>移除编辑锁</button>}
+              {msg && <span className={`hint ${msg.bad ? 'err' : 'okc'}`}>{msg.text}</span>}
+            </span>
+          </Field>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ───────────── 配置备份 ─────────────
+
+function BackupSection() {
+  return (
+    <>
+      <div className="sech" style={{ marginTop: 16 }}>配置备份</div>
+      <div className="hint pad">每次保存前自动备份旧版本（至少间隔 1 分钟，保留 30 份）。改坏了可以恢复到之前的样子。</div>
+      <button onClick={openBackups}>从备份恢复…</button>
     </>
   );
 }

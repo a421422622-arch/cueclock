@@ -91,6 +91,7 @@ export interface AppBridge {
   appState(): Promise<AppState>;
   appAction(name: string, arg?: unknown): Promise<void>;
   onAppState(cb: () => void): () => void;
+  onNeedUnlock(cb: () => void): () => void;
 }
 
 declare global {

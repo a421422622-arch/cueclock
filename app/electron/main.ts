@@ -148,7 +148,27 @@ function showWindow(): void {
   win.focus();
 }
 
+/**
+ * 编辑锁：被锁住时，需要写权限的操作（切换配置、重启/停止引擎）先提示去解锁，
+ * 而不是先弹确认框、确认之后才失败——尤其「退出并停止引擎」会先退出界面，引擎却因被锁没停，会误导用户。
+ */
+async function ensureUnlocked(what: string): Promise<boolean> {
+  try {
+    const s = (await client?.request('lockStatus')) as { enabled: boolean; unlocked: boolean } | undefined;
+    if (s?.enabled && !s.unlocked) {
+      showWindow();
+      sendToWindow('app:need-unlock');
+      await dialog.showMessageBox({ type: 'info', message: `编辑已锁定，不能${what}`, detail: '请先在界面里输入编辑锁密码解锁。查看和急停不受影响。', buttons: ['好'] });
+      return false;
+    }
+  } catch {
+    /* 旧版引擎没有编辑锁：放行 */
+  }
+  return true;
+}
+
 async function quitAndStopEngine(skipConfirm = false): Promise<void> {
+  if (!(await ensureUnlocked('停止引擎'))) return;
   if (!skipConfirm) {
     const r = await dialog.showMessageBox({
       type: 'warning',
@@ -173,11 +193,11 @@ async function quitAndStopEngine(skipConfirm = false): Promise<void> {
 const actions: MenuActions & { togglePause(): void } = {
   newProject: () => {
     if (engineUpdate && !engineUpdate.compatible) { void dialog.showMessageBox({ message: '界面与引擎协议不兼容，请先确认重启引擎，再新建配置' }); return; }
-    void newProject(deps()).then((ok) => (ok ? refreshFromEngine() : undefined));
+    void ensureUnlocked('新建配置').then((ok) => (ok ? newProject(deps()) : false)).then((ok) => (ok ? refreshFromEngine() : undefined));
   },
   openProject: (file) => {
     if (engineUpdate && !engineUpdate.compatible) { void dialog.showMessageBox({ message: '界面与引擎协议不兼容，请先确认重启引擎，再切换配置' }); return; }
-    void openProject(deps(), file).then((ok) => (ok ? refreshFromEngine() : undefined));
+    void ensureUnlocked('切换配置').then((ok) => (ok ? openProject(deps(), file) : false)).then((ok) => (ok ? refreshFromEngine() : undefined));
   },
   reveal: () => revealProject(lastStatus?.daemon.projectFile ?? null),
   setKeepInTray: (v) => {
@@ -251,6 +271,7 @@ ipcMain.handle('app:action', async (_e, name: string, arg?: unknown) => {
   switch (name) {
     case 'restartEngine': {
       if (!client?.connected) throw new Error('引擎未连接，无法安全重启');
+      if (!(await ensureUnlocked('重启引擎'))) return;
       const options = {
         type: 'warning' as const, message: '确认重启引擎？',
         detail: '将短暂停止调度并加载当前版本。当前项目和急停状态会保留；执行中的触发动作和回包等待可能中断。',

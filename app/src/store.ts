@@ -11,6 +11,7 @@ export interface DaemonStatus {
   protocol: number;
   daemon: { pid: number; projectFile: string; rev: number; startError: string | null; notice: string | null };
   engine: EngineStatus | null;
+  lock?: { enabled: boolean };
   network?: { settings: { localAddresses?: string[]; localPort?: number; listenAll?: boolean }; source: string; missing: string[]; available: boolean };
 }
 
@@ -45,6 +46,10 @@ export interface AppState {
   canRedo: boolean;
   view: View;
   settingsOpen: boolean;
+  /** 编辑锁：enabled=引擎里设了密码；unlocked=本连接已解锁。锁定时只读（查看、急停仍可用） */
+  lock: { enabled: boolean; unlocked: boolean };
+  unlockOpen: boolean;
+  backupOpen: boolean;
   /** 日志区当前页签；顶栏告警徽标要能直接切过去 */
   logTab: 'log' | 'alerts' | 'issues';
   /** 磁盘上的历史告警（最近 7 天）；实时告警在 logs 里 */
@@ -85,6 +90,9 @@ let state: AppState = {
   canRedo: false,
   view: 'timeline',
   settingsOpen: false,
+  lock: { enabled: false, unlocked: true },
+  unlockOpen: false,
+  backupOpen: false,
   logTab: 'log',
   alertHistory: [],
   alertsSeenAt: readSeenAt(),
@@ -146,6 +154,7 @@ function readDraft(): { at: number; project: Project } | null {
 /** 恢复草稿：作为本地修改载入，随后照常尝试保存（仍有错误会在「问题」里显示）。 */
 export function restoreDraft(): void {
   if (state.engineUpdate && !state.engineUpdate.compatible) { toast('界面与引擎协议不兼容，请先确认重启引擎，再恢复本地草稿'); return; }
+  if (isLocked()) { denyLocked(); return; }
   const d = state.draftOffer;
   if (!d) return;
   if (state.project) history.record(snapshot());
@@ -165,7 +174,17 @@ let editVersion = 0; // 每次本地编辑 +1
 let savedVersion = 0; // 已成功保存的版本
 let projectSession = 0; // 防止项目切换后旧保存响应改写新项目状态
 
+export const isLocked = (): boolean => state.lock.enabled && !state.lock.unlocked;
+
+/** 被锁定时的统一提示：弹出解锁框。 */
+function denyLocked(): void {
+  toast('编辑已锁定：请先输入密码解锁（查看和急停不受影响）');
+  set({ unlockOpen: true });
+}
+
 function applyStatus(st: DaemonStatus): void {
+  // 引擎状态里带着「是否设了密码」；密码被移除时本连接自然变成已解锁
+  if (st.lock && st.lock.enabled !== state.lock.enabled) set({ lock: { enabled: st.lock.enabled, unlocked: st.lock.enabled ? state.lock.unlocked : true } });
   const now = st.engine?.now;
   set({ status: { ...st, engine: normalizeEngineStatus(st.engine) }, ...(now ? { clockOffset: now - Date.now() } : {}) });
 }
@@ -186,6 +205,7 @@ async function loadAll(): Promise<void> {
     ...(changedFile ? { sel: null, modeId: null, followActive: true } : {}) });
   applyStatus(st);
   void loadAlertHistory();
+  void refreshLock();
   // 有没有上次遗留的、没能保存的草稿？内容和引擎里的一样就没必要提示
   const draft = readDraft();
   if (draft && JSON.stringify(draft.project) !== JSON.stringify(project)) set({ draftOffer: draft });
@@ -213,7 +233,10 @@ export async function init(): Promise<void> {
   }
   transport.onConnection((c) => {
     set({ conn: c ? 'connected' : 'disconnected' });
-    if (c) void resync().catch(() => {});
+    if (c) {
+      void resync().catch(() => {});
+      void refreshLock(); // 重连后是新连接，解锁状态要重新问
+    }
   });
   transport.onEvent((event, data) => {
     if (event === 'log') {
@@ -275,6 +298,9 @@ async function save(): Promise<void> {
     if (e instanceof RpcFailure && e.code === 'invalid-project') {
       set({ issues: e.details as Issue[], saveState: 'error' });
       writeDraft(); // 有错误，引擎不会收；本地留一份草稿，免得关窗口丢失
+    } else if (e instanceof RpcFailure && e.code === 'locked') {
+      // 保存途中被自动锁定了：修改仍在草稿里，解锁后会自动继续保存
+      set({ lock: { enabled: true, unlocked: false }, saveState: 'dirty', unlockOpen: true });
     } else if (e instanceof RpcFailure && e.code === 'conflict') {
       set({ saveState: 'conflict' });
     } else {
@@ -295,6 +321,7 @@ async function save(): Promise<void> {
 export function edit(fn: (draft: Project) => void): void {
   if (!state.project) return;
   if (state.engineUpdate && !state.engineUpdate.compatible) { toast('界面与引擎协议不兼容，请先确认重启引擎后再编辑'); return; }
+  if (isLocked()) { denyLocked(); return; }
   const next = structuredClone(state.project);
   fn(next);
   if (JSON.stringify(next) === JSON.stringify(state.project)) return;
@@ -316,6 +343,7 @@ export const undo = () => state.project && editable() && restoreEdit(history.und
 export const redo = () => state.project && editable() && restoreEdit(history.redo(snapshot()));
 /** 协议不兼容时不允许编辑（保存会被拦截）；仅构建不同则照常。 */
 function editable(): boolean {
+  if (isLocked()) { denyLocked(); return false; }
   return !state.engineUpdate || state.engineUpdate.compatible;
 }
 
@@ -361,6 +389,40 @@ export function markAlertsSeen(): void {
   }
   set({ alertsSeenAt: t });
 }
+export async function refreshLock(): Promise<void> {
+  try {
+    set({ lock: await transport.request<{ enabled: boolean; unlocked: boolean }>('lockStatus') });
+  } catch {
+    set({ lock: { enabled: false, unlocked: true } }); // 旧版引擎没有编辑锁
+  }
+}
+
+/** 返回错误信息；成功返回 null。 */
+async function lockCall(method: string, params?: unknown): Promise<string | null> {
+  try {
+    set({ lock: await transport.request<{ enabled: boolean; unlocked: boolean }>(method, params) });
+    return null;
+  } catch (e) {
+    return e instanceof RpcFailure ? e.message : (e as Error).message;
+  }
+}
+
+export async function unlock(password: string): Promise<string | null> {
+  const err = await lockCall('unlock', { password });
+  if (!err) {
+    set({ unlockOpen: false });
+    if (state.saveState === 'dirty') scheduleSave(0); // 锁定期间没能保存的修改，解锁后继续保存
+  }
+  return err;
+}
+export const lockNow = () => lockCall('lock');
+export const setLockPassword = (password: string, current?: string) => lockCall('setPassword', { password, current });
+export const removeLockPassword = (password: string) => lockCall('removePassword', { password });
+export const openUnlock = () => set({ unlockOpen: true });
+export const closeUnlock = () => set({ unlockOpen: false });
+export const openBackups = () => set({ backupOpen: true });
+export const closeBackups = () => set({ backupOpen: false });
+
 export async function loadAlertHistory(): Promise<void> {
   try {
     set({ alertHistory: await transport.request<LogEntry[]>('getAlerts', { days: 7, limit: 500 }) });

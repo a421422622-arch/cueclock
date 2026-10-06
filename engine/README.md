@@ -54,6 +54,11 @@ node bench/jitter.ts 200 6                                 # 毫秒抖动实测
 - 网络设置是机器级的（`settings.json` 的 `network`），优先于项目里的旧 `settings.localAddress`。发送套接字绑定失败（网卡不存在/端口被占）时引擎不运行，并按 `retryMs`（默认 5 秒）重试直到成功；`setNetwork` 会重启引擎。
 - 急停：暂停期间到点的事件、收到的触发、启动时的断电恢复都不执行并写日志；手动测试发送、手动执行事件点不受影响；恢复后不补发。**急停状态持久化**在 `settings.json`，引擎/daemon 重启后仍保持，需手动恢复。
 
+## 编辑锁与备份
+
+`lock.ts`：密码加盐 scrypt 哈希存 `settings.json`；锁定时**默认拒绝**，只放行 `LOCKED_ALLOWED`（查看 + 急停）；解锁状态每连接独立；5 次输错锁 30 秒。RPC：`lockStatus` `unlock` `lock` `setPassword` `removePassword`；错误码 `locked` `bad-password` `too-many-attempts`。CLI：`reset-lock`。
+备份：`listBackups`、`restoreBackup`（恢复前强制备份当前；文件名校验；有错误的备份拒绝）。
+
 ## 告警
 
 `LogEntry.alert`（类型/级别/对象）。回包重试用尽才记一条；设备连续 `settings.alerts.offlineAfter`（默认 3）次最终失败判离线，只在状态变化时记一条，收到有效回包记恢复。告警走 `Engine.alert()` 单一出口，随日志按天写盘；RPC `getAlerts` 读最近 N 天。目前**只记录，不对外发送**。
