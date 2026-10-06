@@ -318,6 +318,7 @@ function DeviceInspector({ id }: { id: string }) {
         <Field label="启用"><Check checked={d.enabled !== false} onChange={(v) => patch((x) => (x.enabled = v))} label="参与发送（关闭后动作跳过此设备）" /></Field>
       </div>
       <HealthSection device={d} patch={patch} />
+      <FeedbackSection device={d} patch={patch} />
       <div className="sech">测试发送</div>
       <div className="form">
         <Field label="端口"><NumInput value={testPort} min={1} max={65535} width={80} allowEmpty onChange={setTestPort} /></Field>
@@ -534,6 +535,34 @@ function SceneInspector({ id }: { id: string }) {
 
 type HealthMode = 'none' | 'ping' | 'udp';
 
+function FeedbackSection({ device, patch }: { device: Device; patch: (fn: (d: Device) => void) => void }) {
+  const config = device.feedback;
+  const [fields, setFields] = useState('');
+  useEffect(() => setFields(config?.fields.map((f) => `${f.label}=${f.group}`).join('\n') ?? ''), [config?.fields]);
+  return <>
+    <div className="sech">设备状态回读</div>
+    <div className="form">
+      <Field label="解析状态" hint="只解析状态查询或动作的已校验回包；Ping 和普通 OK 不代表实际状态。请按设备协议填写。">
+        <Check checked={!!config} label="启用回包状态解析" onChange={(on) => patch((d) => { d.feedback = on ? { format: 'ascii', pattern: '', fields: [{ label: '状态', group: 1 }], staleMs: 60000 } : undefined; })} />
+      </Field>
+      {config && <>
+        <Field label="格式"><Seg value={config.format} options={[{ value: 'ascii', label: 'ASCII' }, { value: 'hex', label: 'HEX' }]} onChange={(v) => patch((d) => { d.feedback!.format = v; })} /></Field>
+        <Field label="状态正则" hint={config.format === 'hex' ? '匹配大写连续 HEX，例如 ^AA(01|00)55$；括号是捕获组。' : '例如 ^POWER=(ON|OFF)$；括号是捕获组。末尾换行会移除。'}>
+          <input className="mono" value={config.pattern} onChange={(e) => patch((d) => { d.feedback!.pattern = e.target.value; })} />
+        </Field>
+        <Field label="字段" hint="每行 名称=捕获组序号，例如 电源=1。离开输入框后检查。">
+          <textarea value={fields} rows={3} onChange={(e) => setFields(e.target.value)} onBlur={() => {
+            const rows = fields.split('\n').filter((x) => x.trim());
+            if (!rows.length || rows.some((x) => !/^.{1,50}=\d+$/.test(x))) { toast('状态字段格式应为 名称=捕获组序号'); return; }
+            patch((d) => { d.feedback!.fields = rows.map((x) => { const pos = x.lastIndexOf('='); return { label: x.slice(0, pos).trim(), group: Number(x.slice(pos + 1)) }; }); });
+          }} />
+        </Field>
+        <Field label="过期秒数" hint="超过期限未收到新状态，会显示过期。"><NumInput value={(config.staleMs ?? 60000) / 1000} min={1} max={86400} width={80} onChange={(v) => patch((d) => { d.feedback!.staleMs = (v ?? 60) * 1000; })} /></Field>
+      </>}
+    </div>
+  </>;
+}
+
 /** 每台设备单独选检测方式：不检测 / Ping（只判网络通不通）/ UDP 探测（发只读查询并校验回包，最准）。 */
 function HealthSection({ device: d, patch }: { device: Device; patch: (fn: (d: Device) => void) => void }) {
   const project = useStore((s) => s.project)!;
@@ -700,6 +729,7 @@ function PadTileInspector({ padId, tileId }: { padId: string; tileId: string }) 
           </Field>
         )}
         {tile.kind === 'slider' && <SliderFields tile={tile} patch={patch} />}
+        <Field label="手动接管" hint="操作时接管全部目标设备，期间自动动作跳过；到期后不补发。空值保持自动与手动并行。"><NumInput value={tile.takeoverSec} min={1} max={86400} width={80} allowEmpty onChange={(v) => patch((t) => { t.takeoverSec = v; })} /> 秒</Field>
         {tile.kind !== 'slider' && <Field label="确认"><Check checked={tile.confirm === true} onChange={(v) => patch((t) => { t.confirm = v || undefined; })} label="点击前先让操作员确认（适合「全关」这类）" /></Field>}
       </div>
 

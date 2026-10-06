@@ -51,6 +51,20 @@ export function validateProject(p: Project): Issue[] {
   for (const d of p.devices) {
     if (!validIp(d.ip)) err(`devices/${d.id}`, `IP "${d.ip}" 不是合法 IPv4`);
     if (d.port !== undefined && !validPort(d.port)) err(`devices/${d.id}`, `默认端口 ${d.port} 非法`);
+    if (d.feedback) {
+      const f = d.feedback, path = `devices/${d.id}`;
+      if (f.format !== 'ascii' && f.format !== 'hex') err(path, '状态回读格式只能是 ASCII / HEX');
+      try {
+        const groups = captureGroupCount(f.pattern);
+        if (!f.pattern || f.pattern.length > 1024) err(path, '状态正则长度必须在 1~1024 之间');
+        if (!Array.isArray(f.fields) || f.fields.length < 1 || f.fields.length > 16) err(path, '状态回读必须设置 1~16 个字段');
+        else {
+          dup(path, f.fields.map((x) => x.label));
+          for (const x of f.fields) if (!x.label.trim() || x.label.length > 50 || !Number.isInteger(x.group) || x.group < 1 || x.group > groups) err(path, '状态字段名称为空或捕获组越界');
+        }
+      } catch (e) { err(path, `状态正则无效：${(e as Error).message}`); }
+      if (f.staleMs !== undefined && !(Number.isFinite(f.staleMs) && f.staleMs >= 1000 && f.staleMs <= 86400_000)) err(path, '状态过期时间必须在 1 秒到 24 小时之间');
+    }
   }
 
   for (const d of p.devices) {
@@ -234,6 +248,7 @@ export function validateProject(p: Project): Issue[] {
       if (t.color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(t.color)) err(path, `颜色 "${t.color}" 必须是 #RRGGBB`);
       if (t.size !== undefined && t.size !== 1 && t.size !== 2) err(path, '按钮大小只能是 1 或 2 列');
       if (t.group !== undefined && t.kind !== 'button') err(path, '单选组只能用于按钮，不能用于开关或滑块');
+      if (t.takeoverSec !== undefined && !(Number.isFinite(t.takeoverSec) && t.takeoverSec >= 1 && t.takeoverSec <= 86400)) err(path, '面板接管期限必须在 1~86400 秒之间');
       if (t.kind === 'slider') {
         checkSlider(path, t);
         continue;

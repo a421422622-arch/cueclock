@@ -20,11 +20,21 @@ export interface DeviceHealthConfig {
   probe?: { commandId: string; args?: Record<string, string> };
 }
 
+export interface DeviceFeedbackConfig {
+  /** 已校验回包中的状态正则；ASCII 按字节解码，HEX 按大写连续十六进制解析。 */
+  format: PayloadFormat;
+  pattern: string;
+  fields: { label: string; group: number }[];
+  /** 多久未刷新视为过期，默认 60000ms。 */
+  staleMs?: number;
+}
+
 export interface Device {
   id: string;
   name: string;
   /** 在线检测（可选）。不设置 = 不主动检测 */
   health?: DeviceHealthConfig;
+  feedback?: DeviceFeedbackConfig;
   /** 界面中目标小时间轴的颜色（#RRGGBB），不影响发送。 */
   color?: string;
   ip: string;
@@ -194,6 +204,8 @@ export interface PadTile {
   group?: string;
   /** 点击前先让操作员确认（界面侧；如「全关」） */
   confirm?: boolean;
+  /** 操作时接管目标设备的秒数，期间自动动作跳过；不填保持原行为。 */
+  takeoverSec?: number;
   /** 按钮：点击时执行；开关：切到「开」时执行 */
   actions: Action[];
   /** 开关：切到「关」时执行 */

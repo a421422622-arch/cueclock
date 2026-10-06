@@ -6,8 +6,8 @@ export const READ_ONLY_METHODS = new Set([
 ]);
 
 /**
- * 只有协议不兼容时才拦截写操作：此时界面和引擎说的"话"对不上，写进去可能出错。
- * 协议兼容、只是构建不同（引擎还没加载最新修复），照常使用，界面只提示建议重启——
+ * 协议或功能版本不兼容时拦截写操作：此时界面和引擎说的"话"对不上，写进去可能出错。
+ * 协议和功能版本相同、只是构建不同（引擎还没加载最新修复），照常使用，界面只提示建议重启——
  * 现场有日程在跑时，不能因为"版本戳不同"就连保存配置都不行。
  */
 export function isBlockedByVersion(method: string, update: EngineUpdate | null): boolean {

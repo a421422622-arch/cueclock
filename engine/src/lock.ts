@@ -38,7 +38,7 @@ export const LOCKED_ALLOWED = new Set([
   'ping', 'status', 'getProject', 'getLogs', 'getAlerts', 'getSettings', 'getNetwork', 'listInterfaces', 'listBackups',
   'validateProject', 'simulate', 'pause', 'resume', 'lockStatus', 'unlock', 'lock',
   // 操作面板：配置锁定后，现场操作员仍然可以点按钮（这正是「配置上锁、面板可用」的用法）
-  'runPadTile', 'resetPadState',
+  'runPadTile', 'resetPadState', 'setDeviceOverride',
 ]);
 
 /** 忘记密码时用：清除 settings.json 里的锁。需要本机文件权限（和能直接改配置文件同一信任级别）。返回之前是否有锁。 */

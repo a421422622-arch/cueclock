@@ -442,3 +442,23 @@ select.warnb { border-color: var(--warn); }
 .swatches { display: flex; gap: 6px; }
 .swatches .sw { width: 22px; height: 22px; border-radius: 6px; cursor: pointer; border: 2px solid transparent; }
 .swatches .sw.on { border-color: #fff; }
+.overview { flex: 1; min-height: 0; overflow: auto; padding: 18px; }
+.overview-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; flex-wrap: wrap; }
+.overview-heading h2 { font-size: 20px; font-weight: 550; }
+.overview-heading h3 { font-size: 14px; font-weight: 550; }
+.overview-heading p { color: var(--muted); margin-top: 5px; font-size: 12px; }
+.overview-heading label { font-size: 12px; color: var(--muted); }
+.overview-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-bottom: 24px; }
+.overview-cards article { padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--s1); min-width: 0; }
+.overview-cards small { color: var(--muted); font-size: 11px; }
+.overview-cards strong { display: block; font-size: 17px; font-weight: 500; margin: 9px 0; overflow-wrap: anywhere; }
+.overview-cards p { font-size: 11px; color: var(--muted); line-height: 1.6; }
+.overview-table { overflow-x: auto; margin: 10px 0 24px; border: 1px solid var(--line); border-radius: 8px; }
+.overview table { width: 100%; min-width: 720px; border-collapse: collapse; text-align: left; }
+.overview th, .overview td { padding: 11px; border-bottom: 1px solid var(--line); font-size: 12px; vertical-align: top; max-width: 240px; overflow-wrap: anywhere; }
+.overview th { color: var(--muted); background: var(--s1); font-weight: 500; }
+.overview td small { display: block; font-size: 10.5px; color: var(--muted); margin-top: 5px; }
+.overview .link { padding: 0; border: 0; background: none; color: var(--ink); text-align: left; }
+.overview-alert { display: flex; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
+.overview-alert span { flex: none; color: var(--muted); }
+.overview-alert p { overflow-wrap: anywhere; }

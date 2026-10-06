@@ -85,8 +85,8 @@ export function TopBar() {
       {saveState === 'conflict' && <button onClick={() => void reloadFromEngine()}>放弃本地修改并重新加载</button>}
       <span className="grow" />
       <Clock />
-      <button className={`estop ${paused ? 'on' : ''}`} disabled={!engine} onClick={togglePause} title="暂停期间到点的事件和 UDP 触发都不执行（手动测试不受影响）">
-        {paused ? '▶ 已急停 · 点击恢复' : '■ 急停调度'}
+      <button className={`estop ${paused ? 'on' : ''}`} disabled={!engine} onClick={togglePause} title="暂停期间到点的事件和 UDP 触发都不执行；面板、手动操作与在线检测仍可用。恢复时不补发错过的事件。">
+        {paused ? '▶ 自动已暂停 · 恢复' : '■ 暂停自动日程'}
       </button>
       {alerts.count > 0 && (
         <button className={`alertpill ${alerts.hasError ? 'bad' : 'warn'}`} onClick={() => showLogTab('alerts')} title="有新的告警，点击查看（只记录在日志里，不对外发送）">

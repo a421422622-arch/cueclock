@@ -358,6 +358,8 @@ async function smokeUi(): Promise<void> {
     devices: document.querySelectorAll('.dev').length,
     cues: document.querySelectorAll('.cue').length,
     projectMenu: !!document.querySelector('.projbtn'),
+    overview: !!document.querySelector('.overview table'),
+    pauseLabel: document.querySelector('.estop')?.textContent,
     engine: document.querySelector('.nic')?.innerText,
     node: typeof require + '/' + typeof process,
   })`).catch((e) => ({ error: String(e) }));

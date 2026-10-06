@@ -18,6 +18,7 @@ import { buildPayload, describeAscii, formatHex } from './payload.ts';
 import { matchBuffer } from './match.ts';
 import { substituteCaptureAction } from './captures.ts';
 import { snapSliderValue, substituteSliderAction } from './padvalue.ts';
+import { readFeedback } from './operations.ts';
 import { formatClock, formatTime } from './time.ts';
 import type { NetworkSettings } from './network.ts';
 import { staggerMs, systemPing } from './health.ts';
@@ -76,6 +77,7 @@ export interface LogEntry {
   dir: 'TX' | 'RX' | 'SYS';
   result: LogResult;
   remote?: string;
+  deviceId?: string;
   hex?: string;
   ascii?: string;
   /** 来源：时间线/事件点，或触发器、断电恢复 */
@@ -87,6 +89,10 @@ export interface LogEntry {
   /** 带这个字段的就是告警：界面「告警」页签、历史告警查询都只看它 */
   alert?: AlertInfo;
 }
+
+export interface DeviceOverride { until: number; reason: string }
+export interface FeedbackState { at: number; values: Record<string, string>; stale: boolean }
+export interface CommandState { at: number; result: LogResult; source: string }
 
 export interface EngineOptions {
   clock?: Clock;
@@ -100,6 +106,7 @@ export interface EngineOptions {
   startPaused?: boolean;
   /** 面板按钮的亮灯状态（键为 `面板id/按钮id`），启动时从上次恢复。亮灯是推测的，不是设备真实状态 */
   padState?: Record<string, boolean | number>;
+  overrides?: Record<string, DeviceOverride>;
   /** 自定义 ping 实现（测试用）；默认调系统 ping */
   pinger?: (ip: string, timeoutMs: number) => Promise<PingResult>;
 }
@@ -125,10 +132,16 @@ export interface DeviceHealthInfo {
   lastCheckAt: number | null;
   lastOkAt: number | null;
   rttMs?: number;
+  lastCommand?: CommandState;
+  feedback?: FeedbackState;
+  override?: DeviceOverride;
 }
+
+export interface SceneRunStatus { id: string; name: string; source: string; startedAt: number; finishedAt?: number; state: 'running' | 'completed' | 'failed' | 'cancelled'; steps: { name: string; state: string }[] }
 
 export interface EngineStatus {
   devices: DeviceHealthInfo[];
+  sceneRuns: SceneRunStatus[];
   /** 面板按钮亮灯状态 */
   pads: Record<string, boolean | number>;
   running: boolean;
@@ -148,6 +161,7 @@ export interface EngineStatus {
 
 interface RunCtx {
   source: string;
+  manual?: boolean;
   scheduledAt?: number;
   /** 恢复动作原来的墙上执行时刻，用来阻止旧补偿覆盖后来已发出的新状态。 */
   recoveryAt?: number;
@@ -191,6 +205,10 @@ export class Engine extends EventEmitter {
   private healthLoops = new Map<string, { sig: string; ctl: AbortController }>();
   private startedAt: number | null = null;
   private latestDispatch = new Map<string, number>();
+  private overrides = new Map<string, DeviceOverride>();
+  private commands = new Map<string, CommandState & { order: number }>();
+  private feedback = new Map<string, Omit<FeedbackState, 'stale'>>();
+  private dispatchOrder = 0;
   /** 最近的日志，给界面刷新用 */
   readonly logs: LogEntry[] = [];
 
@@ -202,6 +220,9 @@ export class Engine extends EventEmitter {
     this.router = new TriggerRouter(project.triggers);
     for (const [k, v] of Object.entries(opts.padState ?? {})) if (v === true || (typeof v === 'number' && Number.isFinite(v))) this.padState.set(k, v);
     this.prunePadState(false);
+    for (const [id, o] of Object.entries(opts.overrides ?? {})) {
+      if (project.devices.some((d) => d.id === id) && o && Number.isFinite(o.until) && o.until > this.clock.now() && typeof o.reason === 'string') this.overrides.set(id, o);
+    }
   }
 
   private log(e: Omit<LogEntry, 't'> & { t?: number }): void {
@@ -253,6 +274,28 @@ export class Engine extends EventEmitter {
     h.lastCheckAt = h.lastOkAt = this.clock.now();
     h.rttMs = rttMs;
     if (was) this.alert('device-online', 'info', device.name, `设备「${device.name}」已恢复：${method === 'ping' ? 'Ping 有响应了' : '收到了有效回包'}`);
+  }
+
+  /** 有期限的设备接管：自动日程/触发/恢复跳过，手动仍可操作。期限到后不补发被跳过的动作。 */
+  setDeviceOverride(id: string, durationMs: number | null, reason = '现场手动接管'): void {
+    if (!this.project.devices.some((d) => d.id === id)) throw new Error(`找不到设备 ${id}`);
+    if (durationMs !== null && !(Number.isFinite(durationMs) && durationMs >= 1000 && durationMs <= 86400_000)) throw new Error('接管期限必须在 1 秒到 24 小时之间');
+    if (durationMs === null) this.overrides.delete(id);
+    else this.overrides.set(id, { until: this.clock.now() + durationMs, reason });
+    this.emit('overrides', Object.fromEntries(this.overrides));
+    this.log({ dir: 'SYS', result: 'info', detail: durationMs === null ? `设备 ${id} 已交回自动日程（不补发接管期间的动作）` : `设备 ${id} 手动接管 ${durationMs / 1000} 秒` });
+  }
+
+  private activeOverride(id: string): DeviceOverride | undefined {
+    const o = this.overrides.get(id);
+    if (o && this.clock.now() >= o.until) { this.overrides.delete(id); return undefined; }
+    return o;
+  }
+
+  private noteFeedback(device: Device, reply: Buffer | undefined): void {
+    if (!reply || !device.feedback || this.project.devices.find((d) => d.id === device.id)?.ip !== device.ip) return;
+    const values = readFeedback(device.feedback, reply);
+    if (values) this.feedback.set(device.id, { at: this.clock.now(), values });
   }
 
   // ───────────── 操作面板 ─────────────
@@ -315,6 +358,14 @@ export class Engine extends EventEmitter {
     }
     if (!slider || final) this.emitPadState(); // 拖动中的中间值不推送、不落盘，松手时一次
     const source = `面板「${pad.name}」/${tile.label}`;
+    if (tile.takeoverSec) {
+      const resolved = resolveActions(this.project, actions).actions;
+      const targets = resolved.flatMap((a) => a.type === 'udp' ? a.targets : []);
+      for (const d of this.resolveDevices(targets)) {
+        const o = this.activeOverride(d.id);
+        if (!o || o.reason !== source || o.until - now < tile.takeoverSec * 500) this.setDeviceOverride(d.id, tile.takeoverSec * 1000, source);
+      }
+    }
     if (!slider || final) this.log({ dir: 'SYS', result: 'info', source, detail: slider ? `滑块设为 ${state}` : tile.kind === 'toggle' ? `开关切换为${state ? '开' : '关'}` : '按钮被点击' });
     this.spawn(this.runActionList(actions, now, source, true), '执行面板按钮');
     return { actions: expandActions(resolveActions(this.project, actions).actions).length, state };
@@ -352,6 +403,7 @@ export class Engine extends EventEmitter {
       accept: (b) => { try { return matchBuffer(b, reply).matched; } catch { return false; } },
     });
     const ok = res.status === 'confirmed';
+    if (ok) this.noteFeedback(device, res.reply);
     return { ok, method: 'udp', rttMs: res.rttMs, detail: ok ? `UDP 探测收到回包${res.rttMs !== undefined ? `（${res.rttMs}ms）` : ''}` : res.status === 'mismatch' ? 'UDP 探测收到的回包不符合期望' : 'UDP 探测超时，没有回包' };
   }
 
@@ -429,7 +481,7 @@ export class Engine extends EventEmitter {
   pause(): void {
     if (this.pausedFlag) return;
     this.pausedFlag = true;
-    const msg = '调度已暂停（急停）：期间到点的事件将被跳过';
+    const msg = '自动日程与 UDP 触发已暂停：期间到点的事件将被跳过';
     if (this.running) this.alert('paused', 'warn', undefined, msg);
     else this.log({ dir: 'SYS', result: 'info', detail: msg });
   }
@@ -499,7 +551,7 @@ export class Engine extends EventEmitter {
     this.closed = false;
     if (this.opts.startPaused) {
       this.pausedFlag = true;
-      this.alert('paused', 'warn', undefined, '引擎以急停状态启动（上次急停后重启，需手动恢复调度）：定时事件、触发和断电恢复都不会执行');
+      this.alert('paused', 'warn', undefined, '引擎以暂停状态启动（上次暂停后重启，需手动恢复）：定时事件、触发和断电恢复都不会执行');
     }
     this.runCtl = new AbortController();
     this.startedAt = this.clock.now();
@@ -542,6 +594,12 @@ export class Engine extends EventEmitter {
   /** 热更新项目：检查不通过会抛错，原项目继续运行。 */
   async reload(project: Project): Promise<void> {
     this.assertValid(project);
+    for (const d of this.project.devices) {
+      const next = project.devices.find((x) => x.id === d.id);
+      if (!next || next.ip !== d.ip || next.port !== d.port) {
+        this.commands.delete(d.id); this.feedback.delete(d.id); this.health.delete(d.id); this.overrides.delete(d.id);
+      } else if (JSON.stringify(next.feedback) !== JSON.stringify(d.feedback)) this.feedback.delete(d.id);
+    }
     this.project = project;
     this.router.update(project.triggers); // 保留防抖/确认等待状态，不因为保存一次项目就丢失
     this.prunePadState(true); // 被删掉的按钮，其状态一起清理
@@ -680,10 +738,10 @@ export class Engine extends EventEmitter {
       await this.clock.sleepUntil(base + x.relMs, signal);
       if (signal.aborted) return; // 引擎已停止/切换项目：后面的动作不再执行
       if (this.pausedFlag && !manual) {
-        this.log({ dir: 'SYS', result: 'skipped', source, scheduledAt: base + x.relMs, detail: '调度已暂停（急停）' });
+        this.log({ dir: 'SYS', result: 'skipped', source, scheduledAt: base + x.relMs, detail: '自动日程与 UDP 触发已暂停' });
         continue;
       }
-      this.spawn(this.runAction(x.action, { source, scheduledAt: base + x.relMs,
+      this.spawn(this.runAction(x.action, { source, manual, scheduledAt: base + x.relMs,
         ...(recoveryBase === undefined ? {} : { recoveryAt: recoveryBase + x.relMs }) }), '执行动作');
     }
   }
@@ -749,7 +807,7 @@ export class Engine extends EventEmitter {
   private async executeItem(item: FiredItem): Promise<void> {
     const source = `${item.timelineName}/${item.cueName}`;
     if (this.pausedFlag) {
-      this.log({ dir: 'SYS', result: 'skipped', source, scheduledAt: item.epoch, detail: '调度已暂停（急停）' });
+      this.log({ dir: 'SYS', result: 'skipped', source, scheduledAt: item.epoch, detail: '自动日程与 UDP 触发已暂停' });
       return;
     }
     if (this.isRuntimeDisabled(item.timelineId)) {
@@ -795,7 +853,7 @@ export class Engine extends EventEmitter {
   ): Promise<LogResult> {
     const port = action.port ?? device.port;
     const remote = `${device.ip}:${port ?? '?'}`;
-    const base = { dir: 'TX' as const, remote, source: action.commandName && !ctx.source.includes(action.commandName) ? `${ctx.source}【${action.commandName}】` : ctx.source, scheduledAt: ctx.scheduledAt, lagMs: ctx.lagMs };
+    const base = { deviceId: device.id, dir: 'TX' as const, remote, source: action.commandName && !ctx.source.includes(action.commandName) ? `${ctx.source}【${action.commandName}】` : ctx.source, scheduledAt: ctx.scheduledAt, lagMs: ctx.lagMs };
     if (device.enabled === false) {
       this.log({ ...base, result: 'skipped', detail: `设备「${device.name}」已禁用` });
       return 'skipped';
@@ -813,6 +871,14 @@ export class Engine extends EventEmitter {
     }
     const shown = { hex: formatHex(buf), ascii: describeAscii(buf) };
     const transport = this.transport!;
+    if (!ctx.manual && this.activeOverride(device.id)) {
+      this.log({ ...base, result: 'skipped', detail: `设备「${device.name}」手动接管中，跳过自动动作` });
+      return 'skipped';
+    }
+    const order = ++this.dispatchOrder;
+    const record = (result: LogResult) => {
+      if (device.id !== '__test' && order >= (this.commands.get(device.id)?.order ?? 0)) this.commands.set(device.id, { at: this.clock.now(), result, source: base.source, order });
+    };
     const dry = this.opts.dryRun === true;
     if (ctx.recoveryAt !== undefined && (this.latestDispatch.get(device.id) ?? -Infinity) > ctx.recoveryAt) {
       this.log({ ...base, result: 'skipped', detail: `设备「${device.name}」已执行更新的状态，跳过旧恢复动作` });
@@ -827,8 +893,10 @@ export class Engine extends EventEmitter {
       try {
         await transport.send(device.ip, port, buf, { from: action.sendFrom });
         this.log({ ...base, ...shown, t: ctx.startedAt, result: dry ? 'skipped' : 'sent', detail: dry ? '模拟，未发送' : device.name });
+        record(dry ? 'skipped' : 'sent');
         return dry ? 'skipped' : 'sent';
       } catch (e) {
+        record('error');
         this.sendFailed(device, base, `${device.name}：${(e as Error).message}`, true, { ...shown, t: ctx.startedAt });
         return 'error';
       }
@@ -838,6 +906,10 @@ export class Engine extends EventEmitter {
     const attempts = 1 + Math.max(0, reply.retries);
     let last: LogResult = 'error';
     for (let i = 0; i < attempts; i++) {
+      if (!this.running || (!ctx.manual && (this.pausedFlag || this.activeOverride(device.id)))) {
+        this.log({ ...base, result: 'skipped', detail: '停止、暂停或设备接管：取消后续重试' });
+        return 'skipped';
+      }
       if (i > 0 && ctx.recoveryAt !== undefined && (this.latestDispatch.get(device.id) ?? -Infinity) > ctx.recoveryAt) {
         this.log({ ...base, result: 'skipped', detail: `设备「${device.name}」已执行更新的状态，取消旧恢复重试` });
         return 'skipped';
@@ -864,12 +936,15 @@ export class Engine extends EventEmitter {
           detail: `${device.name} · 第 ${i + 1}/${attempts} 次${rtt}${tail}${res.status === 'skipped' ? ' · 模拟，未发送' : ''}`,
         });
         last = res.status === 'skipped' ? 'skipped' : res.status;
+        record(last);
         if (res.status === 'confirmed') {
           this.noteDeviceSuccess(device);
+          if (order >= (this.commands.get(device.id)?.order ?? 0)) this.noteFeedback(device, res.reply);
           return last;
         }
         if (res.status === 'skipped') return last;
       } catch (e) {
+        record('error');
         this.sendFailed(device, base, `${device.name}：${(e as Error).message}`, true, shown);
         return 'error';
       }
@@ -907,7 +982,7 @@ export class Engine extends EventEmitter {
       terminator: p.terminator, reply: p.reply ?? null,
     };
     const now = this.clock.now();
-    return this.sendOne(device, action, { source: '手动测试', startedAt: now });
+    return this.sendOne(device, action, { source: '手动测试', startedAt: now, manual: true });
   }
 
   /** 立即执行一个事件点（不等时间，不看规则、暂停状态）。返回动作个数。 */
@@ -991,10 +1066,16 @@ export class Engine extends EventEmitter {
       const h = this.health.get(d.id);
       const configured = d.health?.mode ?? null;
       const state: DeviceState = !h || (h.lastCheckAt === null) ? 'unknown' : h.offline ? 'offline' : h.fails > 0 ? 'failing' : h.lastOkAt !== null ? 'online' : 'unknown';
-      return { id: d.id, state, method: configured ?? h?.method ?? null, fails: h?.fails ?? 0, lastCheckAt: h?.lastCheckAt ?? null, lastOkAt: h?.lastOkAt ?? null, ...(h?.rttMs !== undefined ? { rttMs: h.rttMs } : {}) };
+      const command = this.commands.get(d.id);
+      const feedback = this.feedback.get(d.id);
+      const override = this.activeOverride(d.id);
+      return { ...(command ? { lastCommand: { at: command.at, result: command.result, source: command.source } } : {}),
+        ...(feedback ? { feedback: { ...feedback, stale: now - feedback.at >= (d.feedback?.staleMs ?? 60000) } } : {}),
+        ...(override ? { override } : {}), id: d.id, state, method: configured ?? h?.method ?? null, fails: h?.fails ?? 0, lastCheckAt: h?.lastCheckAt ?? null, lastOkAt: h?.lastOkAt ?? null, ...(h?.rttMs !== undefined ? { rttMs: h.rttMs } : {}) };
     });
     return {
       devices,
+      sceneRuns: [],
       pads: Object.fromEntries(this.padState),
       running: this.running,
       paused: this.pausedFlag,

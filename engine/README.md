@@ -134,3 +134,9 @@ node bench/jitter.ts 200 6                                 # 毫秒抖动实测
 - 协议升级为 2。hello 请求必须包含 protocol:2 和 token；响应/status/daemon.json 返回 engineVersion、engineBuild。构建指纹由 engine/src/*.ts 的内容生成，编译时注入，所以相同功能版本下的代码变更也能识别。版本信息缺失或未知协议会被明确拒绝；新版客户端可识别协议 1 的旧服务握手；桌面界面会限制为查看模式，这不代表当前修复已加载。
 - 正则触发动作的 command.args 和 udp.payload 支持 $0（去口令/尾 CRLF 的整个内容）、$1~$9、$$。非正则不替换；不递归代入；捕获中的反斜杠先转义；越界保存失败。HEX 发送使用占位探针静态检查，实际字节仍在运行时校验。
 - 130 个引擎测试通过（含真实 UDP）；原用户 PID 97444 不在自动验收重启范围内。
+
+### 运行状态与设备接管（0.3.0）
+
+`status.engine.devices` 增加 `lastCommand`（发出/回包结果）、`feedback`（已校验回包解析出的字段、更新时间和过期标记）、`override`（接管截止时间）。设备可配置 `feedback.format/pattern/fields/staleMs`，只解析该设备的已校验回包，不从 Ping 推测开关状态。HEX 正则匹配连续大写十六进制。
+
+`setDeviceOverride {deviceId,durationMs}` 接管 1 秒至 24 小时，`durationMs:null` 交回自动。接管期间该设备的自动日程、UDP 触发、恢复及自动重试跳过，手动仍可操作；到期不补发。接管按项目保存在机器设置中，重启保留尚未过期的期限。面板可设置 `takeoverSec`，操作时自动接管目标。功能版本过旧时界面只允许查看/暂停，需人工确认更新引擎。

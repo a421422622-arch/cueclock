@@ -26,3 +26,11 @@ test('协议不兼容：写操作被拦，只读和急停放行', () => {
 test('握手信息缺失（null）不拦截', () => {
   assert.equal(isBlockedByVersion('saveProject', null), false);
 });
+
+test('同协议但功能版本过旧：不能把接管或顺序场景配置交给旧引擎', () => {
+  const old = assessEngine({ protocol: 2, engineVersion: '0.2.0', engineBuild: 'old' });
+  assert.equal(old.compatible, false);
+  assert.equal(isBlockedByVersion('saveProject', old), true);
+  assert.equal(isBlockedByVersion('setDeviceOverride', old), true);
+  assert.equal(isBlockedByVersion('pause', old), false);
+});

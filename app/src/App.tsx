@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { discardDraft, handleEditShortcut, init, lockNow, openSettings, openUnlock, reloadFromEngine, restoreDraft, setView, useStore } from './store.ts';
+import { Overview } from './components/Overview.tsx';
 import { TopBar } from './components/TopBar.tsx';
 import { Sidebar } from './components/Sidebar.tsx';
 import { Timeline } from './components/Timeline.tsx';
@@ -98,11 +99,12 @@ export function App() {
         <Sidebar />
         <div className="center">
           <div className="viewtabs">
+            <span className={view === 'overview' ? 'on' : ''} onClick={() => setView('overview')}>运行总览</span>
             <span className={view === 'timeline' ? 'on' : ''} onClick={() => setView('timeline')}>模式与时间轴</span>
             <span className={view === 'calendar' ? 'on' : ''} onClick={() => setView('calendar')}>日历与预览</span>
             <span className={view === 'pad' ? 'on' : ''} onClick={() => setView('pad')}>操作面板</span>
           </div>
-          {view === 'timeline' ? <Timeline /> : view === 'calendar' ? <CalendarView /> : <PadView />}
+          {view === 'overview' ? <Overview /> : view === 'timeline' ? <Timeline /> : view === 'calendar' ? <CalendarView /> : <PadView />}
         </div>
         <Inspector />
         <LogPanel />

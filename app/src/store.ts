@@ -27,7 +27,7 @@ export type Selection =
   | { kind: 'padTile'; padId: string; tileId: string }
   | null;
 
-export type View = 'timeline' | 'calendar' | 'pad';
+export type View = 'overview' | 'timeline' | 'calendar' | 'pad';
 export type ConfigurationPage = 'files' | 'software';
 
 export type SaveState = 'saved' | 'dirty' | 'saving' | 'error' | 'conflict';
@@ -38,6 +38,7 @@ export interface AppState {
   status: DaemonStatus | null;
   /** 本地草稿，界面上的编辑都改它，防抖后自动保存给引擎 */
   project: Project | null;
+  runningProject: Project | null;
   rev: number;
   saveState: SaveState;
   issues: Issue[];
@@ -89,6 +90,7 @@ let state: AppState = {
   loaded: false,
   status: null,
   project: null,
+  runningProject: null,
   rev: 0,
   saveState: 'saved',
   issues: [],
@@ -98,7 +100,7 @@ let state: AppState = {
   followActive: true,
   canUndo: false,
   canRedo: false,
-  view: 'timeline',
+  view: 'overview',
   settingsOpen: false,
   configurationPage: 'files',
   padId: null,
@@ -216,7 +218,7 @@ async function loadAll(): Promise<void> {
   const changedFile = state.status?.daemon.projectFile !== st.daemon.projectFile;
   if (changedFile || JSON.stringify(state.project) !== JSON.stringify(project)) history.clear();
   editVersion = savedVersion = 0;
-  set({ project, rev, loaded: true, saveState: 'saved', issues: [], logs, draftOffer: null, ...historyState(),
+  set({ project, runningProject: project, rev, loaded: true, saveState: 'saved', issues: [], logs, draftOffer: null, ...historyState(),
     ...(changedFile ? { sel: null, modeId: null, followActive: true } : {}) });
   applyStatus(st);
   void loadAlertHistory();
@@ -307,7 +309,7 @@ async function save(): Promise<void> {
     if (session !== projectSession) return;
     savedVersion = sentVersion;
     if (editVersion === savedVersion) clearDraft();
-    set({ rev: r.rev, issues: r.warnings, saveState: editVersion === savedVersion ? 'saved' : 'dirty' });
+    set({ runningProject: state.project, rev: r.rev, issues: r.warnings, saveState: editVersion === savedVersion ? 'saved' : 'dirty' });
   } catch (e) {
     if (session !== projectSession) return;
     if (e instanceof RpcFailure && e.code === 'invalid-project') {

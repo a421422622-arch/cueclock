@@ -97,6 +97,7 @@ export function PadView() {
         <Seg<'op' | 'edit'> value={editing ? 'edit' : 'op'} onChange={(v) => toggleEdit(v === 'edit')} options={[{ value: 'op', label: '操作' }, { value: 'edit', label: '编辑' }]} />
       </div>
 
+      <div className="hint" style={{ padding: '6px 14px' }}>亮灭与数值表示最后操作记录；设备真实状态请查看「运行总览」。暂停自动日程时仍可手动操作。</div>
       {pad && (
         <div className={`padgrid ${editing ? 'editing' : ''}`} style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
           {pad.tiles.map((t) => {
