@@ -43,8 +43,9 @@ export function PadView() {
     if (t.confirm && !window.confirm(`确认执行「${t.label}」？`)) return;
     setBusy(key);
     try {
-      await rpc('runPadTile', { padId: p.id, tileId: t.id });
+      const r = await rpc<{ persistFailed?: boolean }>('runPadTile', { padId: p.id, tileId: t.id });
       mark(key, 'ok');
+      if (r?.persistFailed) toast(`「${t.label}」已执行，但面板状态没能保存到磁盘：重启引擎后亮灭可能不对，请检查磁盘/状态目录`);
     } catch (e) {
       mark(key, 'bad');
       toast(`「${t.label}」执行失败：${e instanceof RpcFailure ? e.message : String(e)}`);
@@ -187,8 +188,8 @@ function SliderTile({ padId, tile, value, editing, selected, disabled, flash, on
   useEffect(() => { if (dragged.current === null) setDrag(null); }, [value]);
   const sender = useMemo(() => dragSender((v, final) => {
     const { padId: p, tileId, label, onResult: done, reset } = latest.current;
-    rpc('runPadTile', { padId: p, tileId, value: v, final })
-      .then(() => { if (final) done(true); })
+    rpc<{ persistFailed?: boolean }>('runPadTile', { padId: p, tileId, value: v, final })
+      .then((r) => { if (final) done(true, r?.persistFailed ? `「${label}」已发送，但数值没能保存到磁盘：重启引擎后显示可能不对，请检查磁盘/状态目录` : undefined); })
       .catch((e) => { if (final) { reset(); done(false, `「${label}」发送失败：${e instanceof RpcFailure ? e.message : String(e)}`); } });
   }), []);
 

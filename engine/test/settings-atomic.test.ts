@@ -32,5 +32,8 @@ test('设置落盘失败的窗口：原有暂停/接管设置必须仍是完整�
   await assert.rejects(client.request('pause'), /保存|故障/);
   const status = await client.request<{ engine: { paused: boolean } }>('status');
   assert.equal(status.engine.paused, true, '保存失败也必须立即暂停自动日程');
-  await assert.rejects(client.request('runPadTile', { padId: 'p', tileId: 'b' }), /保存|故障/);
+  // 面板按钮：指令已经发出、状态已经切换，保存失败不能报成「执行失败」（操作员会重按，开关就被翻回去）
+  const pressed = await client.request<{ actions: number; persistFailed?: boolean }>('runPadTile', { padId: 'p', tileId: 'b' });
+  assert.equal(pressed.persistFailed, true);
+  assert.equal(pressed.actions, 1);
 });

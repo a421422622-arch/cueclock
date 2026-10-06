@@ -702,7 +702,10 @@ export class Daemon {
             value: typeof p.value === 'number' ? p.value : undefined,
             final: typeof p.final === 'boolean' ? p.final : undefined,
           });
-          if (!result.ignored && p.final !== false) await this.persistSettings(true);
+          // 指令已经发出、状态已经切换：落盘失败只作为警告返回，不能让界面报成「执行失败」（操作员会重按，开关就被翻回去）
+          if (!result.ignored && p.final !== false) {
+            try { await this.persistSettings(true); } catch { return { ...result, persistFailed: true }; }
+          }
           return result;
         } catch (e) {
           if (e instanceof RpcError) throw e;
