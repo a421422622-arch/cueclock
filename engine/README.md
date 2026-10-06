@@ -149,8 +149,14 @@ node bench/jitter.ts 200 6                                 # 毫秒抖动实测
 
 ### 配置预览与应用
 
-`previewProject {project,baseRev}` 返回当前版本、按对象的变更清单及静态检查，不保存、不热更新。`applyProject` 使用同样的参数，版本冲突或检查失败拒绝应用；成功前强制备份当前配置，不受普通保存的60秒备份节流限制。仍在等待的旧动作链会取消，接管和暂停保留。
+`previewProject {project,baseRev}` 返回当前版本、按对象的变更清单及静态检查，不保存、不热更新。`previewProject`同时返回instanceId；`applyProject {project,baseRev,instanceId}`使用预览快照，版本、实例变化或检查失败拒绝应用；成功前强制备份当前配置，不受普通保存的60秒备份节流限制。仍在等待的旧动作链会取消，接管和暂停保留。
 
 ### 滑块单位与映射
 
 `PadTile.unit` 是显示单位；`mapping:{min,max,precision}` 把 UI 的 min/max 线性换算成设备值，默认精度0（取整），可反向映射。先吸附 UI 档位，再映射，再代入 `{{value}}` / `{{hex}}`。面板持久化记录 UI 值。无 mapping 的旧项目继续发送原始值；HEX 映射要求设备输出非负整数。新控制指令会让此前的状态回读立即过期，避免把旧状态显示为当前状态。
+
+### 机器级运行选项与持久化
+
+`getRuntimeOptions` / `setRuntimeOptions {preventSleep}` 配置Mac后台防空闲休眠，默认关闭；caffeinate -i -w 跟随daemon生命周期，其他系统拒绝开启。Mac登录守护在界面软件设置登记，下次登录生效，正常退出不自动拉起。
+
+机器设置保存排队，先写临时文件再原子替换。显式接管与面板最终值返回成功前等待落盘，写入失败会报告。暂停先立即生效再保存，恢复在保存成功后执行；磁盘故障保留旧设置文件。应用预览返回instanceId，应用必须匹配当前实例和baseRev。新功能能力声明与功能版本一起参与兼容判断。
