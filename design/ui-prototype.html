@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>CueClock · UDP 中控时间线 — 界面原型</title>
+<style>
+  :root{
+    --canvas:#0a0a0c; --s1:#141416; --s2:#1c1c1f; --s3:#252529; --s4:#2c2c31;
+    --line:#38383f; --line2:#48484f;
+    --ink:#f5f5f7; --ink2:#d1d1d6; --muted:#98989f; --subtle:#636366;
+    --amber:#ffb84d; --cyan:#00d9ff; --ok:#34c759; --warn:#ff9f0a; --err:#ff453a;
+    --purple:#bf5af2; --blue:#0a84ff; --magenta:#ff2d92;
+    --mono:"SF Mono",Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--canvas);color:var(--ink);font:13px/1.4 -apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;overflow:hidden}
+  button{font:inherit;color:inherit;background:var(--s3);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer;white-space:nowrap}
+  button:hover{border-color:var(--line2);background:var(--s4)}
+  input,select,textarea{font:inherit;color:var(--ink);background:var(--canvas);border:1px solid var(--line);border-radius:5px;padding:4px 7px;outline:none}
+  input:focus,select:focus,textarea:focus{border-color:var(--amber)}
+  .mono{font-family:var(--mono)}
+
+  .app{display:grid;height:100vh;grid-template-rows:52px 1fr 190px;grid-template-columns:250px 1fr 340px;
+       grid-template-areas:"top top top" "side main insp" "side log insp"}
+
+  /* ---------- 顶栏 ---------- */
+  .top{grid-area:top;display:flex;align-items:center;gap:14px;padding:0 14px;background:var(--s1);border-bottom:1px solid var(--line)}
+  .logo{font-weight:700;letter-spacing:-.3px;font-size:15px}
+  .logo b{color:var(--amber)}
+  .proj{color:var(--muted);padding-left:12px;border-left:1px solid var(--line)}
+  .mode{display:flex;background:var(--canvas);border:1px solid var(--line);border-radius:7px;padding:2px}
+  .mode span{padding:3px 12px;border-radius:5px;cursor:pointer;color:var(--muted)}
+  .mode span.on{background:var(--s4);color:var(--ink)}
+  .mode span.sim{color:var(--cyan)}
+  .mode span.run.on{background:var(--ok);color:#000;font-weight:600}
+  .clock{margin-left:auto;text-align:center}
+  .clock .t{font:600 24px/1 var(--mono);color:var(--cyan);text-shadow:0 0 14px #00d9ff55}
+  .clock .d{font-size:11px;color:var(--muted)}
+  .next{padding:5px 12px;background:var(--s2);border:1px solid var(--line);border-radius:7px;min-width:250px}
+  .next .l{font-size:11px;color:var(--muted)}
+  .next .v{font-weight:600}
+  .next .v em{font-style:normal;color:var(--amber);font-family:var(--mono)}
+  .estop{background:#3a1312;border-color:var(--err);color:#ff8a82;font-weight:600}
+  .nic{font-size:11px;color:var(--muted);text-align:right}
+  .nic .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);margin-right:4px}
+
+  /* ---------- 左栏 ---------- */
+  .side{grid-area:side;background:var(--s1);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+  .tabs{display:flex;border-bottom:1px solid var(--line)}
+  .tabs span{flex:1;text-align:center;padding:9px 0;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;font-size:12px}
+  .tabs span.on{color:var(--ink);border-bottom-color:var(--amber)}
+  .sidebody{flex:1;overflow:auto;padding:8px}
+  .sechead{display:flex;justify-content:space-between;align-items:center;color:var(--muted);font-size:11px;padding:6px 4px;text-transform:uppercase;letter-spacing:.5px}
+  .sechead button{padding:1px 8px;font-size:12px}
+  .dev{padding:8px;border-radius:7px;border:1px solid transparent;margin-bottom:4px;cursor:pointer}
+  .dev:hover{background:var(--s2);border-color:var(--line)}
+  .dev .n{display:flex;align-items:center;gap:6px;font-weight:500}
+  .dev .n i{width:7px;height:7px;border-radius:50%;background:var(--ok)}
+  .dev .n i.off{background:var(--subtle)}
+  .dev .a{font:11px var(--mono);color:var(--muted);margin-top:2px;display:flex;justify-content:space-between}
+  .tag{font:10px/1 var(--mono);padding:2px 5px;border-radius:4px;background:var(--s3);color:var(--ink2)}
+  .tag.hex{color:var(--purple)} .tag.asc{color:var(--cyan)}
+  .trig{padding:8px;border-radius:7px;background:var(--s2);border:1px solid var(--line);margin-bottom:6px}
+  .trig .m{font:11px var(--mono);color:var(--amber);margin:3px 0}
+  .trig .r{font-size:11px;color:var(--muted)}
+
+  /* ---------- 时间线 ---------- */
+  .main{grid-area:main;display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--canvas)}
+  .toolbar{display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid var(--line);background:var(--s1)}
+  .toolbar .sp{flex:1}
+  .toolbar label{white-space:nowrap;color:var(--muted);font-size:12px;display:flex;align-items:center;gap:6px}
+  .tl{flex:1;display:flex;min-height:0;overflow:hidden}
+  .tlhead{width:190px;flex:none;border-right:1px solid var(--line);background:var(--s1);overflow:hidden}
+  .tlscroll{flex:1;overflow:auto;position:relative}
+  .tlinner{position:relative}
+  .ruler{height:30px;position:sticky;top:0;z-index:5;background:var(--s1);border-bottom:1px solid var(--line)}
+  .ruler .tk{position:absolute;top:0;height:100%;border-left:1px solid var(--line);font:10px var(--mono);color:var(--muted);padding:3px 0 0 4px}
+  .ruler .tk.min{height:6px;top:auto;bottom:0;border-color:var(--s4)}
+  .hcell{height:30px;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 10px;color:var(--muted);font-size:11px}
+  .grp{height:28px;display:flex;align-items:center;gap:6px;padding:0 8px;background:var(--s2);border-bottom:1px solid var(--line);font-weight:600;font-size:12px;cursor:pointer}
+  .grp .sw{width:4px;height:14px;border-radius:2px}
+  .grp .cnt{margin-left:auto;font-weight:400;color:var(--muted);font-size:11px}
+  .trk{height:46px;overflow:hidden;display:flex;flex-direction:column;justify-content:center;padding:0 8px 0 18px;border-bottom:1px solid #1f1f23}
+  .trk .n{white-space:nowrap;display:flex;align-items:center;gap:6px}
+  .trk .n input{accent-color:var(--amber)}
+  .trk .rule{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:10.5px;color:var(--muted);margin-top:1px;padding-left:20px}
+  .trk.dis{opacity:.45}
+  .row-grp{height:28px;background:#121214;border-bottom:1px solid var(--line);position:relative}
+  .row-trk{height:46px;border-bottom:1px solid #1f1f23;position:relative}
+  .row-trk.today::before{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,#ffffff03)}
+  .row-trk.dis{opacity:.4}
+  .grid{position:absolute;top:0;bottom:0;border-left:1px solid #19191c}
+  .cue{position:absolute;top:50%;transform:translate(-50%,-50%);cursor:pointer;z-index:2}
+  .cue .dm{width:13px;height:13px;transform:rotate(45deg);border-radius:2px;margin:0 auto;box-shadow:0 0 0 2px var(--canvas)}
+  .cue .lb{position:absolute;left:12px;top:-7px;white-space:nowrap;font-size:10.5px;color:var(--ink2);pointer-events:none}
+  .cue .lb small{color:var(--muted);font-family:var(--mono)}
+  .cue.done .dm{opacity:.35} .cue.done .lb{opacity:.45}
+  .cue.sel .dm{outline:2px solid #fff;outline-offset:2px}
+  .cue .badge{position:absolute;left:-9px;top:-14px;font:9px var(--mono);background:var(--s4);border:1px solid var(--line2);border-radius:8px;padding:0 4px;color:var(--ink2)}
+  .playhead{position:absolute;top:0;bottom:0;width:0;border-left:2px solid var(--cyan);z-index:6;box-shadow:0 0 10px var(--cyan);pointer-events:none}
+  .playhead::before{content:"";position:absolute;top:0;left:-7px;border:6px solid transparent;border-top:8px solid var(--cyan)}
+  .relbadge{position:absolute;right:8px;top:50%;transform:translateY(-50%);font-size:11px;color:var(--muted);background:var(--s2);border:1px dashed var(--line2);padding:3px 8px;border-radius:5px}
+
+  /* ---------- 检查器 ---------- */
+  .insp{grid-area:insp;background:var(--s1);border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+  .insp h3{font-size:12px;color:var(--muted);font-weight:500;padding:10px 12px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center}
+  .ibody{flex:1;overflow:auto;padding:12px}
+  .f{display:grid;grid-template-columns:62px 1fr;gap:6px 8px;align-items:center;margin-bottom:12px}
+  .f label{color:var(--muted);font-size:12px}
+  .act{background:var(--s2);border:1px solid var(--line);border-radius:9px;margin-bottom:10px;overflow:hidden}
+  .act.off{opacity:.5}
+  .act .ah{display:flex;align-items:center;gap:7px;padding:7px 9px;background:var(--s3);border-bottom:1px solid var(--line)}
+  .act .ah .no{font:600 11px var(--mono);color:var(--amber)}
+  .act .ah .ty{font-weight:600;font-size:12px}
+  .act .ah .x{margin-left:auto;display:flex;gap:4px;align-items:center}
+  .act .ah .x span{color:var(--muted);cursor:pointer;padding:0 3px}
+  .act .ab{padding:9px;display:grid;grid-template-columns:52px 1fr;gap:7px 8px;align-items:center}
+  .act .ab label{color:var(--muted);font-size:11.5px}
+  .chips{display:flex;flex-wrap:wrap;gap:4px}
+  .chip{font-size:11px;padding:2px 7px;border-radius:10px;background:var(--canvas);border:1px solid var(--line2)}
+  .chip.add{border-style:dashed;color:var(--muted);cursor:pointer}
+  .seg{display:inline-flex;border:1px solid var(--line);border-radius:5px;overflow:hidden}
+  .seg span{padding:2px 9px;font:11px var(--mono);cursor:pointer;color:var(--muted)}
+  .seg span.on{background:var(--s4);color:var(--ink)}
+  .seg span.on.h{color:var(--purple)} .seg span.on.a{color:var(--cyan)}
+  .payload{width:100%;font-family:var(--mono);font-size:12px}
+  .prev{grid-column:2;font:10.5px var(--mono);color:var(--muted)}
+  .prev b{color:var(--ok);font-weight:400}
+  .row3{display:flex;flex-wrap:wrap;gap:4px 5px;align-items:center;white-space:nowrap;font-size:11px;color:var(--muted)}
+  .row3 input{width:46px;padding:3px 5px}
+  .replybox{background:var(--canvas);border:1px solid var(--line);border-radius:6px;padding:6px}
+  .addact{width:100%;border-style:dashed;color:var(--muted);padding:8px}
+  .ifoot{padding:10px 12px;border-top:1px solid var(--line);display:flex;gap:8px}
+  .ifoot button{flex:1}
+  .primary{background:var(--amber);color:#000;border-color:var(--amber);font-weight:600}
+  .primary:hover{background:#ffc970}
+
+  /* ---------- 日志 ---------- */
+  .log{grid-area:log;border-top:1px solid var(--line);background:var(--s1);display:flex;flex-direction:column;min-width:0}
+  .loghead{display:flex;align-items:center;gap:10px;padding:5px 10px;border-bottom:1px solid var(--line)}
+  .loghead .tabs2 span{margin-right:12px;color:var(--muted);cursor:pointer}
+  .loghead .tabs2 span.on{color:var(--ink)}
+  .loghead .sp{flex:1}
+  .logbody{flex:1;overflow:auto;font:11.5px/1.75 var(--mono);padding:4px 10px}
+  .ln{display:grid;grid-template-columns:96px 34px 150px 1fr 190px;gap:10px;white-space:nowrap}
+  .ln .tx{color:var(--amber)} .ln .rx{color:var(--cyan)}
+  .ln .ok{color:var(--ok)} .ln .er{color:var(--err)}
+  .ln .c{overflow:hidden;text-overflow:ellipsis;color:var(--ink2)}
+  .ln .ts,.ln .ip{color:var(--muted)}
+  .testsend{display:flex;gap:6px;padding:6px 10px;border-top:1px solid var(--line);align-items:center}
+  .testsend input.payload{flex:1}
+  .note{position:fixed;right:356px;bottom:202px;font-size:11px;color:var(--subtle)}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- 顶栏 -->
+  <header class="top">
+    <div class="logo">Cue<b>Clock</b></div>
+    <div class="proj">展厅中控_2026.cueclock · 已保存</div>
+    <div class="mode"><span>编辑</span><span class="sim">模拟</span><span class="run on">● 运行中</span></div>
+    <div class="clock"><div class="t" id="clock">--:--:--</div><div class="d" id="date">-</div></div>
+    <div class="next"><div class="l">下一事件</div><div class="v" id="next">-</div></div>
+    <button class="estop">■ 急停调度</button>
+    <div class="nic"><span class="dot"></span>引擎 独立进程 · 已连接<br>en0 192.168.10.5 · 监听 9000 / 9001</div>
+  </header>
+
+  <!-- 左栏 -->
+  <aside class="side">
+    <div class="tabs"><span class="on" data-t="dev">设备</span><span data-t="trig">触发器</span><span data-t="cmd">指令库</span></div>
+    <div class="sidebody" id="sidebody"></div>
+  </aside>
+
+  <!-- 时间线 -->
+  <main class="main">
+    <div class="toolbar">
+      <button>＋ 时间线</button><button>＋ 组</button>
+      <span style="color:var(--line2)">|</span>
+      <label>日期 <input type="date" id="viewDate" style="width:130px"></label>
+      <label>缩放 <input type="range" id="zoom" min="40" max="400" value="70" style="width:110px"></label>
+      <button id="toNow">定位到现在</button>
+      <div class="sp"></div>
+      <label>吸附 <select><option>1 分钟</option><option>1 秒</option><option>100 ms</option><option>10 ms</option><option>1 ms</option></select></label>
+      <button>某日预览（互斥结果）</button><button>节假日日历</button><button>今日计划列表</button>
+    </div>
+    <div class="tl">
+      <div class="tlhead" id="tlhead"></div>
+      <div class="tlscroll" id="tlscroll"><div class="tlinner" id="tlinner"></div></div>
+    </div>
+  </main>
+
+  <!-- 检查器 -->
+  <section class="insp">
+    <h3><span>事件点检查器</span><span id="cueState" class="tag">-</span></h3>
+    <div class="ibody" id="ibody"></div>
+    <div class="ifoot"><button>▶ 立即执行</button><button class="primary">保存</button></div>
+  </section>
+
+  <!-- 日志 -->
+  <section class="log">
+    <div class="loghead">
+      <div class="tabs2"><span class="on">全部</span><span>发送 TX</span><span>接收 RX</span><span>错误</span></div>
+      <div class="sp"></div>
+      <div class="seg"><span class="on a">ASCII</span><span>HEX</span></div>
+      <button>导出</button><button>清空</button>
+    </div>
+    <div class="logbody" id="logbody"></div>
+    <div class="testsend">
+      <span style="color:var(--muted);font-size:12px">测试发送</span>
+      <select><option>灯光主控 192.168.10.21:5000</option><option>投影机-1 192.168.10.41:3002</option><option>自定义 IP…</option></select>
+      <div class="seg"><span class="on a">ASCII</span><span>HEX</span></div>
+      <input class="payload" value="SCENE 3\r\n">
+      <button class="primary">发送</button>
+    </div>
+  </section>
+</div>
+<div class="note">界面原型 · 假数据 · 仅示意交互</div>
+
+<script>
+/* ================= 假数据 ================= */
+const devices=[
+  {id:'L1',name:'灯光主控',ip:'192.168.10.21',port:5000,fmt:'ASCII',tag:'灯光',on:true},
+  {id:'L2',name:'灯光副控',ip:'192.168.10.22',port:5000,fmt:'ASCII',tag:'灯光',on:true},
+  {id:'M1',name:'媒体服务器',ip:'192.168.10.30',port:7000,fmt:'ASCII',tag:'媒体',on:true},
+  {id:'P1',name:'投影机-1',ip:'192.168.10.41',port:3002,fmt:'HEX',tag:'投影',on:true},
+  {id:'P2',name:'投影机-2',ip:'192.168.10.42',port:3002,fmt:'HEX',tag:'投影',on:false},
+  {id:'A1',name:'音频矩阵',ip:'192.168.10.60',port:8000,fmt:'HEX',tag:'音频',on:true},
+  {id:'R1',name:'继电器模块',ip:'192.168.10.70',port:6000,fmt:'HEX',tag:'电源',on:true},
+];
+const triggers=[
+  {name:'前台按钮 · 开馆',port:9000,match:'完全匹配 ASCII  "OPEN"',from:'白名单 192.168.10.0/24',key:'KEY1:',confirm:true,run:'启用组「展厅灯光」+ 执行 3 个动作'},
+  {name:'演出启动',port:9000,match:'前缀 HEX  A5 10 01',from:'仅 192.168.10.80',run:'启动相对时间线「主秀 12 分钟」（演出模式·第二批）'},
+  {name:'场景切换',port:9001,match:'正则  ^SCENE (\\d+)$',from:'白名单 192.168.10.0/24',run:'发 UDP → 灯光主控 "GO {1}"'},
+];
+const commands=[
+  {name:'场景调用',fmt:'ASCII',c:'SCENE {id}\\r\\n'},
+  {name:'投影开机',fmt:'ASCII',c:'PWR ON\\r'},
+  {name:'继电器 N 路开',fmt:'HEX',c:'A5 01 {ch:hex1} 01 {sum8}'},
+  {name:'音量设置',fmt:'HEX',c:'B0 02 {vol:hex1} FF'},
+];
+const groups=[
+  {name:'展厅灯光',color:'#ffb84d',tracks:[
+    {name:'平日',rule:'工作日（含调休上班）· 优先级 3',today:true,on:true,cues:[
+      ['08:30','预热上电',2],['09:00','开馆场景',4],['12:00','午间节能',2],['17:30','闭馆场景',3],['18:00','全关',3]]},
+    {name:'周末',rule:'周末+法定节假日（含调休休息）· 优先级 2',today:false,on:true,cues:[
+      ['08:00','预热上电',2],['08:30','开馆场景',4],['19:30','夜场氛围',3],['21:00','全关',3]]},
+    {name:'国庆特别',rule:'2026-10-01 ~ 10-07 · 优先级 1 · 压过同组其他',today:true,on:true,cues:[
+      ['19:00','节日灯光秀',5],['22:00','全关',3]]},
+  ]},
+  {name:'投影 & 媒体',color:'#00d9ff',tracks:[
+    {name:'投影开关机',rule:'每天',today:true,on:true,cues:[['08:45','投影开机',2],['09:00','播放主片',1],['18:05','投影关机',2]]},
+    {name:'整点报时',rule:'每天',today:true,on:false,cues:[['10:00','报时',1],['11:00','报时',1],['14:00','报时',1],['15:00','报时',1],['16:00','报时',1]]},
+  ]},
+  {name:'演出（相对时间）',color:'#bf5af2',rel:true,tracks:[
+    {name:'主秀 12 分钟',rule:'由触发器「演出启动」启动',today:true,on:true,cues:[]},
+  ]},
+];
+
+/* 选中事件点的动作详情（示意） */
+const sampleActions=[
+  {type:'发送 UDP',targets:['灯光主控','灯光副控'],fmt:'ASCII',payload:'SCENE 12\\r\\n',offset:0,rep:2,gap:100,on:true,reply:{to:500,mode:'前缀',exp:'OK'},chase:true},
+  {type:'发送 UDP',targets:['投影机-1','投影机-2'],fmt:'HEX',payload:'A5 01 02 01 A9',offset:0,rep:3,gap:200,on:true,reply:null},
+  {type:'延时',ms:2000,on:true},
+  {type:'发送 UDP',targets:['媒体服务器'],fmt:'ASCII',payload:'PLAY show_main\\r',offset:0,rep:1,gap:0,on:true,reply:null},
+  {type:'时间线控制',op:'禁用',what:'投影 & 媒体 / 整点报时',on:false},
+];
+
+/* ================= 工具 ================= */
+const $=s=>document.querySelector(s);
+const toMin=t=>{const[h,m]=t.split(':').map(Number);return h*60+m};
+const pad=n=>String(n).padStart(2,'0');
+let pxh=+$('#zoom').value, sel=null;
+
+/* ================= 左栏 ================= */
+function renderSide(t){
+  const b=$('#sidebody');
+  if(t==='dev'){
+    b.innerHTML=`<div class="sechead">设备 (${devices.length}) <button>＋</button></div>`+
+      devices.map(d=>`<div class="dev"><div class="n"><i class="${d.on?'':'off'}"></i>${d.name}<span class="tag" style="margin-left:auto">${d.tag}</span></div>
+      <div class="a"><span>${d.ip}:${d.port}</span><span class="tag ${d.fmt==='HEX'?'hex':'asc'}">${d.fmt}</span></div></div>`).join('');
+  }else if(t==='trig'){
+    b.innerHTML=`<div class="sechead">UDP 触发器 <button>＋</button></div>`+
+      triggers.map(x=>`<div class="trig"><div style="display:flex;justify-content:space-between"><b>${x.name}</b><span class="tag">:${x.port}</span></div>
+      <div class="m">${x.match}</div><div class="r">来源：${x.from}${x.key?' · <span class="tag">口令 '+x.key+'</span>':''}${x.confirm?' · <span class="tag" style="color:var(--warn)">需二次确认</span>':''}</div><div class="r">→ ${x.run}</div></div>`).join('');
+  }else{
+    b.innerHTML=`<div class="sechead">指令模板 <button>＋</button></div>`+
+      commands.map(x=>`<div class="trig"><div style="display:flex;justify-content:space-between"><b>${x.name}</b><span class="tag ${x.fmt==='HEX'?'hex':'asc'}">${x.fmt}</span></div>
+      <div class="m">${x.c}</div></div>`).join('');
+  }
+}
+document.querySelectorAll('.tabs span').forEach(s=>s.onclick=()=>{
+  document.querySelectorAll('.tabs span').forEach(x=>x.classList.remove('on'));s.classList.add('on');renderSide(s.dataset.t)});
+
+/* ================= 时间线 ================= */
+function nowMin(){const d=new Date();return d.getHours()*60+d.getMinutes()+d.getSeconds()/60}
+function renderTL(){
+  const W=24*pxh, head=$('#tlhead'), inner=$('#tlinner');
+  inner.style.width=W+'px';
+  let h=`<div class="hcell">时间线 / 生效规则</div>`, r='';
+  // 标尺
+  r+=`<div class="ruler" style="width:${W}px">`;
+  for(let i=0;i<=24;i++){r+=`<div class="tk" style="left:${i*pxh}px">${pad(i)}:00</div>`;
+    if(pxh>=120&&i<24)for(let q=1;q<4;q++)r+=`<div class="tk min" style="left:${i*pxh+q*pxh/4}px"></div>`}
+  r+=`</div>`;
+  const grid=Array.from({length:25},(_,i)=>`<div class="grid" style="left:${i*pxh}px"></div>`).join('');
+  const now=nowMin();
+  groups.forEach((g,gi)=>{
+    h+=`<div class="grp"><span>▾</span><span class="sw" style="background:${g.color}"></span>${g.name}<span class="cnt">${g.tracks.length} 条</span></div>`;
+    r+=`<div class="row-grp">${grid}</div>`;
+    g.tracks.forEach((t,ti)=>{
+      const dis=!t.on||!t.today;
+      h+=`<div class="trk ${dis?'dis':''}"><div class="n"><input type="checkbox" ${t.on?'checked':''}>${t.name}</div><div class="rule">${t.rule}${t.today?'':' · 今日不生效'}</div></div>`;
+      r+=`<div class="row-trk ${dis?'dis':''}">${grid}`;
+      if(g.rel) r+=`<div class="relbadge">相对时间线 · 等待触发（双击打开独立编辑器 00:00 → 12:00）</div>`;
+      t.cues.forEach(([tm,name,n],ci)=>{
+        const m=toMin(tm), done=!dis&&m<now, id=`${gi}-${ti}-${ci}`;
+        r+=`<div class="cue ${done?'done':''} ${sel===id?'sel':''}" data-id="${id}" style="left:${m/60*pxh}px">
+          <span class="badge">${n}</span><div class="dm" style="background:${g.color}"></div>
+          <div class="lb">${name} <small>${tm}</small></div></div>`;
+      });
+      r+=`</div>`;
+    });
+  });
+  r+=`<div class="playhead" id="ph"></div>`;
+  head.innerHTML=h; inner.innerHTML=r;
+  inner.querySelectorAll('.cue').forEach(c=>c.onclick=()=>{sel=c.dataset.id;renderTL();renderInsp()});
+  movePH();
+}
+function movePH(){const p=$('#ph');if(p)p.style.left=nowMin()/60*pxh+'px'}
+$('#zoom').oninput=e=>{pxh=+e.target.value;renderTL()};
+$('#toNow').onclick=()=>{const s=$('#tlscroll');s.scrollLeft=nowMin()/60*pxh-s.clientWidth/2};
+$('#tlscroll').onscroll=e=>{$('#tlhead').scrollTop=e.target.scrollTop};
+
+/* ================= 检查器 ================= */
+function renderInsp(){
+  const [gi,ti,ci]=(sel||'0-0-1').split('-').map(Number);
+  const g=groups[gi],t=g.tracks[ti],c=t.cues[ci];
+  const done=toMin(c[0])<nowMin();
+  $('#cueState').textContent=done?'今日已执行 ✓':'待执行';
+  $('#cueState').style.color=done?'var(--ok)':'var(--amber)';
+  let h=`<div class="f">
+    <label>名称</label><input value="${c[1]}">
+    <label>时间</label><input class="mono" value="${c[0]}:00.000">
+    <label>所属</label><div class="mono" style="font-size:12px;color:var(--ink2)">${g.name} / ${t.name}</div>
+    <label>生效</label><div style="font-size:12px;color:var(--muted)">跟随时间线：${t.rule}　<span class="tag">组内互斥</span></div></div>
+    <div class="sechead" style="padding:4px 0 8px">动作列表（按顺序执行） <span>${sampleActions.length}</span></div>`;
+  sampleActions.forEach((a,i)=>{
+    h+=`<div class="act ${a.on?'':'off'}"><div class="ah"><span class="no">#${i+1}</span><span class="ty">${a.type}</span>
+      <div class="x"><input type="checkbox" ${a.on?'checked':''}><span>⧉</span><span>⋮⋮</span><span>✕</span></div></div><div class="ab">`;
+    if(a.type==='发送 UDP'){
+      const hex=a.fmt==='HEX';
+      h+=`<label>目标</label><div class="chips">${a.targets.map(x=>`<span class="chip">${x}</span>`).join('')}<span class="chip add">＋ 设备/标签</span></div>
+        <label>格式</label><div><span class="seg"><span class="${hex?'':'on a'}">ASCII</span><span class="${hex?'on h':''}">HEX</span></span>
+          ${hex?'':'<select style="margin-left:6px;padding:2px 5px"><option>结束符: 内容内</option><option>\\r</option><option>\\r\\n</option></select>'}</div>
+        <label>内容</label><input class="payload" value="${a.payload}">
+        <div class="prev">${hex?`<b>✓</b> ${a.payload.split(' ').length} 字节 · 校验 Sum8 正确`:`<b>✓</b> 字节: ${[...a.payload.replace(/\\r/g,'\r').replace(/\\n/g,'\n')].map(ch=>ch.charCodeAt(0).toString(16).toUpperCase().padStart(2,'0')).join(' ')}`}</div>
+        <label>参数</label><div class="row3">偏移<input value="${a.offset}">ms 重复<input value="${a.rep}" style="width:38px">次 间隔<input value="${a.gap}" style="width:48px">ms</div>
+        <label>断电恢复</label><div><span class="seg"><span class="${a.chase?'on a':''}">重启后补发</span><span class="${a.chase?'':'on a'}">不补发</span></span></div>
+        <label>回包</label><div><span class="seg"><span class="${a.reply?'':'on a'}">不校验</span><span class="${a.reply?'on a':''}">校验回包</span></span></div>
+        ${a.reply?`<label></label><div class="replybox"><div class="row3">超时<input value="${a.reply.to}" style="width:48px">ms 匹配<select style="padding:2px 4px"><option>${a.reply.mode}</option></select></div>
+          <input class="payload" style="margin-top:5px" value="${a.reply.exp}"><div class="prev" style="margin-top:3px">来源仅限目标设备 · 失败：重发 1 次，仍失败标红</div></div>`:`<div class="prev" style="grid-column:2">日志只显示「已发送」</div>`}`;
+    }else if(a.type==='延时'){
+      h+=`<label>时长</label><div class="row3"><input value="${a.ms}" style="width:80px">ms <span style="color:var(--muted);font-size:11px">后续动作顺延</span></div>`;
+    }else{
+      h+=`<label>操作</label><select><option>${a.op}</option><option>启用</option><option>启动(相对)</option><option>停止(相对)</option></select>
+        <label>对象</label><select><option>${a.what}</option></select>`;
+    }
+    h+=`</div></div>`;
+  });
+  h+=`<button class="addact">＋ 添加动作　（发送 UDP · 延时 · 时间线控制 · 引用指令模板）</button>`;
+  $('#ibody').innerHTML=h;
+}
+
+/* ================= 日志 ================= */
+const logs=[
+  ['08:30:00.004','TX','192.168.10.70:6000','A5 01 01 01 A8','已发送'],
+  ['08:30:00.006','TX','192.168.10.70:6000','A5 01 02 01 A9','已发送'],
+  ['08:45:00.002','TX','192.168.10.41:3002','PWR ON\\r','已发送'],
+  ['08:45:00.003','TX','192.168.10.42:3002','PWR ON\\r','超时 ✗'],
+  ['08:20:00.000','--','引擎','启动 · 08:30 前无待补发事件 · 恢复状态: 灯光=全关','恢复'],
+  ['08:58:12.331','RX','192.168.10.80:52011','OPEN','匹配「前台按钮·开馆」'],
+  ['09:00:00.003','TX','192.168.10.21:5000','SCENE 12\\r\\n','已确认 ✓ 回包 OK 12ms'],
+  ['09:00:00.004','TX','192.168.10.22:5000','SCENE 12\\r\\n','回包不符 ✗ ERR 3'],
+  ['09:00:02.010','TX','192.168.10.30:7000','PLAY show_main\\r','已发送'],
+  ['12:00:00.002','TX','192.168.10.21:5000','SCENE 4\\r\\n','已确认 ✓ 回包 OK 9ms'],
+];
+$('#logbody').innerHTML=logs.map(l=>`<div class="ln"><span class="ts">${l[0]}</span><span class="${l[1]==='TX'?'tx':'rx'}">${l[1]}</span>
+  <span class="ip">${l[2]}</span><span class="c">${l[3]}</span><span class="${/✗/.test(l[4])?'er':/已发送|匹配|恢复/.test(l[4])?'ip':'ok'}">${l[4]}</span></div>`).join('');
+
+/* ================= 时钟 & 下一事件 ================= */
+function tick(){
+  const d=new Date();
+  $('#clock').textContent=`${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  $('#date').textContent=`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} 星期${'日一二三四五六'[d.getDay()]}`;
+  const now=nowMin(); let best=null;
+  groups.forEach(g=>g.tracks.forEach(t=>{if(!t.on||!t.today)return;t.cues.forEach(c=>{const m=toMin(c[0]);if(m>now&&(!best||m<best.m))best={m,c,t}})}));
+  if(best){const s=Math.round((best.m-now)*60);$('#next').innerHTML=`${best.c[0]} ${best.t.name}·${best.c[1]} <em>-${pad(Math.floor(s/3600))}:${pad(Math.floor(s%3600/60))}:${pad(s%60)}</em>`}
+  else $('#next').textContent='今日无后续事件';
+  movePH();
+}
+const vd=new Date();$('#viewDate').value=`${vd.getFullYear()}-${pad(vd.getMonth()+1)}-${pad(vd.getDate())}`;
+renderSide('dev'); sel='0-0-1'; renderTL(); renderInsp(); tick(); setInterval(tick,1000);
+setTimeout(()=>$('#toNow').click(),50);
+</script>
+</body>
+</html>

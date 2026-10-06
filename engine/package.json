@@ -1,0 +1,17 @@
+{
+  "name": "cueclock-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CueClock 调度引擎核心：毫秒调度、UDP 收发、互斥/节假日规则、模拟、断电恢复",
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "simulate": "node src/cli.ts simulate"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}

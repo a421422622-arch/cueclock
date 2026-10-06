@@ -1,0 +1,320 @@
+{
+  "name": "CueClock 模式与目标时间轴示例",
+  "devices": [
+    {
+      "id": "LIGHT",
+      "name": "展厅灯光",
+      "ip": "127.0.0.1",
+      "port": 5001,
+      "color": "#ffb84d",
+      "tag": "展厅"
+    },
+    {
+      "id": "VIDEO",
+      "name": "入口投影",
+      "ip": "127.0.0.1",
+      "port": 5002,
+      "color": "#00d9ff",
+      "tag": "展厅"
+    },
+    {
+      "id": "AUDIO",
+      "name": "背景音响",
+      "ip": "127.0.0.1",
+      "port": 5003,
+      "color": "#bf5af2",
+      "tag": "展厅"
+    }
+  ],
+  "commands": [
+    {
+      "id": "cmd-light",
+      "name": "灯光场景",
+      "targets": [
+        "LIGHT"
+      ],
+      "format": "ascii",
+      "payload": "SCENE {{场景号}}",
+      "params": [
+        {
+          "name": "场景号",
+          "default": "1"
+        }
+      ],
+      "chase": true
+    },
+    {
+      "id": "cmd-off",
+      "name": "展厅联动关闭",
+      "targets": [
+        "tag:展厅"
+      ],
+      "format": "ascii",
+      "payload": "OFF",
+      "chase": true
+    }
+  ],
+  "groups": [
+    {
+      "id": "MODES",
+      "name": "展厅日程模式",
+      "mode": "exclusive"
+    }
+  ],
+  "timelines": [
+    {
+      "id": "workday",
+      "name": "工作日模式",
+      "color": "#ffb84d",
+      "groupId": "MODES",
+      "priority": 30,
+      "rule": {
+        "dayKinds": [
+          "workday",
+          "makeupWorkday"
+        ]
+      },
+      "cues": [
+        {
+          "id": "workday-light",
+          "name": "灯光开场",
+          "time": "09:00:00.000",
+          "enabled": false,
+          "defaultTarget": "LIGHT",
+          "actions": [
+            {
+              "id": "workday-a1",
+              "type": "command",
+              "commandId": "cmd-light",
+              "args": {
+                "场景号": "12"
+              }
+            }
+          ]
+        },
+        {
+          "id": "workday-video",
+          "name": "投影播放",
+          "time": "10:00:00.000",
+          "enabled": false,
+          "defaultTarget": "VIDEO",
+          "actions": [
+            {
+              "id": "workday-a2",
+              "type": "udp",
+              "targets": [
+                "VIDEO"
+              ],
+              "format": "ascii",
+              "payload": "PLAY",
+              "offsetMs": 250
+            }
+          ]
+        },
+        {
+          "id": "workday-audio",
+          "name": "音响播放",
+          "time": "10:00:00.000",
+          "enabled": false,
+          "defaultTarget": "AUDIO",
+          "actions": [
+            {
+              "id": "workday-a3",
+              "type": "udp",
+              "targets": [
+                "AUDIO"
+              ],
+              "format": "ascii",
+              "payload": "BGM ON"
+            }
+          ]
+        },
+        {
+          "id": "workday-all",
+          "name": "闭馆联动",
+          "time": "18:00:00.000",
+          "enabled": false,
+          "actions": [
+            {
+              "id": "workday-a4",
+              "type": "command",
+              "commandId": "cmd-off"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "weekend",
+      "name": "周末模式",
+      "color": "#00d9ff",
+      "groupId": "MODES",
+      "priority": 20,
+      "rule": {
+        "dayKinds": [
+          "weekend"
+        ]
+      },
+      "cues": [
+        {
+          "id": "weekend-light",
+          "name": "灯光开场",
+          "time": "09:00:00.000",
+          "enabled": false,
+          "defaultTarget": "LIGHT",
+          "actions": [
+            {
+              "id": "weekend-a1",
+              "type": "command",
+              "commandId": "cmd-light",
+              "args": {
+                "场景号": "12"
+              }
+            }
+          ]
+        },
+        {
+          "id": "weekend-video",
+          "name": "投影播放",
+          "time": "10:00:00.000",
+          "enabled": false,
+          "defaultTarget": "VIDEO",
+          "actions": [
+            {
+              "id": "weekend-a2",
+              "type": "udp",
+              "targets": [
+                "VIDEO"
+              ],
+              "format": "ascii",
+              "payload": "PLAY",
+              "offsetMs": 250
+            }
+          ]
+        },
+        {
+          "id": "weekend-audio",
+          "name": "音响播放",
+          "time": "10:00:00.000",
+          "enabled": false,
+          "defaultTarget": "AUDIO",
+          "actions": [
+            {
+              "id": "weekend-a3",
+              "type": "udp",
+              "targets": [
+                "AUDIO"
+              ],
+              "format": "ascii",
+              "payload": "BGM ON"
+            }
+          ]
+        },
+        {
+          "id": "weekend-all",
+          "name": "闭馆联动",
+          "time": "18:00:00.000",
+          "enabled": false,
+          "actions": [
+            {
+              "id": "weekend-a4",
+              "type": "command",
+              "commandId": "cmd-off"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "holiday",
+      "name": "节假日模式",
+      "color": "#bf5af2",
+      "groupId": "MODES",
+      "priority": 10,
+      "rule": {
+        "dayKinds": [
+          "holiday"
+        ]
+      },
+      "cues": [
+        {
+          "id": "holiday-light",
+          "name": "灯光开场",
+          "time": "09:00:00.000",
+          "enabled": false,
+          "defaultTarget": "LIGHT",
+          "actions": [
+            {
+              "id": "holiday-a1",
+              "type": "command",
+              "commandId": "cmd-light",
+              "args": {
+                "场景号": "12"
+              }
+            }
+          ]
+        },
+        {
+          "id": "holiday-video",
+          "name": "投影播放",
+          "time": "10:00:00.000",
+          "enabled": false,
+          "defaultTarget": "VIDEO",
+          "actions": [
+            {
+              "id": "holiday-a2",
+              "type": "udp",
+              "targets": [
+                "VIDEO"
+              ],
+              "format": "ascii",
+              "payload": "PLAY",
+              "offsetMs": 250
+            }
+          ]
+        },
+        {
+          "id": "holiday-audio",
+          "name": "音响播放",
+          "time": "10:00:00.000",
+          "enabled": false,
+          "defaultTarget": "AUDIO",
+          "actions": [
+            {
+              "id": "holiday-a3",
+              "type": "udp",
+              "targets": [
+                "AUDIO"
+              ],
+              "format": "ascii",
+              "payload": "BGM ON"
+            }
+          ]
+        },
+        {
+          "id": "holiday-all",
+          "name": "闭馆联动",
+          "time": "18:00:00.000",
+          "enabled": false,
+          "actions": [
+            {
+              "id": "holiday-a4",
+              "type": "command",
+              "commandId": "cmd-off"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "triggers": [],
+  "calendar": {
+    "holidays": {},
+    "makeupWorkdays": []
+  },
+  "settings": {
+    "recovery": {
+      "enabled": false
+    }
+  }
+}

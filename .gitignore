@@ -1,0 +1,18 @@
+# 依赖与构建产物
+node_modules/
+dist/
+*.tsbuildinfo
+
+# 系统文件
+.DS_Store
+
+# Codex 的过程证据（日志、截图、一次性脚本），不是源码
+.codex-work/
+
+# 运行时状态与备份（含引擎令牌、项目备份、日志），绝不能进仓库
+.cueclock-backups/
+daemon.json
+daemon.out.log
+settings.json
+app-prefs.json
+*.log

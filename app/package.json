@@ -1,0 +1,29 @@
+{
+  "name": "cueclock-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "CueClock 桌面界面（Electron + React）。引擎是独立进程，见 ../engine",
+  "main": "dist/electron/main.cjs",
+  "scripts": {
+    "dev:web": "vite",
+    "build:engine": "node scripts/build-electron.mjs engine",
+    "build:electron": "node scripts/build-electron.mjs",
+    "build": "vite build && node scripts/build-electron.mjs",
+    "start": "npm run build && electron .",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"test/*.test.ts\""
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "electron": "^44.5.1",
+    "esbuild": "^0.28.2",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "typescript": "^5.9.3",
+    "vite": "^8.3.2"
+  }
+}

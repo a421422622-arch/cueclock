@@ -1,0 +1,602 @@
+import net from 'node:net';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+import type { Command, Project } from './types.ts';
+import { Engine } from './engine.ts';
+import type { LogEntry } from './engine.ts';
+import { ProjectStore, normalizeProject } from './store.ts';
+import { validateCommand, validateProject } from './validate.ts';
+import { simulateDays } from './simulate.ts';
+import { attachFileLogger } from './logfile.ts';
+import { defaultStateDir } from './paths.ts';
+import { dateKey, isDateKey } from './calendar.ts';
+import { buildPayload } from './payload.ts';
+import { listInterfaces, missingAddresses, parseNetwork } from './network.ts';
+import type { NetworkSettings } from './network.ts';
+import { matchBuffer } from './match.ts';
+import { DEFAULT_PORT, LineReader, PROTOCOL_VERSION, RpcError } from './protocol.ts';
+import type { DaemonInfo, EventMessage, Request, Response } from './protocol.ts';
+import { engineHello } from './version.ts';
+
+export interface DaemonOptions {
+  /** 不给就用状态目录 settings.json 里上次打开的项目，再没有就用默认项目 */
+  projectFile?: string;
+  /** 收到 shutdown 请求时调用（由进程入口决定怎么退出） */
+  onShutdown?: () => void;
+  /** 网卡/端口绑定失败后的重试间隔（毫秒），默认 5000。开机时网卡常常还没起来 */
+  retryMs?: number;
+  stateDir?: string;
+  /** 0 = 系统分配（测试用）。默认 47800 */
+  port?: number;
+  /** 模拟模式：不发包、不监听触发端口 */
+  dryRun?: boolean;
+  initialPaused?: boolean;
+}
+
+/** 引擎自己记的设置：上次打开的项目、最近项目。界面的偏好另存。 */
+export interface DaemonSettings {
+  projectFile?: string;
+  recent: string[];
+  /** 本机网络设置（机器级，不进项目文件）。未设置过 = 沿用项目里的旧设置 */
+  network?: NetworkSettings;
+  /** 急停状态。急停是安全开关，引擎重启（崩溃、断电）后必须保持，不能悄悄恢复调度 */
+  paused?: boolean;
+}
+
+const MAX_RECENT = 8;
+
+interface Conn {
+  socket: net.Socket;
+  reader: LineReader;
+  authed: boolean;
+}
+
+const IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+
+function obj(v: unknown, what = '参数'): Record<string, unknown> {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) throw new RpcError('bad-request', `${what}必须是对象`);
+  return v as Record<string, unknown>;
+}
+
+/**
+ * 引擎守护进程：独立于界面运行，界面通过本机 TCP 连接它。
+ * 界面关闭、崩溃、重连都不影响调度。项目有错误时 daemon 仍会启动（引擎不运行），
+ * 等界面保存一份合法项目后再启动引擎。
+ */
+export class Daemon {
+  private opts: DaemonOptions;
+  private stateDir: string;
+  private store: ProjectStore | null = null;
+  private notice: string | null = null;
+  private settings: DaemonSettings = { recent: [] };
+  private project: Project | null = null;
+  private rev = 0;
+  private engine: Engine | null = null;
+  private startError: string | null = null;
+  private server: net.Server | null = null;
+  private conns = new Set<Conn>();
+  private token = '';
+  private info: DaemonInfo | null = null;
+  private chain: Promise<unknown> = Promise.resolve();
+  private detachFileLog: (() => void) | null = null;
+  private pausedBeforeStart = false;
+  private retryTimer: NodeJS.Timeout | null = null;
+  private stopped = false;
+
+  constructor(opts: DaemonOptions) {
+    this.opts = opts;
+    this.stateDir = opts.stateDir ?? defaultStateDir();
+  }
+
+  get defaultProjectFile(): string {
+    return path.join(this.stateDir, 'projects', 'default.cueclock.json');
+  }
+
+  private get settingsFile(): string {
+    return path.join(this.stateDir, 'settings.json');
+  }
+
+  private async readSettings(): Promise<DaemonSettings> {
+    try {
+      const raw = JSON.parse(await readFile(this.settingsFile, 'utf8')) as Partial<DaemonSettings>;
+      let network: NetworkSettings | undefined;
+      if (raw.network !== undefined) {
+        try {
+          network = parseNetwork(raw.network);
+        } catch {
+          network = undefined; // 设置文件里的网络配置损坏：当作没设置过
+        }
+      }
+      return {
+        projectFile: typeof raw.projectFile === 'string' ? raw.projectFile : undefined,
+        recent: Array.isArray(raw.recent) ? raw.recent.filter((x): x is string => typeof x === 'string') : [],
+        network,
+        paused: raw.paused === true,
+      };
+    } catch {
+      return { recent: [] };
+    }
+  }
+
+  /** 记住当前项目，并放到"最近"最前面。写失败不影响运行。 */
+  private async remember(file: string): Promise<void> {
+    this.settings = {
+      ...this.settings,
+      projectFile: file,
+      recent: [file, ...this.settings.recent.filter((f) => f !== file)].slice(0, MAX_RECENT),
+    };
+    await this.persistSettings();
+  }
+
+  private async persistSettings(): Promise<void> {
+    try {
+      await writeFile(this.settingsFile, JSON.stringify(this.settings, null, 2));
+    } catch {
+      /* 状态目录不可写时只是不记住 */
+    }
+  }
+
+  private emptyProject(name: string): Project {
+    return { name, devices: [], groups: [], timelines: [], triggers: [] };
+  }
+
+  get port(): number {
+    return (this.server?.address() as net.AddressInfo | null)?.port ?? 0;
+  }
+
+  get infoFile(): string {
+    return path.join(this.stateDir, 'daemon.json');
+  }
+
+  async start(): Promise<DaemonInfo> {
+    await mkdir(this.stateDir, { recursive: true });
+    this.settings = await this.readSettings();
+    this.pausedBeforeStart = this.opts.initialPaused ?? (this.settings.paused === true);
+    this.settings.paused = this.pausedBeforeStart;
+
+    // 选项目：命令行明确指定 > 上次打开的 > 默认项目。
+    // 明确指定的文件不存在或损坏 → 直接报错，不擅自新建（防止手滑写错路径）。
+    let file = this.opts.projectFile ? path.resolve(this.opts.projectFile) : undefined;
+    if (!file) {
+      const last = this.settings.projectFile;
+      if (last && existsSync(last)) file = last;
+      else {
+        if (last) this.notice = `上次的项目文件不存在（${last}），已改用默认项目`;
+        file = this.defaultProjectFile;
+        if (!existsSync(file)) await new ProjectStore(file).save(this.emptyProject('新项目'));
+      }
+    }
+    this.store = new ProjectStore(file);
+    this.project = await this.store.load();
+    await this.remember(file);
+
+    this.server = net.createServer((socket) => this.onConnection(socket));
+    await new Promise<void>((resolve, reject) => {
+      const s = this.server!;
+      s.once('error', (e: NodeJS.ErrnoException) =>
+        reject(e.code === 'EADDRINUSE' ? new Error(`端口 ${this.opts.port ?? DEFAULT_PORT} 已被占用，可能已有 CueClock 引擎在运行`) : e),
+      );
+      s.listen({ host: '127.0.0.1', port: this.opts.port ?? DEFAULT_PORT }, () => {
+        s.removeAllListeners('error');
+        s.on('error', () => {});
+        resolve();
+      });
+    });
+
+    this.token = randomBytes(24).toString('hex');
+    this.info = {
+      ...engineHello(),
+      port: this.port,
+      token: this.token,
+      pid: process.pid,
+      startedAt: Date.now(),
+      projectFile: this.store!.file,
+    };
+    await writeFile(this.infoFile, JSON.stringify(this.info, null, 2), { mode: 0o600 });
+
+    await this.startEngine();
+    return this.info;
+  }
+
+  async stop(): Promise<void> {
+    this.stopped = true;
+    this.clearRetry();
+    for (const c of this.conns) c.socket.destroy();
+    this.conns.clear();
+    await new Promise<void>((r) => (this.server ? this.server.close(() => r()) : r()));
+    await this.engine?.stop();
+    this.detachFileLog?.();
+    // 只删自己写的 daemon.json
+    try {
+      const cur = JSON.parse(await readFile(this.infoFile, 'utf8')) as DaemonInfo;
+      if (cur.pid === process.pid && cur.token === this.token) await rm(this.infoFile, { force: true });
+    } catch {
+      /* 已不存在 */
+    }
+  }
+
+  // ───────────── 引擎生命周期 ─────────────
+
+  private async persistPaused(): Promise<void> {
+    this.settings = { ...this.settings, paused: this.pausedBeforeStart };
+    await this.persistSettings();
+  }
+
+  private clearRetry(): void {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+  }
+
+  private async startEngine(): Promise<void> {
+    this.clearRetry();
+    const engine = new Engine(this.project!, { dryRun: this.opts.dryRun, network: this.settings.network, startPaused: this.pausedBeforeStart });
+    engine.on('log', (e: LogEntry) => this.broadcast({ event: 'log', data: e }));
+    try {
+      await engine.start();
+    } catch (e) {
+      this.engine = null;
+      const err = e as Error & { bindFailure?: boolean };
+      const retry = this.opts.retryMs ?? 5000;
+      this.startError = err.bindFailure ? `${err.message}。每 ${Math.round(retry / 1000)} 秒自动重试，也可在「设置」里改选网卡` : err.message;
+      this.broadcast({ event: 'status', data: this.statusPayload() });
+      // 开机时网卡可能还没起来、或端口暂时被占：等一会儿再试，而不是让引擎一直停着
+      if (err.bindFailure && !this.stopped) {
+        this.retryTimer = setTimeout(() => {
+          this.serialize(async () => {
+            if (!this.engine && !this.stopped) await this.startEngine();
+          }).catch(() => {});
+        }, retry);
+      }
+      return;
+    }
+    this.engine = engine;
+    this.startError = null;
+    this.detachFileLog?.();
+    this.detachFileLog = attachFileLogger(engine, path.join(this.stateDir, 'logs'));
+    this.broadcast({ event: 'status', data: this.statusPayload() });
+  }
+
+  private networkInfo() {
+    const net = this.settings.network;
+    const legacy = this.project?.settings;
+    const eff: NetworkSettings = net ?? {
+      localAddresses: legacy?.localAddress ? [legacy.localAddress] : undefined,
+      localPort: legacy?.localPort,
+    };
+    const missing = missingAddresses(eff.localAddresses);
+    return {
+      settings: eff,
+      source: net ? 'machine' : eff.localAddresses || eff.localPort ? 'project' : 'default',
+      /** 配置了但本机当前没有的网卡 */
+      missing,
+      available: missing.length === 0,
+    };
+  }
+
+  private statusPayload(): unknown {
+    return {
+      ...engineHello(),
+      daemon: { pid: process.pid, projectFile: this.store!.file, rev: this.rev, startError: this.startError, notice: this.notice },
+      network: this.networkInfo(),
+      engine: this.engine?.status() ?? null,
+    };
+  }
+
+  /** 保存、重载这类会改状态的操作排队执行，避免并发写文件。 */
+  private serialize<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.chain.then(fn, fn);
+    this.chain = run.catch(() => {});
+    return run;
+  }
+
+  // ───────────── 连接与分发 ─────────────
+
+  private onConnection(socket: net.Socket): void {
+    const conn: Conn = { socket, reader: new LineReader(), authed: false };
+    this.conns.add(conn);
+    socket.setEncoding('utf8');
+    socket.setNoDelay(true);
+    const authTimer = setTimeout(() => {
+      if (!conn.authed) socket.destroy();
+    }, 5000);
+    socket.on('data', (chunk: string) => {
+      let lines: string[];
+      try {
+        lines = conn.reader.push(chunk);
+      } catch {
+        socket.destroy();
+        return;
+      }
+      for (const line of lines) this.onLine(conn, line).catch(() => socket.destroy());
+    });
+    socket.on('error', () => {});
+    socket.on('close', () => {
+      clearTimeout(authTimer);
+      this.conns.delete(conn);
+    });
+  }
+
+  private send(conn: Conn, msg: Response | EventMessage): void {
+    if (conn.socket.destroyed) return;
+    if (conn.socket.writableLength > 8 * 1024 * 1024) {
+      conn.socket.destroy(); // 客户端读得太慢，断开，免得内存涨
+      return;
+    }
+    conn.socket.write(JSON.stringify(msg) + '\n');
+  }
+
+  private broadcast(msg: EventMessage): void {
+    for (const c of this.conns) if (c.authed) this.send(c, msg);
+  }
+
+  private async onLine(conn: Conn, line: string): Promise<void> {
+    let req: Request;
+    try {
+      const parsed = JSON.parse(line) as Request;
+      if (typeof parsed !== 'object' || parsed === null || typeof parsed.method !== 'string' || typeof parsed.id !== 'number') {
+        throw new Error('格式不对');
+      }
+      req = parsed;
+    } catch {
+      conn.socket.destroy();
+      return;
+    }
+    type Body = { ok: true; result: unknown } | { ok: false; error: { code: string; message: string; details?: unknown } };
+    const reply = (r: Body) => this.send(conn, { id: req.id, ...r });
+
+    if (!conn.authed) {
+      const given = Buffer.from(String(obj(req.params ?? {}).token ?? ''));
+      const want = Buffer.from(this.token);
+      if (req.method === 'hello' && given.length === want.length && timingSafeEqual(given, want)) {
+        if (obj(req.params ?? {}).protocol !== PROTOCOL_VERSION) {
+          reply({ ok: false, error: { code: 'incompatible-version', message: `需要协议 ${PROTOCOL_VERSION} 的客户端` } });
+          conn.socket.end();
+          return;
+        }
+        conn.authed = true;
+        reply({ ok: true, result: { ...engineHello(), rev: this.rev } });
+        this.send(conn, { event: 'status', data: this.statusPayload() });
+      } else {
+        reply({ ok: false, error: { code: 'unauthorized', message: '令牌无效' } });
+        conn.socket.end();
+      }
+      return;
+    }
+    try {
+      const result = await this.dispatch(req.method, req.params);
+      reply({ ok: true, result: result ?? null });
+    } catch (e) {
+      if (e instanceof RpcError) reply({ ok: false, error: { code: e.code, message: e.message, details: e.details } });
+      else reply({ ok: false, error: { code: 'internal', message: (e as Error)?.message ?? String(e) } });
+    }
+  }
+
+  private needEngine(): Engine {
+    if (!this.engine) throw new RpcError('engine-down', this.startError ? `引擎未运行：${this.startError}` : '引擎未运行');
+    return this.engine;
+  }
+
+  private async dispatch(method: string, params: unknown): Promise<unknown> {
+    switch (method) {
+      case 'ping':
+        return { now: Date.now() };
+
+      case 'status':
+        return this.statusPayload();
+
+      case 'getProject':
+        return { project: this.project, rev: this.rev, file: this.store!.file };
+
+      case 'validateProject': {
+        const p = obj(params);
+        return validateProject(this.parseProject(p.project));
+      }
+
+      case 'saveProject': {
+        const p = obj(params);
+        return this.serialize(() => this.saveProject(p));
+      }
+
+      case 'listInterfaces':
+        return listInterfaces();
+
+      case 'getNetwork':
+        return { ...this.networkInfo(), interfaces: listInterfaces() };
+
+      case 'setNetwork': {
+        const p = obj(params);
+        let net: NetworkSettings;
+        try {
+          net = parseNetwork(p.network);
+        } catch (e) {
+          throw new RpcError('bad-request', (e as Error).message);
+        }
+        return this.serialize(() => this.setNetwork(net));
+      }
+
+      case 'getSettings':
+        return { ...this.settings, stateDir: this.stateDir, projectFile: this.store!.file };
+
+      case 'openProject': {
+        const p = obj(params);
+        return this.serialize(() => this.openProject(this.absPath(p.file), { force: p.force === true }));
+      }
+
+      case 'newProject': {
+        const p = obj(params);
+        return this.serialize(() => this.newProject(this.absPath(p.file), typeof p.name === 'string' ? p.name : undefined));
+      }
+
+      case 'shutdown':
+        // 先回复，再在下一轮事件循环里退出，保证请求方能收到回复
+        setTimeout(() => this.opts.onShutdown?.(), 50);
+        return { shuttingDown: true };
+
+      case 'getLogs': {
+        const limit = Math.min(2000, Math.max(1, Number(obj(params ?? {}).limit ?? 500)));
+        return this.engine?.logs.slice(-limit) ?? [];
+      }
+
+      case 'pause':
+        this.pausedBeforeStart = true;
+        await this.persistPaused();
+        this.engine?.pause();
+        this.broadcast({ event: 'status', data: this.statusPayload() });
+        return { paused: true };
+
+      case 'resume':
+        this.pausedBeforeStart = false;
+        await this.persistPaused();
+        this.engine?.resume();
+        this.broadcast({ event: 'status', data: this.statusPayload() });
+        return { paused: false };
+
+      case 'testSend': {
+        const p = obj(params);
+        const ip = String(p.ip ?? '');
+        const m = IPV4.exec(ip);
+        if (!m || m.slice(1).some((x) => Number(x) > 255)) throw new RpcError('bad-request', `IP "${ip}" 不是合法 IPv4`);
+        const port = Number(p.port);
+        if (!Number.isInteger(port) || port < 1 || port > 65535) throw new RpcError('bad-request', `端口 ${p.port} 非法`);
+        const format = p.format === 'hex' ? 'hex' : p.format === 'ascii' ? 'ascii' : null;
+        if (!format) throw new RpcError('bad-request', 'format 必须是 ascii 或 hex');
+        const terminator = (['none', 'cr', 'lf', 'crlf'] as const).find((t) => t === p.terminator);
+        try {
+          buildPayload(format, String(p.payload ?? ''), terminator);
+          if (p.reply) matchBuffer(Buffer.alloc(0), obj(p.reply, 'reply') as never);
+        } catch (e) {
+          throw new RpcError('bad-request', (e as Error).message);
+        }
+        const result = await this.needEngine().sendTest({
+          ip, port, format, payload: String(p.payload), terminator, reply: (p.reply as never) ?? null,
+        });
+        return { result };
+      }
+
+      case 'runCue': {
+        const p = obj(params);
+        try {
+          return { actions: this.needEngine().runCueNow(String(p.timelineId), String(p.cueId)) };
+        } catch (e) {
+          if (e instanceof RpcError) throw e;
+          throw new RpcError('not-found', (e as Error).message);
+        }
+      }
+
+      case 'runCommand': {
+        const p = obj(params);
+        const cmd = (p.command !== undefined ? p.command : this.project!.commands?.find((c) => c.id === String(p.commandId))) as Command | undefined;
+        if (!cmd || typeof cmd !== 'object') throw new RpcError('not-found', `找不到指令 ${String(p.commandId)}`);
+        const bad = validateCommand(this.project!, cmd).filter((i) => i.level === 'error');
+        if (bad.length > 0) throw new RpcError('bad-request', bad.map((i) => i.message).join('；'), bad);
+        const args = p.args === undefined ? undefined : (obj(p.args, 'args') as Record<string, string>);
+        try {
+          return { actions: this.needEngine().runCommandNow(cmd, args) };
+        } catch (e) {
+          if (e instanceof RpcError) throw e;
+          throw new RpcError('bad-request', (e as Error).message);
+        }
+      }
+
+      case 'simulate': {
+        const p = obj(params ?? {});
+        const from = p.from === undefined ? dateKey(new Date()) : String(p.from);
+        if (!isDateKey(from)) throw new RpcError('bad-request', `日期 "${from}" 格式应为 YYYY-MM-DD`);
+        const days = Math.min(366, Math.max(1, Number(p.days ?? 1)));
+        const project = p.project === undefined ? this.project! : this.parseProject(p.project); // 可预览尚未保存的草稿
+        return simulateDays(project, from, days);
+      }
+
+      default:
+        throw new RpcError('bad-request', `未知方法 ${method}`);
+    }
+  }
+
+  /** 改网络设置：保存到机器级设置，重启引擎让新的网卡/端口生效。 */
+  private async setNetwork(net: NetworkSettings): Promise<unknown> {
+    this.settings = { ...this.settings, network: net };
+    await this.persistSettings();
+    this.clearRetry();
+    await this.engine?.stop();
+    this.engine = null;
+    this.detachFileLog?.();
+    this.detachFileLog = null;
+    await this.startEngine();
+    this.broadcast({ event: 'status', data: this.statusPayload() });
+    return { ...this.networkInfo(), running: this.engine !== null, startError: this.startError };
+  }
+
+  private absPath(v: unknown): string {
+    if (typeof v !== 'string' || !path.isAbsolute(v)) throw new RpcError('bad-request', '项目文件必须是绝对路径');
+    return path.normalize(v);
+  }
+
+  /** 新建一个空项目文件并切换过去；已存在的文件绝不覆盖。 */
+  private async newProject(file: string, name?: string): Promise<unknown> {
+    if (existsSync(file)) throw new RpcError('bad-request', `${file} 已存在，不会覆盖。要打开它请用「打开项目」`);
+    const title = name ?? path.basename(file).replace(/\.cueclock\.json$|\.json$/i, '');
+    await new ProjectStore(file).save(this.emptyProject(title || '新项目'));
+    return this.openProject(file, { force: false });
+  }
+
+  /**
+   * 切换到另一个项目：先停当前引擎，再启动新的。版本号只增不减，
+   * 这样其他客户端手里旧项目的草稿再保存时一定会因版本不符而被拒。
+   * 目标项目有错误时默认拒绝（避免误操作把正在运行的日程停掉），force 才打开。
+   */
+  private async openProject(file: string, opts: { force: boolean }): Promise<unknown> {
+    let next: Project;
+    try {
+      next = await new ProjectStore(file).load();
+    } catch (e) {
+      throw new RpcError('bad-request', `无法读取项目：${(e as Error).message}`);
+    }
+    const issues = validateProject(next);
+    if (issues.some((i) => i.level === 'error') && !opts.force) {
+      throw new RpcError('invalid-project', '该项目有错误，打开后引擎将无法运行', issues);
+    }
+    this.clearRetry();
+    await this.engine?.stop();
+    this.engine = null;
+    this.detachFileLog?.();
+    this.detachFileLog = null;
+    this.store = new ProjectStore(file);
+    this.project = next;
+    this.rev++;
+    this.notice = null;
+    await this.remember(file);
+    await this.startEngine();
+    this.broadcast({ event: 'project-changed', data: { file, rev: this.rev } });
+    this.broadcast({ event: 'status', data: this.statusPayload() });
+    return { file, rev: this.rev, issues: issues.filter((i) => i.level === 'warn') };
+  }
+
+  private parseProject(raw: unknown): Project {
+    try {
+      return normalizeProject(raw);
+    } catch (e) {
+      throw new RpcError('bad-request', (e as Error).message);
+    }
+  }
+
+  private async saveProject(p: Record<string, unknown>): Promise<unknown> {
+    const project = this.parseProject(p.project);
+    if (typeof p.baseRev !== 'number') throw new RpcError('bad-request', '缺少 baseRev（上次读到的版本号）');
+    if (p.baseRev !== this.rev) {
+      throw new RpcError('conflict', `项目已被其他客户端修改（当前版本 ${this.rev}，你基于 ${p.baseRev}），请重新加载`, { rev: this.rev });
+    }
+    const issues = validateProject(project);
+    if (issues.some((i) => i.level === 'error')) {
+      throw new RpcError('invalid-project', '项目检查未通过，未保存', issues);
+    }
+    await this.store!.save(project);
+    this.project = project;
+    this.rev++;
+    if (this.engine) await this.engine.reload(project);
+    else await this.startEngine();
+    this.broadcast({ event: 'status', data: this.statusPayload() });
+    return { rev: this.rev, warnings: issues.filter((i) => i.level === 'warn') };
+  }
+}

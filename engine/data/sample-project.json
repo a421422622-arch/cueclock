@@ -1,0 +1,454 @@
+{
+  "name": "展厅中控（示例）",
+  "devices": [
+    {
+      "id": "L1",
+      "name": "灯光主控",
+      "ip": "127.0.0.1",
+      "format": "ascii",
+      "terminator": "crlf",
+      "tag": "灯光",
+      "port": 5000
+    },
+    {
+      "id": "L2",
+      "name": "灯光副控",
+      "ip": "127.0.0.1",
+      "format": "ascii",
+      "terminator": "crlf",
+      "tag": "灯光",
+      "port": 5001
+    },
+    {
+      "id": "M1",
+      "name": "媒体服务器",
+      "ip": "127.0.0.1",
+      "port": 7000,
+      "format": "ascii",
+      "terminator": "cr"
+    },
+    {
+      "id": "P1",
+      "name": "投影机-1",
+      "ip": "127.0.0.1",
+      "port": 3002,
+      "format": "hex",
+      "tag": "投影"
+    },
+    {
+      "id": "P2",
+      "name": "投影机-2",
+      "ip": "127.0.0.1",
+      "port": 3003,
+      "format": "hex",
+      "tag": "投影",
+      "enabled": false
+    },
+    {
+      "id": "R1",
+      "name": "继电器模块",
+      "ip": "127.0.0.1",
+      "format": "hex",
+      "port": 6000
+    }
+  ],
+  "groups": [
+    {
+      "id": "G-light",
+      "name": "展厅灯光",
+      "mode": "exclusive"
+    },
+    {
+      "id": "G-av",
+      "name": "投影 & 媒体",
+      "mode": "parallel"
+    }
+  ],
+  "timelines": [
+    {
+      "id": "T-workday",
+      "name": "平日",
+      "groupId": "G-light",
+      "priority": 3,
+      "rule": {
+        "dayKinds": [
+          "workday",
+          "makeupWorkday"
+        ]
+      },
+      "cues": [
+        {
+          "id": "c1",
+          "name": "预热上电",
+          "time": "08:30:00.000",
+          "actions": [
+            {
+              "id": "a1",
+              "type": "udp",
+              "targets": [
+                "R1"
+              ],
+              "format": "hex",
+              "payload": "A5 01 01 01 A8",
+              "repeat": 2,
+              "repeatGapMs": 100,
+              "chase": true
+            }
+          ]
+        },
+        {
+          "id": "c2",
+          "name": "开馆场景",
+          "time": "09:00:00.000",
+          "actions": [
+            {
+              "id": "a1",
+              "type": "command",
+              "commandId": "cmd-scene",
+              "args": {
+                "scene": "12"
+              }
+            },
+            {
+              "id": "a2",
+              "type": "delay",
+              "ms": 2000
+            },
+            {
+              "id": "a3",
+              "type": "udp",
+              "targets": [
+                "M1"
+              ],
+              "format": "ascii",
+              "payload": "PLAY show_main"
+            }
+          ]
+        },
+        {
+          "id": "c3",
+          "name": "闭馆场景",
+          "time": "17:30:00.000",
+          "actions": [
+            {
+              "id": "a1",
+              "type": "command",
+              "commandId": "cmd-scene",
+              "args": {
+                "scene": "3"
+              }
+            }
+          ]
+        },
+        {
+          "id": "c4",
+          "name": "全关",
+          "time": "18:00:00.000",
+          "actions": [
+            {
+              "id": "a1",
+              "type": "udp",
+              "targets": [
+                "tag:灯光"
+              ],
+              "format": "ascii",
+              "payload": "ALLOFF",
+              "chase": true
+            },
+            {
+              "id": "a2",
+              "type": "udp",
+              "targets": [
+                "R1"
+              ],
+              "format": "hex",
+              "payload": "A5 01 01 00 A7",
+              "offsetMs": 500,
+              "chase": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "T-weekend",
+      "name": "周末+节假日",
+      "groupId": "G-light",
+      "priority": 2,
+      "rule": {
+        "dayKinds": [
+          "weekend",
+          "holiday"
+        ]
+      },
+      "cues": [
+        {
+          "id": "c1",
+          "name": "开馆场景",
+          "time": "08:30:00.000",
+          "actions": [
+            {
+              "id": "a1",
+              "type": "command",
+              "commandId": "cmd-scene",
+              "args": {
+                "scene": "12"
+              }
+            }
+          ]
+        },
+        {
+          "id": "c2",
+          "name": "夜场氛围",
+          "time": "19:30:00.000",
+          "actions": [
+            {
+              "id": "a1",
+              "type": "command",
+              "commandId": "cmd-scene",
+              "args": {
+                "scene": "7"
+              }
+            }
+          ]
+        },
+        {
+          "id": "c3",
+          "name": "全关",
+          "time": "21:00:00.000",
+          "actions": [
+            {
+              "id": "a1",
+              "type": "udp",
+              "targets": [
+                "tag:灯光"
+              ],
+              "format": "ascii",
+              "payload": "ALLOFF",
+              "chase": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "T-national",
+      "name": "国庆特别",
+      "groupId": "G-light",
+      "priority": 1,
+      "rule": {
+        "dateRanges": [
+          {
+            "from": "2026-10-01",
+            "to": "2026-10-07"
+          }
+        ]
+      },
+      "cues": [
+        {
+          "id": "c1",
+          "name": "节日灯光秀",
+          "time": "19:00:00.000",
+          "actions": [
+            {
+              "id": "a1",
+              "type": "command",
+              "commandId": "cmd-scene",
+              "args": {
+                "scene": "20"
+              }
+            }
+          ]
+        },
+        {
+          "id": "c2",
+          "name": "全关",
+          "time": "22:00:00.000",
+          "actions": [
+            {
+              "id": "a1",
+              "type": "udp",
+              "targets": [
+                "tag:灯光"
+              ],
+              "format": "ascii",
+              "payload": "ALLOFF",
+              "chase": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "T-projector",
+      "name": "投影开关机",
+      "groupId": "G-av",
+      "cues": [
+        {
+          "id": "c1",
+          "name": "投影开机",
+          "time": "08:45:00.000",
+          "actions": [
+            {
+              "id": "a1",
+              "type": "udp",
+              "targets": [
+                "tag:投影"
+              ],
+              "format": "hex",
+              "payload": "A5 01 02 01 A9",
+              "repeat": 3,
+              "repeatGapMs": 200
+            }
+          ]
+        },
+        {
+          "id": "c2",
+          "name": "投影关机",
+          "time": "18:05:00.000",
+          "actions": [
+            {
+              "id": "a1",
+              "type": "udp",
+              "targets": [
+                "tag:投影"
+              ],
+              "format": "hex",
+              "payload": "A5 01 02 00 A8",
+              "repeat": 3,
+              "repeatGapMs": 200
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "triggers": [
+    {
+      "id": "TR-open",
+      "name": "前台按钮·开馆",
+      "port": 9000,
+      "allowFrom": [
+        "192.168.10.0/24",
+        "127.0.0.1"
+      ],
+      "passcode": "KEY1:",
+      "match": {
+        "kind": "exact",
+        "format": "ascii",
+        "pattern": "OPEN"
+      },
+      "requireConfirm": true,
+      "confirmWindowMs": 5000,
+      "debounceMs": 300,
+      "actions": [
+        {
+          "id": "a1",
+          "type": "timeline",
+          "op": "enable",
+          "target": "G-light"
+        },
+        {
+          "id": "a2",
+          "type": "udp",
+          "targets": [
+            "tag:灯光"
+          ],
+          "format": "ascii",
+          "payload": "SCENE 12"
+        }
+      ]
+    },
+    {
+      "id": "TR-scene",
+      "name": "场景切换",
+      "port": 9001,
+      "allowFrom": [
+        "192.168.10.0/24",
+        "127.0.0.1"
+      ],
+      "match": {
+        "kind": "regex",
+        "format": "ascii",
+        "pattern": "^SCENE (\\d+)$"
+      },
+      "debounceMs": 200,
+      "maxPerMinute": 30,
+      "actions": [
+        {
+          "id": "a1",
+          "type": "udp",
+          "targets": [
+            "L1"
+          ],
+          "format": "ascii",
+          "payload": "GO"
+        }
+      ]
+    }
+  ],
+  "calendar": {
+    "_note": "示例数据，不是官方放假安排。实际使用请按国务院办公厅通知导入或手工填写。",
+    "holidays": {
+      "2026-10-01": "国庆节（示例）",
+      "2026-10-02": "国庆节（示例）",
+      "2026-10-03": "国庆节（示例）",
+      "2026-10-04": "国庆节（示例）",
+      "2026-10-05": "国庆节（示例）",
+      "2026-10-06": "国庆节（示例）",
+      "2026-10-07": "国庆节（示例）"
+    },
+    "makeupWorkdays": [
+      "2026-09-27",
+      "2026-10-10"
+    ]
+  },
+  "settings": {
+    "recovery": {
+      "enabled": true,
+      "delayMs": 3000
+    },
+    "maxLateMs": 5000
+  },
+  "commands": [
+    {
+      "id": "cmd-scene",
+      "name": "场景调用",
+      "note": "灯光场景（不填端口，沿用各设备自己的默认端口）。参数：场景号",
+      "targets": [
+        "tag:灯光"
+      ],
+      "format": "ascii",
+      "payload": "SCENE {{scene}}",
+      "params": [
+        {
+          "name": "scene",
+          "label": "场景号",
+          "default": "1"
+        }
+      ],
+      "chase": true
+    },
+    {
+      "id": "cmd-relay",
+      "name": "继电器开/关",
+      "note": "继电器开/关（端口在指令里写死）。参数：state = 01 开 / 00 关",
+      "targets": [
+        "R1"
+      ],
+      "port": 6000,
+      "format": "hex",
+      "payload": "A5 01 01 {{state}} A8",
+      "params": [
+        {
+          "name": "state",
+          "label": "开关",
+          "default": "01"
+        }
+      ],
+      "repeat": 2,
+      "repeatGapMs": 100,
+      "chase": true
+    }
+  ]
+}

@@ -1,0 +1,732 @@
+import { EventEmitter } from 'node:events';
+import type { Action, Command, Device, Project, UdpAction } from './types.ts';
+import { resolveActions, resolveCommandAction } from './commands.ts';
+import { RealClock } from './clock.ts';
+import type { Clock } from './clock.ts';
+import { addDays, dateKey, localMidnight } from './calendar.ts';
+import { resolveDay } from './rules.ts';
+import { buildDayPlan, expandActions } from './plan.ts';
+import { Scheduler } from './scheduler.ts';
+import type { FiredItem } from './scheduler.ts';
+import { DryTransport, UdpListener, UdpTransport } from './udp.ts';
+import type { Transport } from './udp.ts';
+import { TriggerRouter } from './triggers.ts';
+import type { TriggerOutcome } from './triggers.ts';
+import { planRecovery } from './recovery.ts';
+import { validateProject } from './validate.ts';
+import { buildPayload, describeAscii, formatHex } from './payload.ts';
+import { matchBuffer } from './match.ts';
+import { substituteCaptureAction } from './captures.ts';
+import { formatClock, formatTime } from './time.ts';
+import type { NetworkSettings } from './network.ts';
+
+export type LogResult =
+  | 'sent'
+  | 'confirmed'
+  | 'mismatch'
+  | 'timeout'
+  | 'error'
+  | 'skipped'
+  | 'missed'
+  | 'fired'
+  | 'rejected'
+  | 'ignored'
+  | 'awaiting-confirm'
+  | 'info';
+
+export interface LogEntry {
+  /** 事件发生的时间戳 */
+  t: number;
+  dir: 'TX' | 'RX' | 'SYS';
+  result: LogResult;
+  remote?: string;
+  hex?: string;
+  ascii?: string;
+  /** 来源：时间线/事件点，或触发器、断电恢复 */
+  source?: string;
+  detail?: string;
+  scheduledAt?: number;
+  /** 实际执行时刻 - 计划时刻，用来观察毫秒精度 */
+  lagMs?: number;
+}
+
+export interface EngineOptions {
+  clock?: Clock;
+  /** 自定义传输层（测试用）。传入后 Engine 不负责关闭它 */
+  transport?: Transport;
+  /** 模拟：不发包、不监听端口 */
+  dryRun?: boolean;
+  /** 机器级网络设置。给了就以它为准（即使是空对象 = 自动），不给才回退到项目里的 settings */
+  network?: NetworkSettings;
+  /** 以急停状态启动：连启动时的断电恢复也不执行 */
+  startPaused?: boolean;
+}
+
+export interface UpcomingCue {
+  epoch: number;
+  date: string;
+  time: string;
+  timelineId: string;
+  timelineName: string;
+  cueId: string;
+  cueName: string;
+}
+
+export interface EngineStatus {
+  running: boolean;
+  paused: boolean;
+  dryRun: boolean;
+  now: number;
+  startedAt: number | null;
+  date: string;
+  dayKind: string;
+  holidayName?: string;
+  timelines: { id: string; name: string; groupId?: string; active: boolean; reason: string; runtimeDisabled: boolean }[];
+  listeners: number[];
+  /** 实际生效的网络设置 */
+  network: NetworkSettings & { missing: string[] };
+  upcoming: UpcomingCue[];
+}
+
+interface RunCtx {
+  source: string;
+  scheduledAt?: number;
+  /** 恢复动作原来的墙上执行时刻，用来阻止旧补偿覆盖后来已发出的新状态。 */
+  recoveryAt?: number;
+}
+
+const RX_LOG_PER_SEC = 50;
+
+const RESULT_TEXT: Record<string, string> = {
+  'rejected-source': '来源不在白名单',
+  'rejected-passcode': '口令不符',
+  debounced: '防抖忽略',
+  'rate-limited': '触发过于频繁',
+  'awaiting-confirm': '等待二次确认',
+};
+
+export class Engine extends EventEmitter {
+  private project: Project;
+  private clock: Clock;
+  private opts: EngineOptions;
+  private transport: Transport | null = null;
+  private ownsTransport = false;
+  private router: TriggerRouter;
+  private scheduler: Scheduler | null = null;
+  private udpListeners = new Map<string, UdpListener>();
+  /** 被动作临时禁用的时间线 → 失效时间（null = 一直到再次启用或引擎重启） */
+  private runtimeDisabled = new Map<string, number | null>();
+  private running = false;
+  private pausedFlag = false;
+  /** 取消所有还在"延时等待"的动作链（触发器、恢复、手动执行）。stop() 时触发 */
+  private runCtl: AbortController | null = null;
+  /** stop() 完成后置位：已停止的引擎不再产生日志，避免新旧引擎的日志混在一起 */
+  private closed = false;
+  private missedBatch: { count: number; first: number; last: number } | null = null;
+  /** 触发端口收到的"没触发任何东西"的包（不匹配/被拒/被忽略）的日志限流：每秒最多逐条记这么多 */
+  private rxWindow = { sec: 0, count: 0, dropped: 0 };
+  private startedAt: number | null = null;
+  private latestDispatch = new Map<string, number>();
+  /** 最近的日志，给界面刷新用 */
+  readonly logs: LogEntry[] = [];
+
+  constructor(project: Project, opts: EngineOptions = {}) {
+    super();
+    this.project = project;
+    this.opts = opts;
+    this.clock = opts.clock ?? new RealClock();
+    this.router = new TriggerRouter(project.triggers);
+  }
+
+  private log(e: Omit<LogEntry, 't'> & { t?: number }): void {
+    if (this.closed) return;
+    const entry: LogEntry = { t: this.clock.now(), ...e };
+    this.logs.push(entry);
+    if (this.logs.length > 2000) this.logs.splice(0, this.logs.length - 2000);
+    this.emit('log', entry);
+  }
+
+  /** 放手不管（void）的异步任务统一兜底：出错记日志，绝不让引擎进程因为未处理的拒绝而崩溃。 */
+  private spawn(task: Promise<unknown>, what: string): void {
+    task.catch((e: unknown) => this.log({ dir: 'SYS', result: 'error', detail: `${what}出错：${(e as Error)?.message ?? String(e)}` }));
+  }
+
+  private assertValid(p: Project): void {
+    const issues = validateProject(p);
+    const errors = issues.filter((i) => i.level === 'error');
+    if (errors.length > 0) {
+      throw new Error('项目检查未通过：\n' + errors.map((i) => `  [${i.path}] ${i.message}`).join('\n'));
+    }
+    for (const w of issues.filter((i) => i.level === 'warn')) {
+      this.log({ dir: 'SYS', result: 'info', detail: `警告 [${w.path}] ${w.message}` });
+    }
+  }
+
+  get paused(): boolean {
+    return this.pausedFlag;
+  }
+
+  /** 急停：暂停期间到点的事件、收到的触发都不执行，但会写日志；手动测试/手动执行不受影响。 */
+  pause(): void {
+    if (this.pausedFlag) return;
+    this.pausedFlag = true;
+    this.log({ dir: 'SYS', result: 'info', detail: '调度已暂停（急停）：期间到点的事件将被跳过' });
+  }
+
+  resume(): void {
+    if (!this.pausedFlag) return;
+    this.pausedFlag = false;
+    this.log({ dir: 'SYS', result: 'info', detail: '调度已恢复，不补执行暂停期间错过的事件' });
+  }
+
+  getProject(): Project {
+    return this.project;
+  }
+
+  async start(): Promise<void> {
+    if (this.running) return;
+    this.assertValid(this.project);
+    if (this.opts.transport) {
+      this.transport = this.opts.transport;
+    } else if (this.opts.dryRun) {
+      this.transport = new DryTransport();
+      this.ownsTransport = true;
+    } else {
+      const net = this.network();
+      const t = new UdpTransport({ localAddresses: net.localAddresses, localPort: net.localPort });
+      this.transport = t;
+      this.ownsTransport = true;
+      try {
+        await t.whenReady();
+      } catch (err) {
+        await t.close().catch(() => {});
+        this.transport = null;
+        const code = (err as NodeJS.ErrnoException).code;
+        const where = `${net.localAddresses?.join('、') ?? '自动'}${net.localPort ? ':' + net.localPort : ''}`;
+        const hint = code === 'EADDRNOTAVAIL' ? '本机没有这个 IP（网卡未连接或地址已变）' : code === 'EADDRINUSE' ? '端口已被占用' : (err as Error).message;
+        // bindFailure：调用方据此判断"等一会儿重试"是否有意义
+        throw Object.assign(new Error(`无法绑定本机网卡 ${where}：${hint}`), { bindFailure: true, code });
+      }
+    }
+    if (!this.opts.dryRun) await this.syncListeners();
+
+    if (this.transport?.missing && this.transport.missing.length > 0) {
+      this.log({ dir: 'SYS', result: 'info', detail: `警告：网卡 ${this.transport.missing.join('、')} 当前不可用，先用其余网卡运行，后台自动重试` });
+    }
+    // 之前缺失的网卡后来起来了：记日志，并补上这块网卡上的触发器监听
+    this.transport?.onChange?.(() => {
+      this.log({ dir: 'SYS', result: 'info', detail: `网卡已恢复，当前使用：${this.transport?.boundAddresses?.().join('、') ?? ''}` });
+      this.spawn(this.syncListeners(), '重新绑定监听');
+    });
+
+    this.scheduler = new Scheduler(
+      this.clock,
+      {
+        planFor: (date) => buildDayPlan(this.project, date),
+        onFire: (item) => this.executeItem(item),
+        onMissed: (item) => this.noteMissed(item.epoch),
+        onError: (err, item) =>
+          this.log({
+            dir: 'SYS',
+            result: 'error',
+            source: item ? `${item.timelineName}/${item.cueName}` : undefined,
+            detail: `调度错误：${(err as Error)?.message ?? err}`,
+          }),
+      },
+      { maxLateMs: this.project.settings?.maxLateMs },
+    );
+    this.running = true;
+    this.closed = false;
+    if (this.opts.startPaused) {
+      this.pausedFlag = true;
+      this.log({ dir: 'SYS', result: 'info', detail: '引擎以急停状态启动（上次急停后重启，需手动恢复调度）：定时事件、触发和断电恢复都不会执行' });
+    }
+    this.runCtl = new AbortController();
+    this.startedAt = this.clock.now();
+    this.latestDispatch.clear();
+
+    const now = this.clock.now();
+    const today = buildDayPlan(this.project, dateKey(new Date(now)));
+    for (const w of today.warnings) this.log({ dir: 'SYS', result: 'info', detail: `计划警告：${w}` });
+    const active = today.resolution.entries.filter((e) => e.active).map((e) => e.timeline.name);
+    this.log({
+      dir: 'SYS',
+      result: 'info',
+      detail:
+        `引擎启动${this.opts.dryRun ? '（模拟）' : ''} · ${today.date} ${today.resolution.kindLabel}` +
+        ` · 今日生效：${active.join('、') || '无'} · 共 ${today.items.length} 个执行点`,
+    });
+
+    this.scheduler.start();
+    this.startRecovery(now);
+  }
+
+  async stop(): Promise<void> {
+    if (!this.running) return;
+    this.running = false;
+    this.startedAt = null;
+    this.runCtl?.abort(); // 取消还在等待中的动作（触发器里的延时、恢复、手动执行）
+    this.runCtl = null;
+    await this.scheduler?.stop();
+    for (const l of this.udpListeners.values()) await l.close();
+    this.udpListeners.clear();
+    if (this.ownsTransport) await this.transport?.close();
+    this.transport = null;
+    this.log({ dir: 'SYS', result: 'info', detail: '引擎停止' });
+    this.closed = true;
+  }
+
+  /** 热更新项目：检查不通过会抛错，原项目继续运行。 */
+  async reload(project: Project): Promise<void> {
+    this.assertValid(project);
+    this.project = project;
+    this.router.update(project.triggers); // 保留防抖/确认等待状态，不因为保存一次项目就丢失
+    if (this.running) {
+      if (!this.opts.dryRun) await this.syncListeners();
+      this.scheduler?.reload();
+    }
+    this.log({ dir: 'SYS', result: 'info', detail: '项目已重新加载' });
+  }
+
+  /** 实际监听的端口（端口填 0 时可得知系统分配的端口） */
+  listenerPorts(): number[] {
+    return [...new Set([...this.udpListeners.values()].map((l) => l.boundPort()))].sort((a, b) => a - b);
+  }
+
+  /** 实际生效的网络设置：机器级优先，没有就用项目里的（旧项目兼容）。 */
+  private network(): NetworkSettings {
+    if (this.opts.network) return this.opts.network;
+    const s = this.project.settings;
+    return { localAddresses: s?.localAddress ? [s.localAddress] : undefined, localPort: s?.localPort };
+  }
+
+  /** 触发器在哪些本机地址上监听：全部网卡（0.0.0.0），或已选中且已绑定的网卡。 */
+  private listenAddresses(): (string | undefined)[] {
+    const net = this.network();
+    if (net.listenAll || !net.localAddresses?.length) return [undefined];
+    const bound = this.transport?.boundAddresses?.() ?? net.localAddresses;
+    return bound.length > 0 ? bound : [undefined];
+  }
+
+  private async syncListeners(): Promise<void> {
+    const wanted = new Map<string, { port: number; address?: string }>();
+    for (const t of this.project.triggers) {
+      for (const address of this.listenAddresses()) wanted.set(`${address ?? ''}|${t.port}`, { port: t.port, address });
+    }
+    for (const [key, l] of this.udpListeners) {
+      if (!wanted.has(key)) {
+        await l.close();
+        this.udpListeners.delete(key);
+      }
+    }
+    for (const [key, { port, address }] of wanted) {
+      if (this.udpListeners.has(key)) continue;
+      const l = new UdpListener(port, (msg, rinfo) => this.onPacket(port, msg, rinfo.address, rinfo.port), address);
+      try {
+        await l.start();
+      } catch (e) {
+        this.log({ dir: 'SYS', result: 'error', detail: `监听 UDP ${address ?? '*'}:${port} 失败：${(e as Error).message}` });
+        continue;
+      }
+      this.udpListeners.set(key, l);
+    }
+  }
+
+  // ───────────── 接收触发 ─────────────
+
+  private onPacket(port: number, data: Buffer, ip: string, srcPort: number): void {
+    const now = this.clock.now();
+    if (this.pausedFlag) {
+      this.log({
+        t: now, dir: 'RX', result: 'ignored', remote: `${ip}:${srcPort}`,
+        hex: formatHex(data), ascii: describeAscii(data), detail: `端口 ${port} · 调度已暂停，未处理`,
+      });
+      return;
+    }
+    let outcomes: TriggerOutcome[];
+    try {
+      outcomes = this.router.route(port, data, ip, now);
+    } catch (e) {
+      this.log({ dir: 'SYS', result: 'error', detail: `触发器匹配出错：${(e as Error).message}` });
+      return;
+    }
+    const fired = outcomes.filter((o) => o.result === 'fire');
+    const notes = outcomes
+      .filter((o) => o.result !== 'no-match')
+      .map((o) => (o.result === 'fire' ? `触发「${o.trigger.name}」` : `「${o.trigger.name}」${RESULT_TEXT[o.result]}`));
+    const has = (r: string) => outcomes.some((o) => o.result === r);
+    const result: LogResult = fired.length
+      ? 'fired'
+      : has('rejected-source') || has('rejected-passcode')
+        ? 'rejected'
+        : has('awaiting-confirm')
+          ? 'awaiting-confirm'
+          : 'ignored';
+    // 局域网里一个乱发包的设备，不能把磁盘日志和界面刷爆：只对"没有触发任何动作"的包限流。
+    // 真正触发了的、等待二次确认的包永远逐条记录。
+    if (result !== 'fired' && result !== 'awaiting-confirm' && !this.allowRxLog(now)) return;
+    this.log({
+      t: now,
+      dir: 'RX',
+      result,
+      remote: `${ip}:${srcPort}`,
+      hex: formatHex(data),
+      ascii: describeAscii(data),
+      detail: `端口 ${port}` + (notes.length ? ' · ' + notes.join('；') : ' · 无匹配的触发器'),
+    });
+    for (const o of fired) {
+      try {
+        const actions = o.trigger.match.kind === 'regex'
+          ? o.trigger.actions.map((a) => substituteCaptureAction(a, o.captures, o.body)) : o.trigger.actions;
+        this.spawn(this.runActionList(actions, now, `触发器「${o.trigger.name}」`), '执行触发器');
+      } catch (e) { this.log({ dir: 'SYS', result: 'error', detail: `触发器参数代入失败：${(e as Error).message}` }); }
+    }
+  }
+
+  /** 每秒最多逐条记 RX_LOG_PER_SEC 个"无动作"的包；超出的计数，下一秒开始时补一条汇总。 */
+  private allowRxLog(now: number): boolean {
+    const sec = Math.floor(now / 1000);
+    const w = this.rxWindow;
+    if (sec !== w.sec) {
+      if (w.dropped > 0) {
+        this.log({ t: now, dir: 'SYS', result: 'info', detail: `触发端口上有 ${w.dropped} 个包（不匹配/被拒绝/被忽略）未逐条记录，避免日志被刷屏` });
+      }
+      this.rxWindow = { sec, count: 0, dropped: 0 };
+    }
+    if (this.rxWindow.count < RX_LOG_PER_SEC) {
+      this.rxWindow.count++;
+      return true;
+    }
+    this.rxWindow.dropped++;
+    return false;
+  }
+
+  // ───────────── 执行 ─────────────
+
+  /** 按 delay/offset 规则依次执行一组动作（触发器、断电恢复用）。 */
+  private async runActionList(actions: Action[], base: number, source: string, manual = false, recoveryBase?: number): Promise<void> {
+    const signal = this.runCtl?.signal;
+    if (!signal || signal.aborted) return;
+    const resolved = resolveActions(this.project, actions);
+    for (const err of resolved.errors) this.log({ dir: 'SYS', result: 'error', source, detail: err });
+    for (const x of expandActions(resolved.actions)) {
+      await this.clock.sleepUntil(base + x.relMs, signal);
+      if (signal.aborted) return; // 引擎已停止/切换项目：后面的动作不再执行
+      if (this.pausedFlag && !manual) {
+        this.log({ dir: 'SYS', result: 'skipped', source, scheduledAt: base + x.relMs, detail: '调度已暂停（急停）' });
+        continue;
+      }
+      this.spawn(this.runAction(x.action, { source, scheduledAt: base + x.relMs,
+        ...(recoveryBase === undefined ? {} : { recoveryAt: recoveryBase + x.relMs }) }), '执行动作');
+    }
+  }
+
+  private startRecovery(now: number): void {
+    const rec = this.project.settings?.recovery;
+    if (rec?.enabled === false) return;
+    // 被动作「临时禁用」的时间线，唤醒后也不能补它的状态
+    const items = planRecovery(this.project, dateKey(new Date(now)), now).filter((i) => !this.isRuntimeDisabled(i.timelineId));
+    if (items.length === 0) return;
+    const delay = rec?.delayMs ?? 3000;
+    this.log({
+      dir: 'SYS',
+      result: 'info',
+      detail:
+        `状态恢复：${delay}ms 后补发 ` +
+        items.map((i) => `${i.timelineName}/${i.cueName}@${formatTime(i.cueAtMs)}（${i.actions.length} 个动作）`).join('、'),
+    });
+    for (const item of items) {
+      this.spawn(
+        this.runActionList(
+          // 恢复项已经展开过延时和重复，不能再次按原 repeat 展开（否则会发送平方次数）。
+          item.actions.map((x) => x.action.type === 'udp' ? { ...x.action, offsetMs: x.relMs, repeat: 1 } : x.action),
+          now + delay,
+          `恢复·${item.timelineName}/${item.cueName}`,
+          false,
+          localMidnight(dateKey(new Date(now))) + item.cueAtMs,
+        ),
+        '状态恢复',
+      );
+    }
+  }
+
+  /**
+   * 休眠唤醒、系统时间大幅前跳之后，会一口气发现一大批"错过"的事件。
+   * 同一批只记一条汇总（而不是刷屏），并且自动补一次"当前应有状态"——
+   * 不然设备会停在睡下去之前的状态，直到下一个事件点。
+   * 同一批事件是在同一个事件循环轮次里被依次发现的，所以用 setImmediate 合并。
+   */
+  private noteMissed(epoch: number): void {
+    if (this.missedBatch) {
+      this.missedBatch.count++;
+      this.missedBatch.last = epoch;
+      return;
+    }
+    this.missedBatch = { count: 1, first: epoch, last: epoch };
+    setImmediate(() => {
+      const b = this.missedBatch;
+      this.missedBatch = null;
+      if (!b || !this.running) return;
+      this.log({
+        dir: 'SYS',
+        result: 'missed',
+        detail:
+          `电脑休眠唤醒或系统时间跳变：错过 ${b.count} 个执行点（${formatClock(b.first)} ~ ${formatClock(b.last)}），已过期不补执行；` +
+          '随后补发各时间线「当前应有状态」',
+      });
+      this.startRecovery(this.clock.now());
+    });
+  }
+
+  private async executeItem(item: FiredItem): Promise<void> {
+    const source = `${item.timelineName}/${item.cueName}`;
+    if (this.pausedFlag) {
+      this.log({ dir: 'SYS', result: 'skipped', source, scheduledAt: item.epoch, detail: '调度已暂停（急停）' });
+      return;
+    }
+    if (this.isRuntimeDisabled(item.timelineId)) {
+      this.log({ dir: 'SYS', result: 'skipped', source, scheduledAt: item.epoch, detail: '时间线已被动作临时禁用' });
+      return;
+    }
+    await this.runAction(item.action, { source, scheduledAt: item.epoch });
+  }
+
+  private async runAction(action: Action, ctx: RunCtx): Promise<void> {
+    if (action.type === 'timeline') {
+      this.applyControl(action.op, action.target, action.until ?? 'restart', ctx);
+      return;
+    }
+    if (action.type !== 'udp') return;
+    const startedAt = this.clock.now();
+    const lagMs = ctx.scheduledAt === undefined ? undefined : startedAt - ctx.scheduledAt;
+    const devices = this.resolveDevices(action.targets);
+    if (devices.length === 0) {
+      this.log({ dir: 'TX', result: 'error', source: ctx.source, detail: '没有可用的目标设备' });
+      return;
+    }
+    await Promise.all(
+      devices.map((d) => this.sendOne(d, action, { ...ctx, startedAt, lagMs })),
+    );
+  }
+
+  private resolveDevices(targets: string[]): Device[] {
+    const out = new Map<string, Device>();
+    for (const t of targets) {
+      const list = t.startsWith('tag:')
+        ? this.project.devices.filter((d) => d.tag === t.slice(4))
+        : this.project.devices.filter((d) => d.id === t);
+      for (const d of list) out.set(d.id, d);
+    }
+    return [...out.values()];
+  }
+
+  private async sendOne(
+    device: Device,
+    action: UdpAction,
+    ctx: RunCtx & { startedAt: number; lagMs?: number },
+  ): Promise<LogResult> {
+    const port = action.port ?? device.port;
+    const remote = `${device.ip}:${port ?? '?'}`;
+    const base = { dir: 'TX' as const, remote, source: action.commandName && !ctx.source.includes(action.commandName) ? `${ctx.source}【${action.commandName}】` : ctx.source, scheduledAt: ctx.scheduledAt, lagMs: ctx.lagMs };
+    if (device.enabled === false) {
+      this.log({ ...base, result: 'skipped', detail: `设备「${device.name}」已禁用` });
+      return 'skipped';
+    }
+    if (port === undefined) {
+      this.log({ ...base, result: 'error', detail: `设备「${device.name}」没有默认端口，指令里也没填端口` });
+      return 'error';
+    }
+    let buf: Buffer;
+    try {
+      buf = buildPayload(action.format, action.payload, action.terminator ?? device.terminator ?? 'none');
+    } catch (e) {
+      this.log({ ...base, result: 'error', detail: (e as Error).message });
+      return 'error';
+    }
+    const shown = { hex: formatHex(buf), ascii: describeAscii(buf) };
+    const transport = this.transport!;
+    const dry = this.opts.dryRun === true;
+    if (ctx.recoveryAt !== undefined && (this.latestDispatch.get(device.id) ?? -Infinity) > ctx.recoveryAt) {
+      this.log({ ...base, result: 'skipped', detail: `设备「${device.name}」已执行更新的状态，跳过旧恢复动作` });
+      return 'skipped';
+    }
+    if (!dry) {
+      const stateAt = ctx.recoveryAt ?? ctx.scheduledAt ?? ctx.startedAt;
+      this.latestDispatch.set(device.id, Math.max(this.latestDispatch.get(device.id) ?? -Infinity, stateAt));
+    }
+
+    if (!action.reply) {
+      try {
+        await transport.send(device.ip, port, buf, { from: action.sendFrom });
+        this.log({ ...base, ...shown, t: ctx.startedAt, result: dry ? 'skipped' : 'sent', detail: dry ? '模拟，未发送' : device.name });
+        return dry ? 'skipped' : 'sent';
+      } catch (e) {
+        this.log({ ...base, ...shown, t: ctx.startedAt, result: 'error', detail: `${device.name}：${(e as Error).message}` });
+        return 'error';
+      }
+    }
+
+    const reply = action.reply;
+    const attempts = 1 + Math.max(0, reply.retries);
+    let last: LogResult = 'error';
+    for (let i = 0; i < attempts; i++) {
+      if (i > 0 && ctx.recoveryAt !== undefined && (this.latestDispatch.get(device.id) ?? -Infinity) > ctx.recoveryAt) {
+        this.log({ ...base, result: 'skipped', detail: `设备「${device.name}」已执行更新的状态，取消旧恢复重试` });
+        return 'skipped';
+      }
+      try {
+        const res = await transport.sendAndWaitReply(device.ip, port, buf, {
+          from: action.sendFrom,
+          timeoutMs: reply.timeoutMs,
+          accept: (b) => {
+            try {
+              return matchBuffer(b, reply).matched;
+            } catch {
+              return false;
+            }
+          },
+        });
+        const tail = res.reply ? ` · 回包 ${describeAscii(res.reply)}` : '';
+        const rtt = res.rttMs === undefined ? '' : ` · ${res.rttMs}ms`;
+        this.log({
+          ...base,
+          ...shown,
+          t: i === 0 ? ctx.startedAt : undefined,
+          result: res.status === 'skipped' ? 'skipped' : res.status,
+          detail: `${device.name} · 第 ${i + 1}/${attempts} 次${rtt}${tail}${res.status === 'skipped' ? ' · 模拟，未发送' : ''}`,
+        });
+        last = res.status === 'skipped' ? 'skipped' : res.status;
+        if (res.status === 'confirmed' || res.status === 'skipped') return last;
+      } catch (e) {
+        this.log({ ...base, ...shown, result: 'error', detail: `${device.name}：${(e as Error).message}` });
+        return 'error';
+      }
+    }
+    return last;
+  }
+
+  // ───────────── 给界面用的接口 ─────────────
+
+  /** 测试发送：不依赖项目里的设备，结果写入日志并返回。 */
+  async sendTest(p: {
+    ip: string;
+    port: number;
+    format: 'ascii' | 'hex';
+    payload: string;
+    terminator?: 'none' | 'cr' | 'lf' | 'crlf';
+    reply?: UdpAction['reply'];
+  }): Promise<LogResult> {
+    if (!this.running || !this.transport) throw new Error('引擎未运行');
+    const device: Device = { id: '__test', name: `${p.ip}:${p.port}`, ip: p.ip, port: p.port };
+    const action: UdpAction = {
+      id: '__test', type: 'udp', targets: [], format: p.format, payload: p.payload,
+      terminator: p.terminator, reply: p.reply ?? null,
+    };
+    const now = this.clock.now();
+    return this.sendOne(device, action, { source: '手动测试', startedAt: now });
+  }
+
+  /** 立即执行一个事件点（不等时间，不看规则、暂停状态）。返回动作个数。 */
+  runCueNow(timelineId: string, cueId: string): number {
+    if (!this.running) throw new Error('引擎未运行');
+    const tl = this.project.timelines.find((t) => t.id === timelineId);
+    const cue = tl?.cues.find((c) => c.id === cueId);
+    if (!tl || !cue) throw new Error(`找不到事件点 ${timelineId}/${cueId}`);
+    const source = `手动·${tl.name}/${cue.name}`;
+    this.log({ dir: 'SYS', result: 'info', source, detail: '手动立即执行' });
+    this.spawn(this.runActionList(cue.actions, this.clock.now(), source, true), '手动执行');
+    return expandActions(resolveActions(this.project, cue.actions).actions).length;
+  }
+
+  /** 立即执行一条指令（可以是尚未保存的草稿），参数用 args 或默认值。返回执行点个数。 */
+  runCommandNow(cmd: Command, args?: Record<string, string>): number {
+    if (!this.running) throw new Error('引擎未运行');
+    const r = resolveCommandAction(cmd, { id: '__cmd', type: 'command', commandId: cmd.id, args });
+    if (!r.action) throw new Error(r.error);
+    // 代入参数后的最终内容要当场检查：HEX 位数、转义错误等，别等到后台发送时才悄悄记一条日志
+    try {
+      buildPayload(r.action.format, r.action.payload, r.action.terminator);
+    } catch (err) {
+      throw new Error(`发送内容无效：${(err as Error).message}`);
+    }
+    const source = `手动·指令「${cmd.name}」`;
+    this.log({ dir: 'SYS', result: 'info', source, detail: '手动立即执行' });
+    this.spawn(this.runActionList([r.action], this.clock.now(), source, true), '手动执行指令');
+    return expandActions([r.action]).length;
+  }
+
+  /** 接下来的 n 个事件点（今天剩余 + 之后几天）。 */
+  upcoming(n = 5): UpcomingCue[] {
+    const out: UpcomingCue[] = [];
+    const now = this.clock.now();
+    let date = dateKey(new Date(now));
+    for (let d = 0; d < 8 && out.length < n; d++) {
+      const plan = buildDayPlan(this.project, date);
+      const midnight = localMidnight(date);
+      const seen = new Set<string>();
+      for (const it of plan.items) {
+        const key = `${it.timelineId}|${it.cueId}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const epoch = midnight + it.cueAtMs;
+        if (epoch <= now) continue;
+        out.push({ epoch, date, time: formatTime(it.cueAtMs), timelineId: it.timelineId, timelineName: it.timelineName, cueId: it.cueId, cueName: it.cueName });
+      }
+      out.sort((a, b) => a.epoch - b.epoch);
+      date = addDays(date, 1);
+    }
+    return out.slice(0, n);
+  }
+
+  status(): EngineStatus {
+    const now = this.clock.now();
+    const today = dateKey(new Date(now));
+    const res = resolveDay(this.project, today);
+    return {
+      running: this.running,
+      paused: this.pausedFlag,
+      dryRun: this.opts.dryRun === true,
+      now,
+      startedAt: this.startedAt,
+      date: today,
+      dayKind: res.kindLabel,
+      holidayName: res.holidayName,
+      timelines: res.entries.map((e) => ({
+        id: e.timeline.id, name: e.timeline.name, groupId: e.timeline.groupId,
+        active: e.active, reason: e.reason, runtimeDisabled: this.isRuntimeDisabled(e.timeline.id),
+      })),
+      listeners: this.listenerPorts(),
+      network: { ...this.network(), missing: this.transport?.missing ?? [] },
+      upcoming: this.upcoming(5),
+    };
+  }
+
+  private isRuntimeDisabled(id: string): boolean {
+    if (!this.runtimeDisabled.has(id)) return false;
+    const exp = this.runtimeDisabled.get(id)!;
+    if (exp !== null && this.clock.now() >= exp) {
+      this.runtimeDisabled.delete(id); // 到期自动恢复
+      return false;
+    }
+    return true;
+  }
+
+  private applyControl(op: 'enable' | 'disable', target: string, until: 'restart' | 'midnight', ctx: RunCtx): void {
+    const ids = this.project.groups.some((g) => g.id === target)
+      ? this.project.timelines.filter((t) => t.groupId === target).map((t) => t.id)
+      : [target];
+    const now = this.clock.now();
+    const expiry = until === 'midnight' ? localMidnight(addDays(dateKey(new Date(now)), 1)) : null;
+    for (const id of ids) {
+      if (op === 'disable') this.runtimeDisabled.set(id, expiry);
+      else this.runtimeDisabled.delete(id);
+    }
+    this.log({
+      dir: 'SYS',
+      result: 'info',
+      source: ctx.source,
+      scheduledAt: ctx.scheduledAt,
+      detail: `${op === 'disable' ? '临时禁用' : '恢复启用'}：${ids.join('、')}${op === 'disable' ? (until === 'midnight' ? '（到今天午夜自动恢复）' : '（重启引擎或再次启用前一直有效）') : ''}`,
+    });
+  }
+}
