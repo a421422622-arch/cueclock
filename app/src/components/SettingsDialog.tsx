@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import type { NetworkSettings, NicInfo } from '@engine/network.ts';
-import { closeSettings, lockNow, openBackups, openUnlock, removeLockPassword, rpc, setLockPassword, toast, useStore } from '../store.ts';
+import { closeSettings, lockNow, openUnlock, removeLockPassword, rpc, setConfigurationPage, setLockPassword, toast, useStore } from '../store.ts';
 import { checkNewPassword } from '../lib/lockUi.ts';
 import { appBridge } from '../transport.ts';
 import type { AppState } from '../transport.ts';
 import { RpcFailure } from '../transport.ts';
 import { Check, Field, NumInput } from './fields.tsx';
 import { RestartEngineButton } from './EngineVersion.tsx';
+import { ConfigurationFiles } from './ConfigurationFiles.tsx';
 
 interface NetInfo {
   settings: NetworkSettings;
@@ -17,17 +18,32 @@ interface NetInfo {
 }
 
 export function SettingsDialog() {
+  const page = useStore((s) => s.configurationPage);
   return (
     <div className="modal-bg" onClick={closeSettings}>
-      <div className="modal wide" onClick={(e) => e.stopPropagation()}>
-        <h3>设置 <span className="dim" style={{ fontWeight: 400, fontSize: 12 }}>（这些是这台电脑的设置，不会写进项目文件）</span></h3>
+      <div className="modal wide configuration-dialog" role="dialog" aria-modal="true" aria-labelledby="configuration-title" onClick={(e) => e.stopPropagation()}>
+        <h3 id="configuration-title">配置管理</h3>
+        <div className="configuration-tabs" role="tablist" aria-label="配置管理页面" onKeyDown={(e) => {
+          if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+          e.preventDefault();
+          const next = e.key === 'Home' ? 'files' : e.key === 'End' ? 'software' : page === 'files' ? 'software' : 'files';
+          setConfigurationPage(next);
+          document.getElementById(`configuration-${next}-tab`)?.focus();
+        }}>
+          <button id="configuration-files-tab" role="tab" tabIndex={page === 'files' ? 0 : -1} aria-selected={page === 'files'} aria-controls="configuration-files-panel" onClick={() => setConfigurationPage('files')}>配置文件</button>
+          <button id="configuration-software-tab" role="tab" tabIndex={page === 'software' ? 0 : -1} aria-selected={page === 'software'} aria-controls="configuration-software-panel" onClick={() => setConfigurationPage('software')}>软件设置</button>
+        </div>
         <div className="mb">
-          <div className="sech">引擎版本与运行</div>
-          <EngineVersionSection />
-          <NetworkSection />
-          <StartupSection />
-          <LockSection />
-          <BackupSection />
+          <div id="configuration-files-panel" className="configuration-panel" role="tabpanel" aria-labelledby="configuration-files-tab" hidden={page !== 'files'}><ConfigurationFiles /></div>
+          <div id="configuration-software-panel" className="configuration-panel" role="tabpanel" aria-labelledby="configuration-software-tab" hidden={page !== 'software'}>
+            <div className="hint configuration-intro">用于这台电脑的引擎、网络、启动和编辑锁设置，不写入配置文件。</div>
+            <div className="sech">引擎版本与运行</div>
+            <EngineVersionSection />
+            <NetworkSection />
+            <StartupSection />
+            <LockSection />
+            <ExitSection />
+          </div>
         </div>
         <div className="mf"><button onClick={closeSettings}>关闭</button></div>
       </div>
@@ -260,14 +276,20 @@ function LockSection() {
   );
 }
 
-// ───────────── 配置备份 ─────────────
-
-function BackupSection() {
+function ExitSection() {
+  const bridge = appBridge;
+  if (!bridge) return null;
+  const act = async (name: string) => {
+    try { await bridge.appAction(name); }
+    catch (e) { toast(`操作失败：${(e as Error).message}`); }
+  };
   return (
     <>
-      <div className="sech" style={{ marginTop: 16 }}>配置备份</div>
-      <div className="hint pad">每次保存前自动备份旧版本（至少间隔 1 分钟，保留 30 份）。改坏了可以恢复到之前的样子。</div>
-      <button onClick={openBackups}>从备份恢复…</button>
+      <div className="sech" style={{ marginTop: 16 }}>退出程序</div>
+      <div className="row">
+        <button onClick={() => void act('quit')}>退出界面（引擎继续运行）</button>
+        <button className="danger" onClick={() => void act('quitAndStopEngine')}>退出并停止引擎…</button>
+      </div>
     </>
   );
 }

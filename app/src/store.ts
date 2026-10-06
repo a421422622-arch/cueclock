@@ -28,6 +28,7 @@ export type Selection =
   | null;
 
 export type View = 'timeline' | 'calendar' | 'pad';
+export type ConfigurationPage = 'files' | 'software';
 
 export type SaveState = 'saved' | 'dirty' | 'saving' | 'error' | 'conflict';
 
@@ -48,6 +49,7 @@ export interface AppState {
   canRedo: boolean;
   view: View;
   settingsOpen: boolean;
+  configurationPage: ConfigurationPage;
   /** 操作面板：当前面板 id；是否处于编辑模式 */
   padId: string | null;
   padEdit: boolean;
@@ -98,6 +100,7 @@ let state: AppState = {
   canRedo: false,
   view: 'timeline',
   settingsOpen: false,
+  configurationPage: 'files',
   padId: null,
   padEdit: false,
   lock: { enabled: false, unlocked: true },
@@ -451,7 +454,10 @@ export async function loadAlertHistory(): Promise<void> {
   }
 }
 
-export const openSettings = () => set({ settingsOpen: true });
+export const openConfiguration = (page: ConfigurationPage = 'files') => set({ settingsOpen: true, configurationPage: page });
+export const setConfigurationPage = (page: ConfigurationPage) => set({ configurationPage: page });
+/** 网络/引擎问题的快捷入口直接定位到软件设置页。 */
+export const openSettings = () => openConfiguration('software');
 export const closeSettings = () => set({ settingsOpen: false });
 export const toggleLog = () => set({ logCollapsed: !state.logCollapsed });
 

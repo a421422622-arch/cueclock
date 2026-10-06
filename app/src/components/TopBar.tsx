@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { edit, engineNow, lockNow, openSettings, openUnlock, reloadFromEngine, rpc, showLogTab, toast, useStore } from '../store.ts';
+import { edit, engineNow, lockNow, openUnlock, reloadFromEngine, rpc, showLogTab, toast, useStore } from '../store.ts';
 import { mergeAlerts, unseenCount } from '../lib/alerts.ts';
 import type { SaveState } from '../store.ts';
 import { ProjectMenu } from './ProjectMenu.tsx';
@@ -96,7 +96,6 @@ export function TopBar() {
       {lock.enabled && (lock.unlocked
         ? <button onClick={() => void lockNow()} title="立即锁定编辑（查看和急停不受影响）">🔓 锁定</button>
         : <button className="lockpill" onClick={openUnlock} title="编辑已锁定，点击输入密码解锁">🔒 已锁定 · 解锁</button>)}
-      <button onClick={openSettings} title="本机网卡、开机自启等设置">⚙ 设置</button>
       <div className="nic">
         <span className={`dot ${tone}`} />{engineText}
         <br />

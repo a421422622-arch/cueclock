@@ -361,28 +361,38 @@ async function smokeUi(): Promise<void> {
     engine: document.querySelector('.nic')?.innerText,
     node: typeof require + '/' + typeof process,
   })`).catch((e) => ({ error: String(e) }));
-  // 点开"项目"菜单读出菜单项；再打开"设置"对话框读出各部分
-  const menu = await js(`(async () => {
+  // 从左侧统一入口检查两个页面，软件设置不再依赖右侧按钮。
+  const configuration = await js(`(async () => {
     document.querySelector('.projbtn')?.click();
     await new Promise((r) => setTimeout(r, 300));
-    return [...document.querySelectorAll('.menu .mi, .menu .mh')].map((e) => e.innerText.trim());
-  })()`).catch(() => []);
-  const settings = await js(`(async () => {
-    document.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-    [...document.querySelectorAll('.top button')].find((b) => b.innerText.includes('设置'))?.click();
-    await new Promise((r) => setTimeout(r, 800));
-    const m = document.querySelector('.modal');
+    const m = document.querySelector('.configuration-dialog');
     return m ? {
+      title: m.querySelector('h3')?.innerText,
+      tabs: [...m.querySelectorAll('[role=tab]')].map((e) => e.innerText.trim()),
+      selected: m.querySelector('[role=tab][aria-selected=true]')?.innerText.trim(),
+      menu: [...m.querySelectorAll('#configuration-files-panel button, #configuration-files-panel .sech')].map((e) => e.innerText.trim()),
+      rightSettings: [...document.querySelectorAll('.top button')].some((b) => b.innerText.includes('设置')),
+    } : null;
+  })()`).catch((e) => ({ error: String(e) }));
+  const settings = await js(`(async () => {
+    document.querySelector('#configuration-software-tab')?.click();
+    await new Promise((r) => setTimeout(r, 800));
+    const m = document.querySelector('#configuration-software-panel');
+    return m && !m.hidden ? {
       sections: [...m.querySelectorAll('.sech')].map((e) => e.innerText.trim()),
       nics: [...(m.querySelector('select')?.options ?? [])].map((o) => o.text.replace(/\\s+/g, ' ')),
       autostart: !!m.querySelector('input[type=checkbox]:not([disabled])'),
       checks: [...m.querySelectorAll('.check')].map((c) => c.innerText.trim()),
     } : null;
   })()`).catch((e) => ({ error: String(e) }));
+  const cfg = configuration as { title?: string; tabs?: string[]; selected?: string; menu?: string[]; rightSettings?: boolean } | null;
+  const software = settings as { sections?: string[]; error?: string } | null;
+  const passed = ready && cfg?.title === '配置管理' && cfg.tabs?.join(',') === '配置文件,软件设置'
+    && cfg.selected === '配置文件' && cfg.rightSettings === false && !!software?.sections?.includes('本机网络') && !software.error;
   const out = argValue('--screenshot');
   if (out) writeFileSync(out, (await win!.webContents.capturePage()).toPNG());
-  console.log('SMOKE_UI ' + JSON.stringify({ ready, ...(info as object), menu, settings }));
-  app.exit(ready ? 0 : 1);
+  console.log('SMOKE_UI ' + JSON.stringify({ ready, ...(info as object), menu: cfg?.menu ?? [], configuration, settings }));
+  app.exit(passed ? 0 : 1);
 }
 
 function daemonPid(): number | null {

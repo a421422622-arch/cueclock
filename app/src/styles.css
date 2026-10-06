@@ -266,6 +266,22 @@ input[type=range] { padding: 0; accent-color: var(--amber); }
 
 /* 设置对话框 */
 .modal.wide { width: 640px; }
+.modal.configuration-dialog { width: 700px; }
+.configuration-tabs { display: flex; gap: 6px; flex: none; padding: 8px 16px 0; border-bottom: 1px solid var(--line); }
+.configuration-tabs > button { background: transparent; border: none; border-bottom: 2px solid transparent; border-radius: 0; color: var(--muted); padding: 8px 16px; }
+.configuration-tabs > button[aria-selected=true] { color: var(--ink); border-bottom-color: var(--amber); }
+.configuration-panel { display: flex; flex-direction: column; gap: 8px; }
+.configuration-panel[hidden] { display: none; }
+.configuration-intro { margin-bottom: 6px; }
+.configuration-current { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 14px; background: var(--canvas); border: 1px solid var(--line); border-radius: 8px; }
+.configuration-current > strong { font-size: 16px; font-weight: 600; }
+.configuration-path { font-size: 11px; color: var(--muted); max-width: 100%; overflow-wrap: anywhere; }
+.configuration-actions { display: flex; gap: 8px; margin: 4px 0; flex-wrap: wrap; }
+.configuration-recents { display: flex; flex-direction: column; gap: 6px; }
+.configuration-recent { text-align: left; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 8px; padding: 9px 12px; background: var(--s2); }
+.configuration-recent > b { font-weight: 500; }
+.configuration-recent > .hint { grid-column: 1; white-space: normal; overflow-wrap: anywhere; }
+.configuration-open { grid-column: 2; grid-row: 1 / 3; align-self: center; color: var(--muted); }
 .form.wide { grid-template-columns: 86px minmax(0, 1fr); }
 .form.wide select { max-width: 100%; }
 select.warnb { border-color: var(--warn); }
