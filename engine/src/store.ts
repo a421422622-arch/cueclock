@@ -17,6 +17,7 @@ export function normalizeProject(raw: unknown): Project {
     name: typeof r.name === 'string' ? r.name : '未命名项目',
     devices: arr('devices'),
     commands: arr('commands'),
+    scenes: arr('scenes'),
     groups: arr('groups'),
     timelines: arr('timelines'),
     triggers: arr('triggers'),

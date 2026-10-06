@@ -1,4 +1,5 @@
 import type { Action, Command, CommandAction, Project, UdpAction } from './types.ts';
+import { expandActions } from './expand.ts';
 
 /** 参数占位符：{{名字}}，名字可用任何语言的字母、数字、下划线（不以数字开头，所以中文「场景号」也行），两侧可有空格。 */
 const PLACEHOLDER = /\{\{\s*([\p{L}_][\p{L}\p{N}_]*)\s*\}\}/gu;
@@ -55,6 +56,31 @@ export function resolveActions(project: Project, actions: Action[]): { actions: 
   const out: Action[] = [];
   const errors: string[] = [];
   for (const a of actions) {
+    if (a.type === 'scene') {
+      if (a.enabled === false) continue;
+      const sc = project.scenes?.find((s) => s.id === a.sceneId);
+      if (!sc) {
+        errors.push(`找不到场景 "${a.sceneId}"`);
+        continue;
+      }
+      // 场景自成一条小时间线：先在场景内部展开（延时、偏移、重复），再整体后移 offsetMs。
+      // 展开后每个动作都是带绝对偏移的普通 UDP，所以场景内的延时不会顺延场景外的动作。
+      // （校验已禁止场景里套场景/放时间线控制，这里再防御一次，避免递归。）
+      const inner = resolveActions(project, sc.actions.filter((x) => x.type !== 'scene' && x.type !== 'timeline'));
+      errors.push(...inner.errors.map((e) => `场景「${sc.name}」：${e}`));
+      for (const x of expandActions(inner.actions)) {
+        if (x.action.type !== 'udp') continue;
+        out.push({
+          ...x.action,
+          id: `${a.id}/${x.action.id}${x.repTotal > 1 ? `#${x.repIndex}` : ''}`,
+          commandName: sc.name,
+          offsetMs: x.relMs + (a.offsetMs ?? 0),
+          repeat: 1,
+          repeatGapMs: undefined,
+        });
+      }
+      continue;
+    }
     if (a.type !== 'command') {
       out.push(a);
       continue;

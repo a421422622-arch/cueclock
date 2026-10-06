@@ -5,6 +5,7 @@ import { describeAscii, parsePayload } from './payload.ts';
 export function describeAction(a: Action, rep?: { i: number; n: number }): string {
   if (a.type === 'delay') return `延时 ${a.ms}ms`;
   if (a.type === 'timeline') return `${a.op === 'enable' ? '启用' : '禁用'} ${a.target}`;
+  if (a.type === 'scene') return `场景 ${a.sceneId}`;
   if (a.type === 'command') return `指令 ${a.commandId}${a.args ? ' ' + JSON.stringify(a.args) : ''}`;
   let body: string;
   try {

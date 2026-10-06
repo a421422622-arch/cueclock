@@ -112,7 +112,28 @@ export interface CommandAction {
   port?: number;
 }
 
-export type Action = UdpAction | CommandAction | DelayAction | TimelineControlAction;
+/**
+ * 场景：一组命名的动作（UDP、指令、延时），在时间线/触发器里用一个「使用场景」动作整体引用。
+ * 场景自成一条小时间线：内部的延时只作用于场景内部，不会顺延场景外面的动作。
+ * 场景里不能再套场景，也不能放「时间线控制」（避免递归和作用域歧义）。
+ */
+export interface Scene {
+  id: string;
+  name: string;
+  note?: string;
+  actions: Action[];
+}
+
+/** 引用场景。offsetMs 让整个场景相对事件点整体后移。 */
+export interface SceneAction {
+  id: string;
+  type: 'scene';
+  enabled?: boolean;
+  sceneId: string;
+  offsetMs?: number;
+}
+
+export type Action = UdpAction | CommandAction | SceneAction | DelayAction | TimelineControlAction;
 
 export interface Cue {
   id: string;
@@ -195,6 +216,7 @@ export interface Project {
   name: string;
   devices: Device[];
   commands?: Command[];
+  scenes?: Scene[];
   groups: Group[];
   timelines: Timeline[];
   triggers: Trigger[];

@@ -1,4 +1,4 @@
-import type { Action, Command, Project } from './types.ts';
+import type { Action, Command, Project, Scene } from './types.ts';
 import { isDateKey } from './calendar.ts';
 import { buildPayload, parsePayload } from './payload.ts';
 import { matchBuffer } from './match.ts';
@@ -36,6 +36,7 @@ export function validateProject(p: Project): Issue[] {
   };
   dup('devices', p.devices.map((d) => d.id));
   dup('commands', commands.map((c) => c.id));
+  dup('scenes', (p.scenes ?? []).map((s) => s.id));
   dup('groups', p.groups.map((g) => g.id));
   dup('timelines', p.timelines.map((t) => t.id));
   dup('triggers', p.triggers.map((t) => t.id));
@@ -113,7 +114,7 @@ export function validateProject(p: Project): Issue[] {
   }
 
   // ── 动作 ──
-  const checkActions = (base: string, actions: Action[], captureCount?: number) => {
+  const checkActions = (base: string, actions: Action[], captureCount?: number, inScene = false) => {
     const ids = new Set<string>();
     for (const original of actions) {
       let a = original;
@@ -129,7 +130,14 @@ export function validateProject(p: Project): Issue[] {
       const path = `${base}/${a.id}`;
       if (ids.has(a.id)) err(path, `动作 id "${a.id}" 在同一列表内重复`);
       ids.add(a.id);
-      if (a.type === 'delay') {
+      if (inScene && a.type === 'scene') {
+        err(path, '场景里不能再使用场景');
+      } else if (inScene && a.type === 'timeline') {
+        err(path, '场景里不能放「时间线控制」，请放在事件点或触发器里');
+      } else if (a.type === 'scene') {
+        if (!(p.scenes ?? []).some((s) => s.id === a.sceneId)) err(path, `找不到场景 "${a.sceneId}"`);
+        if ((a.offsetMs ?? 0) < 0) err(path, 'offsetMs 必须 >= 0');
+      } else if (a.type === 'delay') {
         if (!(a.ms >= 0)) err(path, '延时必须 >= 0');
       } else if (a.type === 'timeline') {
         if (!timelineIds.has(a.target) && !groupIds.has(a.target)) err(path, `找不到时间线/组 "${a.target}"`);
@@ -150,6 +158,12 @@ export function validateProject(p: Project): Issue[] {
       }
     }
   };
+
+  for (const sc of p.scenes ?? []) {
+    if (!sc.name.trim()) warn(`scenes/${sc.id}`, '场景没有名字');
+    if (sc.actions.length === 0) warn(`scenes/${sc.id}`, '场景是空的，使用它不会发送任何东西');
+    checkActions(`scenes/${sc.id}`, sc.actions, undefined, true);
+  }
 
   for (const t of p.timelines) {
     if (t.groupId && !groupIds.has(t.groupId)) err(`timelines/${t.id}`, `找不到组 "${t.groupId}"`);
