@@ -204,6 +204,8 @@ export interface CalendarData {
 }
 
 export interface ProjectSettings {
+  /** 告警相关。offlineAfter：设备连续多少次回包最终失败，判定为离线（默认 3） */
+  alerts?: { offlineAfter?: number };
   recovery?: { enabled?: boolean; delayMs?: number };
   /** 发送套接字绑定，回包要从同一个本地端口收 */
   localAddress?: string;

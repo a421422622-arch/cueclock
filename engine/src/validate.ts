@@ -210,6 +210,9 @@ export function validateProject(p: Project): Issue[] {
     checkActions(path, t.actions, captures);
   }
 
+  const off = p.settings?.alerts?.offlineAfter;
+  if (off !== undefined && !(Number.isInteger(off) && off >= 1)) err('settings', '告警：offlineAfter 必须是 >= 1 的整数');
+
   for (const d of Object.keys(p.calendar?.holidays ?? {})) if (!isDateKey(d)) err('calendar', `节假日日期 "${d}" 格式非法`);
   for (const d of p.calendar?.makeupWorkdays ?? []) if (!isDateKey(d)) err('calendar', `调休日期 "${d}" 格式非法`);
   return issues;

@@ -34,6 +34,30 @@ export type LogResult =
   | 'awaiting-confirm'
   | 'info';
 
+/** 告警类型：日志里值得关注的事。级别 info 用于「恢复」类，warn 需要留意，error 需要处理。 */
+export type AlertCode =
+  | 'reply-timeout'
+  | 'reply-mismatch'
+  | 'send-error'
+  | 'device-offline'
+  | 'device-online'
+  | 'events-missed'
+  | 'trigger-rejected'
+  | 'network-missing'
+  | 'network-restored'
+  | 'paused'
+  | 'resumed'
+  | 'scheduler-error'
+  | 'internal-error'
+  | 'engine-start-failed';
+
+export interface AlertInfo {
+  code: AlertCode;
+  level: 'info' | 'warn' | 'error';
+  /** 告警对象：设备名、触发器名… */
+  subject?: string;
+}
+
 export interface LogEntry {
   /** 事件发生的时间戳 */
   t: number;
@@ -48,6 +72,8 @@ export interface LogEntry {
   scheduledAt?: number;
   /** 实际执行时刻 - 计划时刻，用来观察毫秒精度 */
   lagMs?: number;
+  /** 带这个字段的就是告警：界面「告警」页签、历史告警查询都只看它 */
+  alert?: AlertInfo;
 }
 
 export interface EngineOptions {
@@ -125,6 +151,8 @@ export class Engine extends EventEmitter {
   private missedBatch: { count: number; first: number; last: number } | null = null;
   /** 触发端口收到的"没触发任何东西"的包（不匹配/被拒/被忽略）的日志限流：每秒最多逐条记这么多 */
   private rxWindow = { sec: 0, count: 0, dropped: 0 };
+  /** 设备连续失败计数与离线状态（只在状态变化时记告警，避免刷屏） */
+  private health = new Map<string, { fails: number; offline: boolean }>();
   private startedAt: number | null = null;
   private latestDispatch = new Map<string, number>();
   /** 最近的日志，给界面刷新用 */
@@ -146,9 +174,39 @@ export class Engine extends EventEmitter {
     this.emit('log', entry);
   }
 
+  /** 记一条告警：写进日志（带 alert 字段），界面和磁盘日志都能按它筛选。 */
+  private alert(code: AlertCode, level: AlertInfo['level'], subject: string | undefined, detail: string, extra: Partial<LogEntry> = {}): void {
+    this.log({ dir: 'SYS', result: level === 'error' ? 'error' : 'info', ...extra, detail, alert: { code, level, ...(subject ? { subject } : {}) } });
+  }
+
+  private offlineAfter(): number {
+    const n = this.project.settings?.alerts?.offlineAfter;
+    return Number.isInteger(n) && (n as number) >= 1 ? (n as number) : 3;
+  }
+
+  /** 设备这次发送最终失败（回包超时/不符，或发送本身出错）。连续达到阈值才判离线，且只记一次。 */
+  private noteDeviceFailure(device: Device): void {
+    const h = this.health.get(device.id) ?? { fails: 0, offline: false };
+    h.fails++;
+    this.health.set(device.id, h);
+    if (!h.offline && h.fails >= this.offlineAfter()) {
+      h.offline = true;
+      this.alert('device-offline', 'error', device.name, `设备「${device.name}」连续 ${h.fails} 次没有收到有效回包，判定为离线（${device.ip}）`);
+    }
+  }
+
+  private noteDeviceSuccess(device: Device): void {
+    const h = this.health.get(device.id);
+    if (!h) return;
+    const was = h.offline;
+    h.fails = 0;
+    h.offline = false;
+    if (was) this.alert('device-online', 'info', device.name, `设备「${device.name}」已恢复：收到了有效回包`);
+  }
+
   /** 放手不管（void）的异步任务统一兜底：出错记日志，绝不让引擎进程因为未处理的拒绝而崩溃。 */
   private spawn(task: Promise<unknown>, what: string): void {
-    task.catch((e: unknown) => this.log({ dir: 'SYS', result: 'error', detail: `${what}出错：${(e as Error)?.message ?? String(e)}` }));
+    task.catch((e: unknown) => this.alert('internal-error', 'error', what, `${what}出错：${(e as Error)?.message ?? String(e)}`));
   }
 
   private assertValid(p: Project): void {
@@ -170,13 +228,17 @@ export class Engine extends EventEmitter {
   pause(): void {
     if (this.pausedFlag) return;
     this.pausedFlag = true;
-    this.log({ dir: 'SYS', result: 'info', detail: '调度已暂停（急停）：期间到点的事件将被跳过' });
+    const msg = '调度已暂停（急停）：期间到点的事件将被跳过';
+    if (this.running) this.alert('paused', 'warn', undefined, msg);
+    else this.log({ dir: 'SYS', result: 'info', detail: msg });
   }
 
   resume(): void {
     if (!this.pausedFlag) return;
     this.pausedFlag = false;
-    this.log({ dir: 'SYS', result: 'info', detail: '调度已恢复，不补执行暂停期间错过的事件' });
+    const msg = '调度已恢复，不补执行暂停期间错过的事件';
+    if (this.running) this.alert('resumed', 'info', undefined, msg);
+    else this.log({ dir: 'SYS', result: 'info', detail: msg });
   }
 
   getProject(): Project {
@@ -211,11 +273,11 @@ export class Engine extends EventEmitter {
     if (!this.opts.dryRun) await this.syncListeners();
 
     if (this.transport?.missing && this.transport.missing.length > 0) {
-      this.log({ dir: 'SYS', result: 'info', detail: `警告：网卡 ${this.transport.missing.join('、')} 当前不可用，先用其余网卡运行，后台自动重试` });
+      this.alert('network-missing', 'warn', this.transport.missing.join('、'), `网卡 ${this.transport.missing.join('、')} 当前不可用，先用其余网卡运行，后台自动重试`);
     }
     // 之前缺失的网卡后来起来了：记日志，并补上这块网卡上的触发器监听
     this.transport?.onChange?.(() => {
-      this.log({ dir: 'SYS', result: 'info', detail: `网卡已恢复，当前使用：${this.transport?.boundAddresses?.().join('、') ?? ''}` });
+      this.alert('network-restored', 'info', undefined, `网卡已恢复，当前使用：${this.transport?.boundAddresses?.().join('、') ?? ''}`);
       this.spawn(this.syncListeners(), '重新绑定监听');
     });
 
@@ -226,11 +288,8 @@ export class Engine extends EventEmitter {
         onFire: (item) => this.executeItem(item),
         onMissed: (item) => this.noteMissed(item.epoch),
         onError: (err, item) =>
-          this.log({
-            dir: 'SYS',
-            result: 'error',
+          this.alert('scheduler-error', 'error', item ? `${item.timelineName}/${item.cueName}` : undefined, `调度错误：${(err as Error)?.message ?? err}`, {
             source: item ? `${item.timelineName}/${item.cueName}` : undefined,
-            detail: `调度错误：${(err as Error)?.message ?? err}`,
           }),
       },
       { maxLateMs: this.project.settings?.maxLateMs },
@@ -239,7 +298,7 @@ export class Engine extends EventEmitter {
     this.closed = false;
     if (this.opts.startPaused) {
       this.pausedFlag = true;
-      this.log({ dir: 'SYS', result: 'info', detail: '引擎以急停状态启动（上次急停后重启，需手动恢复调度）：定时事件、触发和断电恢复都不会执行' });
+      this.alert('paused', 'warn', undefined, '引擎以急停状态启动（上次急停后重启，需手动恢复调度）：定时事件、触发和断电恢复都不会执行');
     }
     this.runCtl = new AbortController();
     this.startedAt = this.clock.now();
@@ -365,6 +424,7 @@ export class Engine extends EventEmitter {
     // 局域网里一个乱发包的设备，不能把磁盘日志和界面刷爆：只对"没有触发任何动作"的包限流。
     // 真正触发了的、等待二次确认的包永远逐条记录。
     if (result !== 'fired' && result !== 'awaiting-confirm' && !this.allowRxLog(now)) return;
+    const rejectedBy = outcomes.filter((o) => o.result === 'rejected-source' || o.result === 'rejected-passcode').map((o) => o.trigger.name);
     this.log({
       t: now,
       dir: 'RX',
@@ -373,6 +433,7 @@ export class Engine extends EventEmitter {
       hex: formatHex(data),
       ascii: describeAscii(data),
       detail: `端口 ${port}` + (notes.length ? ' · ' + notes.join('；') : ' · 无匹配的触发器'),
+      ...(rejectedBy.length ? { alert: { code: 'trigger-rejected' as const, level: 'warn' as const, subject: rejectedBy.join('、') } } : {}),
     });
     for (const o of fired) {
       try {
@@ -470,6 +531,7 @@ export class Engine extends EventEmitter {
       this.log({
         dir: 'SYS',
         result: 'missed',
+        alert: { code: 'events-missed', level: 'warn' },
         detail:
           `电脑休眠唤醒或系统时间跳变：错过 ${b.count} 个执行点（${formatClock(b.first)} ~ ${formatClock(b.last)}），已过期不补执行；` +
           '随后补发各时间线「当前应有状态」',
@@ -533,14 +595,14 @@ export class Engine extends EventEmitter {
       return 'skipped';
     }
     if (port === undefined) {
-      this.log({ ...base, result: 'error', detail: `设备「${device.name}」没有默认端口，指令里也没填端口` });
+      this.sendFailed(device, base, `设备「${device.name}」没有默认端口，指令里也没填端口`, false);
       return 'error';
     }
     let buf: Buffer;
     try {
       buf = buildPayload(action.format, action.payload, action.terminator ?? device.terminator ?? 'none');
     } catch (e) {
-      this.log({ ...base, result: 'error', detail: (e as Error).message });
+      this.sendFailed(device, base, (e as Error).message, false);
       return 'error';
     }
     const shown = { hex: formatHex(buf), ascii: describeAscii(buf) };
@@ -561,7 +623,7 @@ export class Engine extends EventEmitter {
         this.log({ ...base, ...shown, t: ctx.startedAt, result: dry ? 'skipped' : 'sent', detail: dry ? '模拟，未发送' : device.name });
         return dry ? 'skipped' : 'sent';
       } catch (e) {
-        this.log({ ...base, ...shown, t: ctx.startedAt, result: 'error', detail: `${device.name}：${(e as Error).message}` });
+        this.sendFailed(device, base, `${device.name}：${(e as Error).message}`, true, { ...shown, t: ctx.startedAt });
         return 'error';
       }
     }
@@ -596,13 +658,29 @@ export class Engine extends EventEmitter {
           detail: `${device.name} · 第 ${i + 1}/${attempts} 次${rtt}${tail}${res.status === 'skipped' ? ' · 模拟，未发送' : ''}`,
         });
         last = res.status === 'skipped' ? 'skipped' : res.status;
-        if (res.status === 'confirmed' || res.status === 'skipped') return last;
+        if (res.status === 'confirmed') {
+          this.noteDeviceSuccess(device);
+          return last;
+        }
+        if (res.status === 'skipped') return last;
       } catch (e) {
-        this.log({ ...base, ...shown, result: 'error', detail: `${device.name}：${(e as Error).message}` });
+        this.sendFailed(device, base, `${device.name}：${(e as Error).message}`, true, shown);
         return 'error';
       }
     }
+    // 重试用尽仍然没有有效回包：这才是一次「最终失败」，记一条告警（而不是每次尝试各一条）
+    if (last === 'timeout' || last === 'mismatch') {
+      this.alert(last === 'timeout' ? 'reply-timeout' : 'reply-mismatch', 'warn', device.name,
+        `设备「${device.name}」回包${last === 'timeout' ? '超时' : '不符'}：${base.remote}，已尝试 ${attempts} 次`, { remote: base.remote, source: base.source }); // dir 保持 SYS：这是汇总告警，不是一次发送记录
+      this.noteDeviceFailure(device);
+    }
     return last;
+  }
+
+  /** 发送本身失败（配置错误、套接字出错、目标不可达…）：记普通 TX 错误日志 + 一条 send-error 告警。 */
+  private sendFailed(device: Device, base: { dir: 'TX'; remote: string; source: string; scheduledAt?: number; lagMs?: number }, message: string, networkIssue: boolean, extra: Partial<LogEntry> = {}): void {
+    this.log({ ...base, ...extra, result: 'error', detail: message, alert: { code: 'send-error', level: 'error', subject: device.name } });
+    if (networkIssue) this.noteDeviceFailure(device); // 套接字级别的失败（如目标不可达）也算设备不通的证据
   }
 
   // ───────────── 给界面用的接口 ─────────────

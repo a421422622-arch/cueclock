@@ -9,7 +9,7 @@ import type { LogEntry } from './engine.ts';
 import { ProjectStore, normalizeProject } from './store.ts';
 import { validateCommand, validateProject, validateScene } from './validate.ts';
 import { simulateDays } from './simulate.ts';
-import { attachFileLogger } from './logfile.ts';
+import { appendLogEntry, attachFileLogger, readAlerts } from './logfile.ts';
 import { defaultStateDir } from './paths.ts';
 import { dateKey, isDateKey } from './calendar.ts';
 import { buildPayload } from './payload.ts';
@@ -83,6 +83,9 @@ export class Daemon {
   private detachFileLog: (() => void) | null = null;
   private pausedBeforeStart = false;
   private retryTimer: NodeJS.Timeout | null = null;
+  /** daemon 自己记的日志/告警（引擎没起来时引擎没法记，比如启动失败）。最近 200 条 */
+  private sysLogs: LogEntry[] = [];
+  private lastStartFailure: string | null = null;
   private stopped = false;
 
   constructor(opts: DaemonOptions) {
@@ -224,6 +227,19 @@ export class Daemon {
     await this.persistSettings();
   }
 
+  private get logsDir(): string {
+    return path.join(this.stateDir, 'logs');
+  }
+
+  /** daemon 层的告警：写磁盘、推给界面、留在内存里（引擎没运行时 getLogs 也能看到）。 */
+  private recordAlert(entry: Omit<LogEntry, 't'>): void {
+    const e: LogEntry = { t: Date.now(), ...entry };
+    this.sysLogs.push(e);
+    if (this.sysLogs.length > 200) this.sysLogs.shift();
+    void appendLogEntry(this.logsDir, e).catch(() => {});
+    this.broadcast({ event: 'log', data: e });
+  }
+
   private clearRetry(): void {
     if (this.retryTimer) clearTimeout(this.retryTimer);
     this.retryTimer = null;
@@ -239,6 +255,11 @@ export class Daemon {
       this.engine = null;
       const err = e as Error & { bindFailure?: boolean };
       const retry = this.opts.retryMs ?? 5000;
+      // 同一个原因的重复失败（网卡没起来时每几秒重试一次）只记一次告警，原因变了才再记
+      if (this.lastStartFailure !== err.message) {
+        this.lastStartFailure = err.message;
+        this.recordAlert({ dir: 'SYS', result: 'error', detail: `引擎启动失败：${err.message}`, alert: { code: 'engine-start-failed', level: 'error' } });
+      }
       this.startError = err.bindFailure ? `${err.message}。每 ${Math.round(retry / 1000)} 秒自动重试，也可在「设置」里改选网卡` : err.message;
       this.broadcast({ event: 'status', data: this.statusPayload() });
       // 开机时网卡可能还没起来、或端口暂时被占：等一会儿再试，而不是让引擎一直停着
@@ -253,6 +274,7 @@ export class Daemon {
     }
     this.engine = engine;
     this.startError = null;
+    this.lastStartFailure = null;
     this.detachFileLog?.();
     this.detachFileLog = attachFileLogger(engine, path.join(this.stateDir, 'logs'));
     this.broadcast({ event: 'status', data: this.statusPayload() });
@@ -436,7 +458,14 @@ export class Daemon {
 
       case 'getLogs': {
         const limit = Math.min(2000, Math.max(1, Number(obj(params ?? {}).limit ?? 500)));
-        return this.engine?.logs.slice(-limit) ?? [];
+        return [...this.sysLogs, ...(this.engine?.logs ?? [])].sort((a, b) => a.t - b.t).slice(-limit);
+      }
+
+      case 'getAlerts': {
+        const p = obj(params ?? {});
+        const days = Math.min(90, Math.max(1, Number(p.days ?? 7)));
+        const limit = Math.min(2000, Math.max(1, Number(p.limit ?? 500)));
+        return readAlerts(this.logsDir, days, limit);
       }
 
       case 'pause':
