@@ -14,6 +14,8 @@ import { defaultStateDir } from './paths.ts';
 import { dateKey, isDateKey } from './calendar.ts';
 import { buildPayload } from './payload.ts';
 import { listInterfaces, missingAddresses, parseNetwork } from './network.ts';
+import { DEFAULT_LOCKOUT_MS, LOCKED_ALLOWED, MAX_ATTEMPTS, MAX_PASSWORD, MIN_PASSWORD, hashPassword, isLockRecord, verifyPassword } from './lock.ts';
+import type { LockRecord } from './lock.ts';
 import type { NetworkSettings } from './network.ts';
 import { matchBuffer } from './match.ts';
 import { DEFAULT_PORT, LineReader, PROTOCOL_VERSION, RpcError } from './protocol.ts';
@@ -25,6 +27,8 @@ export interface DaemonOptions {
   projectFile?: string;
   /** 收到 shutdown 请求时调用（由进程入口决定怎么退出） */
   onShutdown?: () => void;
+  /** 连续输错密码 5 次后的锁定时长，默认 30 秒（测试里调小） */
+  lockoutMs?: number;
   /** 网卡/端口绑定失败后的重试间隔（毫秒），默认 5000。开机时网卡常常还没起来 */
   retryMs?: number;
   stateDir?: string;
@@ -43,11 +47,15 @@ export interface DaemonSettings {
   network?: NetworkSettings;
   /** 急停状态。急停是安全开关，引擎重启（崩溃、断电）后必须保持，不能悄悄恢复调度 */
   paused?: boolean;
+  /** 编辑锁的密码记录（加盐哈希）。机器级，不进配置文件 */
+  lock?: LockRecord;
 }
 
 const MAX_RECENT = 8;
 
 interface Conn {
+  /** 本连接是否已输入密码解锁。解锁状态是每个连接独立的：界面重开、别的客户端默认都是锁定的 */
+  unlocked: boolean;
   socket: net.Socket;
   reader: LineReader;
   authed: boolean;
@@ -83,6 +91,8 @@ export class Daemon {
   private detachFileLog: (() => void) | null = null;
   private pausedBeforeStart = false;
   private retryTimer: NodeJS.Timeout | null = null;
+  private failedAttempts = 0;
+  private lockedUntil = 0;
   /** daemon 自己记的日志/告警（引擎没起来时引擎没法记，比如启动失败）。最近 200 条 */
   private sysLogs: LogEntry[] = [];
   private lastStartFailure: string | null = null;
@@ -117,6 +127,7 @@ export class Daemon {
         recent: Array.isArray(raw.recent) ? raw.recent.filter((x): x is string => typeof x === 'string') : [],
         network,
         paused: raw.paused === true,
+        lock: isLockRecord(raw.lock) ? raw.lock : undefined,
       };
     } catch {
       return { recent: [] };
@@ -300,6 +311,7 @@ export class Daemon {
   private statusPayload(): unknown {
     return {
       ...engineHello(),
+      lock: { enabled: !!this.settings.lock },
       daemon: { pid: process.pid, projectFile: this.store!.file, rev: this.rev, startError: this.startError, notice: this.notice },
       network: this.networkInfo(),
       engine: this.engine?.status() ?? null,
@@ -316,7 +328,7 @@ export class Daemon {
   // ───────────── 连接与分发 ─────────────
 
   private onConnection(socket: net.Socket): void {
-    const conn: Conn = { socket, reader: new LineReader(), authed: false };
+    const conn: Conn = { unlocked: false, socket, reader: new LineReader(), authed: false };
     this.conns.add(conn);
     socket.setEncoding('utf8');
     socket.setNoDelay(true);
@@ -387,7 +399,10 @@ export class Daemon {
       return;
     }
     try {
-      const result = await this.dispatch(req.method, req.params);
+      if (this.settings.lock && !conn.unlocked && !LOCKED_ALLOWED.has(req.method)) {
+        throw new RpcError('locked', '编辑已锁定：请先在界面里输入密码解锁（查看和急停不受影响）');
+      }
+      const result = await this.dispatch(req.method, req.params, conn);
       reply({ ok: true, result: result ?? null });
     } catch (e) {
       if (e instanceof RpcError) reply({ ok: false, error: { code: e.code, message: e.message, details: e.details } });
@@ -400,8 +415,73 @@ export class Daemon {
     return this.engine;
   }
 
-  private async dispatch(method: string, params: unknown): Promise<unknown> {
+  private lockInfo(conn: Conn): { enabled: boolean; unlocked: boolean } {
+    return { enabled: !!this.settings.lock, unlocked: !this.settings.lock || conn.unlocked };
+  }
+
+  /** 校验密码并处理「连续输错」限制：5 次后锁定一段时间，期间连正确密码也不接受。 */
+  private checkPassword(password: unknown): void {
+    const lock = this.settings.lock;
+    if (!lock) return;
+    const now = Date.now();
+    if (now < this.lockedUntil) throw new RpcError('too-many-attempts', `输错次数过多，请 ${Math.ceil((this.lockedUntil - now) / 1000)} 秒后再试`);
+    if (typeof password === 'string' && verifyPassword(password, lock)) {
+      this.failedAttempts = 0;
+      return;
+    }
+    if (++this.failedAttempts >= MAX_ATTEMPTS) {
+      this.failedAttempts = 0;
+      this.lockedUntil = now + (this.opts.lockoutMs ?? DEFAULT_LOCKOUT_MS);
+    }
+    throw new RpcError('bad-password', '密码不正确');
+  }
+
+  private async dispatch(method: string, params: unknown, conn: Conn): Promise<unknown> {
     switch (method) {
+      case 'lockStatus':
+        return this.lockInfo(conn);
+
+      case 'lock':
+        conn.unlocked = false;
+        return this.lockInfo(conn);
+
+      case 'unlock': {
+        this.checkPassword(obj(params ?? {}).password);
+        conn.unlocked = true;
+        return this.lockInfo(conn);
+      }
+
+      case 'setPassword': {
+        const p = obj(params);
+        if (typeof p.password !== 'string' || p.password.length < MIN_PASSWORD || p.password.length > MAX_PASSWORD) {
+          throw new RpcError('bad-request', `密码长度需要在 ${MIN_PASSWORD}~${MAX_PASSWORD} 个字符之间`);
+        }
+        if (this.settings.lock) this.checkPassword(p.current); // 已有密码时，修改必须再输一次当前密码
+        this.settings = { ...this.settings, lock: hashPassword(p.password) };
+        await this.persistSettings();
+        for (const c of this.conns) c.unlocked = false; // 密码变了，其他连接的解锁全部作废
+        conn.unlocked = true;
+        this.broadcast({ event: 'status', data: this.statusPayload() });
+        return this.lockInfo(conn);
+      }
+
+      case 'removePassword': {
+        this.checkPassword(obj(params ?? {}).password);
+        const { lock: _removed, ...rest } = this.settings;
+        this.settings = rest;
+        await this.persistSettings();
+        this.broadcast({ event: 'status', data: this.statusPayload() });
+        return this.lockInfo(conn);
+      }
+
+      case 'listBackups':
+        return this.store!.listBackups();
+
+      case 'restoreBackup': {
+        const p = obj(params);
+        return this.serialize(() => this.restoreBackup(p.name));
+      }
+
       case 'ping':
         return { now: Date.now() };
 
@@ -555,6 +635,31 @@ export class Daemon {
       default:
         throw new RpcError('bad-request', `未知方法 ${method}`);
     }
+  }
+
+  /**
+   * 恢复备份：把某份自动备份还原成当前配置。恢复前强制备份当前版本（不受 60 秒节流限制），
+   * 所以恢复本身也可以撤回。有错误的备份拒绝恢复（否则引擎会停下来）。
+   */
+  private async restoreBackup(name: unknown): Promise<unknown> {
+    if (typeof name !== 'string' || name === '') throw new RpcError('bad-request', '缺少备份文件名');
+    let project: Project;
+    try {
+      project = await this.store!.readBackup(name);
+    } catch (e) {
+      const err = e as Error & { notFound?: boolean };
+      throw new RpcError(err.notFound ? 'not-found' : 'bad-request', err.message);
+    }
+    const issues = validateProject(project);
+    if (issues.some((i) => i.level === 'error')) throw new RpcError('invalid-project', '这份备份有错误，不能恢复', issues);
+    await this.store!.save(project, { forceBackup: true });
+    this.project = project;
+    this.rev++;
+    if (this.engine) await this.engine.reload(project);
+    else await this.startEngine();
+    this.broadcast({ event: 'project-changed', data: { file: this.store!.file, rev: this.rev } });
+    this.broadcast({ event: 'status', data: this.statusPayload() });
+    return { rev: this.rev, warnings: issues.filter((i) => i.level === 'warn') };
   }
 
   /** 改网络设置：保存到机器级设置，重启引擎让新的网卡/端口生效。 */

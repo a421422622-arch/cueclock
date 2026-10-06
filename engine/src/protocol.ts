@@ -25,6 +25,9 @@ export interface EventMessage {
 
 export type ErrorCode =
   | 'bad-request'
+  | 'locked'
+  | 'bad-password'
+  | 'too-many-attempts'
   | 'unauthorized'
   | 'not-found'
   | 'invalid-project'

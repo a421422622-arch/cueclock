@@ -14,9 +14,11 @@ import { Daemon } from './daemon.ts';
 import { DaemonClient } from './client.ts';
 import { ProjectStore } from './store.ts';
 import { defaultStateDir } from './paths.ts';
+import { resetLock } from './lock.ts';
 
 const USAGE = `用法：
   node src/cli.ts init <项目.json>                       新建空项目
+  node src/cli.ts reset-lock [--state-dir 目录]          忘记编辑锁密码时清除它（先停引擎）
   node src/cli.ts check <项目.json>                      静态检查
   node src/cli.ts simulate <项目.json> [--from YYYY-MM-DD] [--days N]
   node src/cli.ts run <项目.json> [--log-dir 目录] [--dry]   直接运行（无后台进程，调试用）
@@ -48,13 +50,20 @@ function printLog(e: LogEntry): void {
 async function main(): Promise<void> {
   const [cmd, file0, ...rest0] = process.argv.slice(2);
   // daemon 的项目文件可以省略：此时第一个参数其实是选项
-  const noFile = cmd === 'daemon' && (!file0 || file0.startsWith('--'));
+  const noFile = (cmd === 'daemon' || cmd === 'reset-lock') && (!file0 || file0.startsWith('--'));
   const file: string = noFile ? '' : (file0 ?? '');
   const rest = noFile && file0 ? [file0, ...rest0] : rest0;
-  if (!cmd || (!file && cmd !== 'daemon')) {
+  if (!cmd || (!file && cmd !== 'daemon' && cmd !== 'reset-lock')) {
     console.log(USAGE);
     process.exit(cmd ? 1 : 0);
   }
+  if (cmd === 'reset-lock') {
+    // 忘记编辑锁密码时用。先停掉引擎（否则它会在下次保存设置时把锁写回去），再运行。
+    const dir = opt(rest, '--state-dir') ?? defaultStateDir();
+    console.log((await resetLock(dir)) ? `已清除编辑锁（${dir}）。请重新启动引擎。` : `没有找到编辑锁（${dir}），无需处理。`);
+    return;
+  }
+
   if (cmd === 'init') {
     const target = path.resolve(file);
     if (existsSync(target)) {
