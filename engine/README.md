@@ -63,6 +63,10 @@ node bench/jitter.ts 200 6                                 # 毫秒抖动实测
 `lock.ts`：密码加盐 scrypt 哈希存 `settings.json`；锁定时**默认拒绝**，只放行 `LOCKED_ALLOWED`（查看 + 急停）；解锁状态每连接独立；5 次输错锁 30 秒。RPC：`lockStatus` `unlock` `lock` `setPassword` `removePassword`；错误码 `locked` `bad-password` `too-many-attempts`。CLI：`reset-lock`。
 备份：`listBackups`、`restoreBackup`（恢复前强制备份当前；文件名校验；有错误的备份拒绝）。
 
+## 操作面板
+
+`Project.pads`：按钮 / 开关（开、关动作）/ 单选组（同组按钮互斥点亮）。`Engine.runPadTile` 执行动作并维护"假定亮灭状态"（250ms 防抖、关=无键、`padId/tileId`），`resetPadState` 清空；状态由 daemon 存入 `settings.json.padState[项目文件]`。`runPadTile`/`resetPadState` 在 `LOCKED_ALLOWED`（编辑锁与急停下仍可按）。校验见 `validate.ts` 的 `pads/...`。
+
 ## 告警
 
 `LogEntry.alert`（类型/级别/对象）。回包重试用尽才记一条；设备连续 `settings.alerts.offlineAfter`（默认 3）次最终失败判离线，只在状态变化时记一条，收到有效回包记恢复。告警走 `Engine.alert()` 单一出口，随日志按天写盘；RPC `getAlerts` 读最近 N 天。目前**只记录，不对外发送**。

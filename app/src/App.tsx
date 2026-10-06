@@ -6,6 +6,7 @@ import { Timeline } from './components/Timeline.tsx';
 import { Inspector } from './components/Inspector.tsx';
 import { LogPanel } from './components/LogPanel.tsx';
 import { CalendarView } from './components/Calendar.tsx';
+import { PadView } from './components/PadView.tsx';
 import { SettingsDialog } from './components/SettingsDialog.tsx';
 import { BackupDialog, UnlockDialog } from './components/LockDialogs.tsx';
 import { BatchHealthDialog } from './components/BatchHealthDialog.tsx';
@@ -99,8 +100,9 @@ export function App() {
           <div className="viewtabs">
             <span className={view === 'timeline' ? 'on' : ''} onClick={() => setView('timeline')}>模式与时间轴</span>
             <span className={view === 'calendar' ? 'on' : ''} onClick={() => setView('calendar')}>日历与预览</span>
+            <span className={view === 'pad' ? 'on' : ''} onClick={() => setView('pad')}>操作面板</span>
           </div>
-          {view === 'timeline' ? <Timeline /> : <CalendarView />}
+          {view === 'timeline' ? <Timeline /> : view === 'calendar' ? <CalendarView /> : <PadView />}
         </div>
         <Inspector />
         <LogPanel />

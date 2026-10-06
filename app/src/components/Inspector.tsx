@@ -5,6 +5,10 @@ import { allActions, sceneRefCount } from '../lib/usage.ts';
 import { describeDeviceState } from '../lib/deviceState.ts';
 import { offlineDelayLabel } from '../lib/interval.ts';
 import { IntervalPicker } from './IntervalPicker.tsx';
+import type { Pad, PadTile } from '@engine/types.ts';
+import { changeKind, duplicateTile, groupNames, moveTile } from '../lib/pad.ts';
+import { GROUP_COLORS } from '../lib/colors.ts';
+import { setPadId } from '../store.ts';
 import { formatTime, parseTime } from '@engine/time.ts';
 import { isDateKey } from '@engine/calendar.ts';
 import { edit, engineNow, openBatchHealth, rpc, select, toast, useStore } from '../store.ts';
@@ -37,6 +41,12 @@ export function Inspector() {
   } else if (sel?.kind === 'device' && project.devices.some((d) => d.id === sel.id)) {
     title = '设备';
     body = <DeviceInspector key={sel.id} id={sel.id} />;
+  } else if (sel?.kind === 'padTile' && project.pads?.find((p) => p.id === sel.padId)?.tiles.some((t) => t.id === sel.tileId)) {
+    title = '面板按钮';
+    body = <PadTileInspector key={`${sel.padId}/${sel.tileId}`} padId={sel.padId} tileId={sel.tileId} />;
+  } else if (sel?.kind === 'pad' && (project.pads ?? []).some((p) => p.id === sel.id)) {
+    title = '操作面板';
+    body = <PadInspector key={sel.id} id={sel.id} />;
   } else if (sel?.kind === 'scene' && (project.scenes ?? []).some((c) => c.id === sel.id)) {
     title = '场景';
     body = <SceneInspector key={sel.id} id={sel.id} />;
@@ -596,6 +606,109 @@ function HealthSection({ device: d, patch }: { device: Device; patch: (fn: (d: D
             </span>
           </Field>
         )}
+      </div>
+    </>
+  );
+}
+
+
+// ───────────── 操作面板 ─────────────
+
+function PadInspector({ id }: { id: string }) {
+  const project = useStore((s) => s.project)!;
+  const pad = (project.pads ?? []).find((p) => p.id === id)!;
+  const patch = (fn: (p: Pad) => void) => edit((x) => { const p = x.pads?.find((q) => q.id === id); if (p) fn(p); });
+  return (
+    <>
+      <div className="form">
+        <Field label="名称"><input value={pad.name} onChange={(e) => patch((p) => (p.name = e.target.value))} /></Field>
+        <Field label="每行几个" hint="1~8，按钮会按这个列数排成网格；大按钮占 2 列"><NumInput value={pad.columns ?? 4} min={1} max={8} width={60} onChange={(v) => patch((p) => (p.columns = v ?? 4))} /></Field>
+      </div>
+      <div className="hint pad">点面板里的按钮，在这里修改它的绑定。面板上点「＋ 按钮」「＋ 开关」添加。</div>
+      <div className="foot">
+        <button className="danger" onClick={() => {
+          if (!window.confirm(`删除面板「${pad.name}」及其 ${pad.tiles.length} 个按钮？`)) return;
+          edit((p) => (p.pads = (p.pads ?? []).filter((q) => q.id !== id)));
+          setPadId(null);
+          select(null);
+        }}>删除面板</button>
+      </div>
+    </>
+  );
+}
+
+function PadTileInspector({ padId, tileId }: { padId: string; tileId: string }) {
+  const project = useStore((s) => s.project)!;
+  const pad = project.pads!.find((p) => p.id === padId)!;
+  const tile = pad.tiles.find((t) => t.id === tileId)!;
+  const patch = (fn: (t: PadTile) => PadTile | void) =>
+    edit((p) => {
+      const x = p.pads?.find((q) => q.id === padId);
+      const i = x?.tiles.findIndex((t) => t.id === tileId) ?? -1;
+      if (!x || i < 0) return;
+      const r = fn(x.tiles[i]!);
+      if (r) x.tiles[i] = r;
+    });
+  const [res, setRes] = useState<{ text: string; bad: boolean } | null>(null);
+
+  const tryIt = async () => {
+    setRes({ text: '执行中…', bad: false });
+    try {
+      const r = await rpc<{ actions: number; ignored?: boolean }>('runPadTile', { padId, tileId });
+      setRes({ text: r.ignored ? '点得太快了，已忽略' : `已执行（${r.actions} 个执行点），结果见下方日志`, bad: false });
+    } catch (e) {
+      setRes({ text: e instanceof RpcFailure ? e.message : String(e), bad: true });
+    }
+  };
+
+  return (
+    <>
+      <div className="form">
+        <Field label="名称"><input value={tile.label} onChange={(e) => patch((t) => { t.label = e.target.value; })} /></Field>
+        <Field label="类型" hint={tile.kind === 'toggle' ? '开关：点一下在「开」和「关」之间切换，各绑一组动作。亮灯状态是软件推测的，不代表设备真实状态。' : '按钮：点一下执行绑定的动作。'}>
+          <Seg<PadTile['kind']> value={tile.kind} onChange={(k) => patch((t) => changeKind(t, k))} options={[{ value: 'button', label: '按钮' }, { value: 'toggle', label: '开关' }]} />
+        </Field>
+        <Field label="颜色">
+          <div className="swatches">
+            {GROUP_COLORS.map((c) => <span key={c} className={`sw ${tile.color === c ? 'on' : ''}`} style={{ background: c }} onClick={() => patch((t) => { t.color = c; })} />)}
+          </div>
+        </Field>
+        <Field label="大小"><Seg<'1' | '2'> value={String(tile.size ?? 1) as '1' | '2'} onChange={(v) => patch((t) => { t.size = Number(v) as 1 | 2; })} options={[{ value: '1', label: '1 列' }, { value: '2', label: '2 列（大按钮）' }]} /></Field>
+        {tile.kind === 'button' && (
+          <Field label="单选组" hint="同组按钮点哪个哪个亮、其余熄灭，适合互斥的灯光场景。留空 = 不亮灯。">
+            <input list={`groups-${padId}`} value={tile.group ?? ''} placeholder="（可选）如：灯光场景" onChange={(e) => patch((t) => { t.group = e.target.value || undefined; })} />
+            <datalist id={`groups-${padId}`}>{groupNames(pad).map((g) => <option key={g} value={g} />)}</datalist>
+          </Field>
+        )}
+        <Field label="确认"><Check checked={tile.confirm === true} onChange={(v) => patch((t) => { t.confirm = v || undefined; })} label="点击前先让操作员确认（适合「全关」这类）" /></Field>
+      </div>
+
+      <div className="sech">{tile.kind === 'toggle' ? '切到「开」时执行' : '点击时执行'} <span>{tile.actions.length}</span></div>
+      <ActionList actions={tile.actions} onChange={(next) => patch((t) => { t.actions = next; })} />
+      {tile.kind === 'toggle' && (
+        <>
+          <div className="sech" style={{ marginTop: 12 }}>切到「关」时执行 <span>{(tile.offActions ?? []).length}</span></div>
+          <ActionList actions={tile.offActions ?? []} onChange={(next) => patch((t) => { t.offActions = next; })} />
+        </>
+      )}
+      <div className="row" style={{ gap: 8, marginTop: 10 }}>
+        <button className="primary" onClick={tryIt}>▶ 试按一次</button>
+        {res && <span className={`hint ${res.bad ? 'err' : 'okc'}`}>{res.text}</span>}
+      </div>
+      <div className="hint" style={{ marginTop: 4 }}>真的会发出指令；开关会同时切换状态。</div>
+      <div className="foot">
+        <button title="往前移" onClick={() => edit((p) => { const x = p.pads?.find((q) => q.id === padId); if (x) x.tiles = moveTile(x.tiles, tileId, -1); })}>← 前移</button>
+        <button title="往后移" onClick={() => edit((p) => { const x = p.pads?.find((q) => q.id === padId); if (x) x.tiles = moveTile(x.tiles, tileId, 1); })}>后移 →</button>
+        <button onClick={() => {
+          const nid = genId('tile');
+          edit((p) => { const x = p.pads?.find((q) => q.id === padId); const src = x?.tiles.find((t) => t.id === tileId); if (x && src) x.tiles.push(duplicateTile(src, nid, () => genId('a'))); });
+          select({ kind: 'padTile', padId, tileId: nid });
+        }}>复制</button>
+        <button className="danger" onClick={() => {
+          if (!window.confirm(`删除按钮「${tile.label}」？`)) return;
+          edit((p) => { const x = p.pads?.find((q) => q.id === padId); if (x) x.tiles = x.tiles.filter((t) => t.id !== tileId); });
+          select({ kind: 'pad', id: padId });
+        }}>删除</button>
       </div>
     </>
   );

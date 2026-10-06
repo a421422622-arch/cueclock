@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatClock } from '@engine/time.ts';
 import type { LogEntry } from '@engine/engine.ts';
-import { markAlertsSeen, rpc, select, showLogTab, toast, toggleLog, useStore } from '../store.ts';
+import { markAlertsSeen, rpc, select, showLogTab, showPadTile, toast, toggleLog, useStore } from '../store.ts';
 import { ALERT_LABEL, mergeAlerts, unseenCount } from '../lib/alerts.ts';
 import { RESULT_LABEL, RESULT_TONE } from '../lib/labels.ts';
 import { RpcFailure } from '../transport.ts';
@@ -157,6 +157,7 @@ function Issues() {
     else if (kind === 'groups' && a) select({ kind: 'group', id: a });
     else if (kind === 'commands' && a) select({ kind: 'command', id: a });
     else if (kind === 'scenes' && a) select({ kind: 'scene', id: a });
+    else if (kind === 'pads' && a) showPadTile(a, b);
     else if (kind === 'timelines' && a) select(b ? { kind: 'cue', timelineId: a, cueId: b } : { kind: 'timeline', id: a });
   };
   return (

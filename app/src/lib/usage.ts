@@ -6,6 +6,7 @@ export function allActions(project: Project): Action[] {
     ...project.timelines.flatMap((t) => t.cues.flatMap((c) => c.actions)),
     ...project.triggers.flatMap((t) => t.actions),
     ...(project.scenes ?? []).flatMap((s) => s.actions),
+    ...(project.pads ?? []).flatMap((p) => p.tiles.flatMap((t) => [...t.actions, ...(t.offActions ?? [])])),
   ];
 }
 

@@ -395,3 +395,27 @@ select.warnb { border-color: var(--warn); }
 .bhrow:last-child { border-bottom: none; }
 .bhrow:hover { background: var(--s3); } .bhrow.on { background: #2a2210; }
 .sechead span button { margin-left: 4px; }
+
+/* 操作面板 */
+.padview { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: auto; background: var(--canvas); }
+.padbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--s1); position: sticky; top: 0; z-index: 2; }
+.padtabs { display: flex; gap: 6px; align-items: center; }
+.padtabs span { padding: 4px 12px; border: 1px solid var(--line); border-radius: 16px; cursor: pointer; color: var(--muted); }
+.padtabs span.on { color: var(--ink); border-color: var(--amber); background: var(--s2); }
+.padgrid { display: grid; gap: 12px; padding: 14px; align-content: start; }
+.padtile { position: relative; min-height: 96px; border-radius: 12px; border: 2px solid color-mix(in srgb, var(--c) 55%, transparent); background: color-mix(in srgb, var(--c) 14%, var(--s2)); color: var(--ink); font-size: 15px; font-weight: 600; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 8px; transition: transform .08s, box-shadow .12s, background .12s; }
+.padtile:hover:not(:disabled) { background: color-mix(in srgb, var(--c) 24%, var(--s2)); }
+.padtile:active:not(:disabled) { transform: scale(.97); }
+.padtile:disabled { opacity: .45; cursor: default; }
+.padtile.lit { background: var(--c); color: var(--t); border-color: var(--c); box-shadow: 0 0 22px color-mix(in srgb, var(--c) 55%, transparent); }
+.padtile.ok { box-shadow: 0 0 0 3px #34c75988; } .padtile.bad { box-shadow: 0 0 0 3px #ff453a99; }
+.padtile.selected { outline: 3px solid #fff; outline-offset: 2px; }
+.padtile.add { border-style: dashed; background: transparent; color: var(--muted); border-color: var(--line2); font-weight: 400; min-height: 70px; }
+.padtile .pl { text-align: center; word-break: break-all; }
+.padtile .pb { font: 600 11px var(--mono); opacity: .8; }
+.padtile .pc { position: absolute; top: 6px; right: 8px; font-size: 12px; }
+.padtile .pe { position: absolute; bottom: 6px; font-size: 10px; color: var(--warn); font-weight: 400; }
+.padtile .pbusy { position: absolute; top: 4px; left: 8px; }
+.swatches { display: flex; gap: 6px; }
+.swatches .sw { width: 22px; height: 22px; border-radius: 6px; cursor: pointer; border: 2px solid transparent; }
+.swatches .sw.on { border-color: #fff; }

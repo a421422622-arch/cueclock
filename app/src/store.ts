@@ -23,9 +23,11 @@ export type Selection =
   | { kind: 'trigger'; id: string }
   | { kind: 'command'; id: string }
   | { kind: 'scene'; id: string }
+  | { kind: 'pad'; id: string }
+  | { kind: 'padTile'; padId: string; tileId: string }
   | null;
 
-export type View = 'timeline' | 'calendar';
+export type View = 'timeline' | 'calendar' | 'pad';
 
 export type SaveState = 'saved' | 'dirty' | 'saving' | 'error' | 'conflict';
 
@@ -46,6 +48,9 @@ export interface AppState {
   canRedo: boolean;
   view: View;
   settingsOpen: boolean;
+  /** 操作面板：当前面板 id；是否处于编辑模式 */
+  padId: string | null;
+  padEdit: boolean;
   /** 编辑锁：enabled=引擎里设了密码；unlocked=本连接已解锁。锁定时只读（查看、急停仍可用） */
   lock: { enabled: boolean; unlocked: boolean };
   unlockOpen: boolean;
@@ -93,6 +98,8 @@ let state: AppState = {
   canRedo: false,
   view: 'timeline',
   settingsOpen: false,
+  padId: null,
+  padEdit: false,
   lock: { enabled: false, unlocked: true },
   unlockOpen: false,
   backupOpen: false,
@@ -425,6 +432,12 @@ export const setLockPassword = (password: string, current?: string) => lockCall(
 export const removeLockPassword = (password: string) => lockCall('removePassword', { password });
 export const openUnlock = () => set({ unlockOpen: true });
 export const closeUnlock = () => set({ unlockOpen: false });
+export const setPadId = (id: string | null) => set({ padId: id });
+export const setPadEdit = (v: boolean) => set({ padEdit: v });
+/** 从问题列表等处直接跳到某个面板按钮：切到面板视图并进入编辑模式选中它 */
+export function showPadTile(padId: string, tileId?: string): void {
+  set({ view: 'pad', padId, padEdit: true, sel: tileId ? { kind: 'padTile', padId, tileId } : { kind: 'pad', id: padId } });
+}
 export const openBatchHealth = (init: import('../../engine/src/types.ts').DeviceHealthConfig | null = null) => set({ batchHealthOpen: true, batchHealthInit: init });
 export const closeBatchHealth = () => set({ batchHealthOpen: false });
 export const openBackups = () => set({ backupOpen: true });

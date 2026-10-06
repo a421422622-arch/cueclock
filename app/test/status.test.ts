@@ -32,3 +32,13 @@ test('新引擎已返回的网卡和缺失信息原样保留', () => {
 test('引擎未运行时保持 null，不伪造运行状态', () => {
   assert.equal(normalizeEngineStatus(null), null);
 });
+
+test('旧引擎没有 devices / pads 字段：补成空，界面读取不会 undefined', () => {
+  const result = normalizeEngineStatus(legacy())!;
+  assert.deepEqual(result.devices, []);
+  assert.deepEqual(result.pads, {});
+  const raw = { ...legacy(), devices: [{ id: 'D', state: 'online' as const, method: 'ping' as const, fails: 0, lastCheckAt: 1, lastOkAt: 1 }], pads: { 'p/t': true } };
+  const kept = normalizeEngineStatus(raw)!;
+  assert.deepEqual(kept.pads, { 'p/t': true });
+  assert.equal(kept.devices.length, 1);
+});
