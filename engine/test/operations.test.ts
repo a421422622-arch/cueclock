@@ -92,3 +92,22 @@ test('接管发生在等回包期间：取消自动重试，不继续用旧指�
   await new Promise((r) => setImmediate(r));
   assert.equal(tr.sent.length, 1);
 });
+
+test('面板的顺序场景也能解析出接管目标（不能因场景保留为引用而漏接管）', async (t) => {
+  const p = project([], { scenes: [{ id: 's', name: '顺序场景', execution: 'sequence', actions: [udp('a', 'ON')] }],
+    pads: [{ id: 'p', name: '面板', tiles: [{ id: 'b', label: '开馆', kind: 'button', takeoverSec: 300, actions: [{ id: 'ref', type: 'scene', sceneId: 's' }] }] }] });
+  const e = new Engine(p, { clock: new VirtualClock(base), transport: new RecordingTransport() }); await e.start(); t.after(() => e.stop());
+  e.runPadTile('p', 'b');
+  assert.equal(e.status().devices[0]!.override?.until, base + 300000);
+});
+
+test('状态回读后又发出新控制指令：旧回读立即标为过期，即使墙上时间相同', async (t) => {
+  const tr = new RecordingTransport(); tr.replies = [{ status: 'confirmed', reply: Buffer.from('POWER=OFF LEVEL=0') }];
+  const p = project([]); p.devices[0]!.feedback = feedback;
+  const e = new Engine(p, { clock: new VirtualClock(base), transport: tr }); await e.start(); t.after(() => e.stop());
+  e.runCommandNow({ id: 'q', name: '查询', targets: ['D1'], format: 'ascii', payload: 'QUERY', reply });
+  await waitFor(() => e.status().devices[0]?.feedback !== undefined);
+  e.runCommandNow({ id: 'on', name: '开机', targets: ['D1'], format: 'ascii', payload: 'ON' });
+  await waitFor(() => e.status().devices[0]?.lastCommand?.source.includes('开机') === true);
+  assert.equal(e.status().devices[0]!.feedback?.stale, true);
+});

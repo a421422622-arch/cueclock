@@ -1,5 +1,5 @@
 import type { Action, Command, PadTile, Project, Scene } from './types.ts';
-import { sliderRange, sliderTexts, substituteSliderAction, usesSliderValue } from './padvalue.ts';
+import { sliderOutput, sliderRange, sliderTexts, substituteSliderAction, usesSliderValue } from './padvalue.ts';
 import { isDateKey } from './calendar.ts';
 import { buildPayload, parsePayload } from './payload.ts';
 import { matchBuffer } from './match.ts';
@@ -218,14 +218,18 @@ export function validateProject(p: Project): Issue[] {
     }
     const uses = t.actions.flatMap((a) => sliderTexts(a).map(usesSliderValue));
     if (t.actions.length > 0 && !uses.some((u) => u.value || u.hex)) warn(path, '动作里没有用 {{value}} 或 {{hex}}，拖动滑块发出去的内容不会变化');
+    if (t.unit !== undefined && (typeof t.unit !== 'string' || t.unit.length > 16)) err(path, '滑块单位必须是不超过16字符的文字');
+    const m = t.mapping;
+    if (m && (![m.min, m.max].every((n) => typeof n === 'number' && Number.isFinite(n) && Math.abs(n) <= 1e9) || m.min === m.max)) { err(path, '滑块映射输出范围必须是不同的有限数字（绝对值≤1e9）'); return; }
+    if (m && !(Number.isInteger(m.precision ?? 0) && (m.precision ?? 0) >= 0 && (m.precision ?? 0) <= 6)) { err(path, '滑块映射精度必须是0~6的整数'); return; }
     const usesHex = uses.some((u) => u.hex);
-    if (usesHex && !(Number.isInteger(min) && min >= 0 && Number.isInteger(step) && Number.isInteger(max))) {
-      err(path, '用到 {{hex}} 时，最小值（≥0）、最大值、步长都必须是整数');
+    if (usesHex && !(m ? Number.isInteger(m.min) && m.min >= 0 && Number.isInteger(m.max) && m.max >= 0 && (m.precision ?? 0) === 0 : Number.isInteger(min) && min >= 0 && Number.isInteger(step) && Number.isInteger(max))) {
+      err(path, '用到 {{hex}} 时，设备输出必须为非负整数（无映射时范围和步长须为整数；映射精度须为0）');
       return;
     }
     const sample = t.actions.filter((a) => a.type !== 'scene' && a.type !== 'timeline');
     try {
-      checkActions(path, sample.map((a) => substituteSliderAction(a, min)));
+      checkActions(path, sample.map((a) => substituteSliderAction(a, sliderOutput(t, min))));
     } catch (e) {
       err(path, (e as Error).message);
     }

@@ -1,8 +1,8 @@
 import type { Pad, PadTile } from '../../../engine/src/types.ts';
 import { GROUP_COLORS } from './colors.ts';
-import { hexOf, sliderRange, sliderSteps, sliderValueAt, snapSliderValue } from '../../../engine/src/padvalue.ts';
+import { hexOf, sliderOutput, sliderRange, sliderSteps, sliderValueAt, snapSliderValue } from '../../../engine/src/padvalue.ts';
 
-export { sliderRange, sliderSteps, sliderValueAt, snapSliderValue };
+export { sliderOutput, sliderRange, sliderSteps, sliderValueAt, snapSliderValue };
 
 export const DEFAULT_COLUMNS = 4;
 
@@ -44,7 +44,7 @@ export const groupNames = (pad: Pad): string[] => [...new Set(pad.tiles.map((t) 
 export function changeKind(tile: PadTile, kind: PadTile['kind']): PadTile {
   if (tile.kind === kind) return tile;
   // 滑块的范围字段只属于滑块；开关的关动作、单选组也各有归属
-  const { offActions: _off, group: _group, min: _min, max: _max, step: _step, initial: _initial, ...rest } = tile;
+  const { offActions: _off, group: _group, min: _min, max: _max, step: _step, initial: _initial, mapping: _mapping, unit: _unit, ...rest } = tile;
   if (kind === 'toggle') return { ...rest, kind, offActions: tile.offActions ?? [] };
   if (kind === 'slider') return { ...rest, kind, size: rest.size ?? 2, min: 0, max: 100, step: 1 };
   return { ...rest, kind, ...(tile.group ? { group: tile.group } : {}) };

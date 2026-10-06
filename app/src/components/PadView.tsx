@@ -206,7 +206,7 @@ function SliderTile({ padId, tile, value, editing, selected, disabled, flash, on
       onClick={editing ? onSelect : undefined}
     >
       <span className="pl">{tile.label || '（未命名）'}</span>
-      <span className="pv">{shown}</span>
+      <span className="pv">{shown}{tile.unit ?? ''}</span>
       <input
         type="range"
         min={0}
@@ -225,7 +225,7 @@ function SliderTile({ padId, tile, value, editing, selected, disabled, flash, on
         onKeyUp={finish}
         onBlur={finish}
       />
-      <span className="pr"><i>{min}</i><i>{max}</i></span>
+      <span className="pr"><i>{min}{tile.unit}</i><i>{max}{tile.unit}</i></span>
       {editing && tile.actions.length === 0 && <span className="pe">未绑定</span>}
     </div>
   );

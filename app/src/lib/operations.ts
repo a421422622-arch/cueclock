@@ -2,7 +2,7 @@ import type { CommandState, EngineStatus, FeedbackState } from '../../../engine/
 
 export function commandLabel(command: CommandState | undefined): string {
   if (!command) return '尚无操作记录';
-  return ({ sent: '已发送 · 未校验回包', confirmed: '回包已确认', timeout: '回包超时', mismatch: '回包不符', error: '发送失败', skipped: '未发送' } as Record<string, string>)[command.result] ?? command.result;
+  return ({ pending: '发送 / 等待回包', sent: '已发送 · 未校验回包', confirmed: '回包已确认', timeout: '回包超时', mismatch: '回包不符', error: '发送失败', skipped: '未发送' } as Record<string, string>)[command.result] ?? command.result;
 }
 
 export function feedbackLabel(feedback: FeedbackState | undefined): string {

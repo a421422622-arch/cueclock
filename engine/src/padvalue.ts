@@ -39,6 +39,16 @@ export function snapSliderValue(t: Pick<PadTile, 'min' | 'max' | 'step' | 'initi
   return clamped - lo < hi - clamped ? lo : hi;
 }
 
+/** 界面档位值映射到设备值；反向范围可用于反相控制。 */
+export function sliderOutput(tile: PadTile, value: number): number {
+  const v = snapSliderValue(tile, value);
+  if (!tile.mapping) return v;
+  const { min, max } = sliderRange(tile);
+  const mapping = tile.mapping;
+  const result = mapping.min + (v - min) / (max - min) * (mapping.max - mapping.min);
+  return Number(result.toFixed(mapping.precision ?? 0));
+}
+
 const TOKEN = /\{\{\s*(value|hex)\s*\}\}/g;
 
 /** 文本里有没有 {{value}} / {{hex}}。 */

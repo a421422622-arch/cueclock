@@ -225,6 +225,10 @@ export interface PadTile {
   max?: number;
   step?: number;
   initial?: number;
+  /** 操作员看到的单位（如 %、dB）。 */
+  unit?: string;
+  /** UI范围线性映射到设备值；precision默认0（取整），不填mapping保持旧原始值。 */
+  mapping?: { min: number; max: number; precision?: number };
 }
 
 export interface Pad {

@@ -17,7 +17,7 @@ import { validateProject } from './validate.ts';
 import { buildPayload, describeAscii, formatHex } from './payload.ts';
 import { matchBuffer } from './match.ts';
 import { substituteCaptureAction } from './captures.ts';
-import { snapSliderValue, substituteSliderAction } from './padvalue.ts';
+import { sliderOutput, snapSliderValue, substituteSliderAction } from './padvalue.ts';
 import { readFeedback } from './operations.ts';
 import { formatClock, formatTime } from './time.ts';
 import type { NetworkSettings } from './network.ts';
@@ -25,6 +25,7 @@ import { staggerMs, systemPing } from './health.ts';
 import type { PingResult } from './health.ts';
 
 export type LogResult =
+  | 'pending'
   | 'sent'
   | 'confirmed'
   | 'mismatch'
@@ -209,7 +210,7 @@ export class Engine extends EventEmitter {
   private latestDispatch = new Map<string, number>();
   private overrides = new Map<string, DeviceOverride>();
   private commands = new Map<string, CommandState & { order: number }>();
-  private feedback = new Map<string, Omit<FeedbackState, 'stale'>>();
+  private feedback = new Map<string, Omit<FeedbackState, 'stale'> & { order: number }>();
   private dispatchOrder = 0;
   private sceneRuns = new Map<string, SceneRunStatus>();
   private sceneKeys = new Map<string, string>();
@@ -298,11 +299,12 @@ export class Engine extends EventEmitter {
     return o;
   }
 
-  private noteFeedback(device: Device, reply: Buffer | undefined): void {
+  private noteFeedback(device: Device, reply: Buffer | undefined, order = this.dispatchOrder): void {
     const current = this.project.devices.find((d) => d.id === device.id);
     if (!reply || !device.feedback || current?.ip !== device.ip || JSON.stringify(current.feedback) !== JSON.stringify(device.feedback)) return;
+    if (order < (this.commands.get(device.id)?.order ?? 0)) return;
     const values = readFeedback(device.feedback, reply);
-    if (values) this.feedback.set(device.id, { at: this.clock.now(), values });
+    if (values) this.feedback.set(device.id, { at: this.clock.now(), values, order });
   }
 
   // ───────────── 操作面板 ─────────────
@@ -350,7 +352,7 @@ export class Engine extends EventEmitter {
     if (slider) {
       if (opts.value === undefined) throw new Error('滑块需要 value');
       const v = snapSliderValue(tile, opts.value);
-      actions = tile.actions.map((a) => substituteSliderAction(a, v));
+      actions = tile.actions.map((a) => substituteSliderAction(a, sliderOutput(tile, v)));
       this.padState.set(key, v);
       state = v;
     } else if (tile.kind === 'toggle') {
@@ -366,7 +368,7 @@ export class Engine extends EventEmitter {
     if (!slider || final) this.emitPadState(); // 拖动中的中间值不推送、不落盘，松手时一次
     const source = `面板「${pad.name}」/${tile.label}`;
     if (tile.takeoverSec) {
-      const resolved = resolveActions(this.project, actions).actions;
+      const resolved = resolveActions(this.project, actions, { preview: true }).actions;
       const targets = resolved.flatMap((a) => a.type === 'udp' ? a.targets : []);
       for (const d of this.resolveDevices(targets)) {
         const o = this.activeOverride(d.id);
@@ -375,7 +377,7 @@ export class Engine extends EventEmitter {
     }
     if (!slider || final) this.log({ dir: 'SYS', result: 'info', source, detail: slider ? `滑块设为 ${state}` : tile.kind === 'toggle' ? `开关切换为${state ? '开' : '关'}` : '按钮被点击' });
     this.spawn(this.runActionList(actions, now, source, true), '执行面板按钮');
-    return { actions: expandActions(resolveActions(this.project, actions).actions).length, state };
+    return { actions: expandActions(resolveActions(this.project, actions, { preview: true }).actions).length, state };
   }
 
   /** 清空面板的亮灯状态（不指定面板就清全部）。设备被别的方式改过、面板与实际不同步时用。 */
@@ -404,13 +406,14 @@ export class Engine extends EventEmitter {
     if (!a.reply) throw new Error(`探测指令「${cmd.name}」必须开启回包校验`);
     if (!this.transport) throw new Error('引擎未运行');
     const reply = a.reply;
+    const order = this.dispatchOrder;
     const res = await this.transport.sendAndWaitReply(device.ip, port, buildPayload(a.format, a.payload, a.terminator ?? device.terminator ?? 'none'), {
       from: a.sendFrom,
       timeoutMs: reply.timeoutMs,
       accept: (b) => { try { return matchBuffer(b, reply).matched; } catch { return false; } },
     });
     const ok = res.status === 'confirmed';
-    if (ok) this.noteFeedback(device, res.reply);
+    if (ok) this.noteFeedback(device, res.reply, order);
     return { ok, method: 'udp', rttMs: res.rttMs, detail: ok ? `UDP 探测收到回包${res.rttMs !== undefined ? `（${res.rttMs}ms）` : ''}` : res.status === 'mismatch' ? 'UDP 探测收到的回包不符合期望' : 'UDP 探测超时，没有回包' };
   }
 
@@ -994,6 +997,7 @@ export class Engine extends EventEmitter {
       if (!ctx.signal?.aborted && device.id !== '__test' && order >= (this.commands.get(device.id)?.order ?? 0)) this.commands.set(device.id, { at: this.clock.now(), result, source: base.source, order });
     };
     const dry = this.opts.dryRun === true;
+    if (!dry) record('pending');
     if (ctx.recoveryAt !== undefined && (this.latestDispatch.get(device.id) ?? -Infinity) > ctx.recoveryAt) {
       this.log({ ...base, result: 'skipped', detail: `设备「${device.name}」已执行更新的状态，跳过旧恢复动作` });
       return 'skipped';
@@ -1054,7 +1058,7 @@ export class Engine extends EventEmitter {
         if (res.status === 'confirmed') {
           if (ctx.signal?.aborted) return 'skipped';
           this.noteDeviceSuccess(device);
-          if (order >= (this.commands.get(device.id)?.order ?? 0)) this.noteFeedback(device, res.reply);
+          if (order >= (this.commands.get(device.id)?.order ?? 0)) this.noteFeedback(device, res.reply, order);
           return last;
         }
         if (res.status === 'skipped') return last;
@@ -1185,7 +1189,7 @@ export class Engine extends EventEmitter {
       const feedback = this.feedback.get(d.id);
       const override = this.activeOverride(d.id);
       return { ...(command ? { lastCommand: { at: command.at, result: command.result, source: command.source } } : {}),
-        ...(feedback ? { feedback: { ...feedback, stale: now - feedback.at >= (d.feedback?.staleMs ?? 60000) } } : {}),
+        ...(feedback ? { feedback: { at: feedback.at, values: feedback.values, stale: now - feedback.at >= (d.feedback?.staleMs ?? 60000) || (command?.order ?? 0) > feedback.order } } : {}),
         ...(override ? { override } : {}), id: d.id, state, method: configured ?? h?.method ?? null, fails: h?.fails ?? 0, lastCheckAt: h?.lastCheckAt ?? null, lastOkAt: h?.lastOkAt ?? null, ...(h?.rttMs !== undefined ? { rttMs: h.rttMs } : {}) };
     });
     return {

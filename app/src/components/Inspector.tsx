@@ -6,7 +6,7 @@ import { describeDeviceState } from '../lib/deviceState.ts';
 import { offlineDelayLabel } from '../lib/interval.ts';
 import { IntervalPicker } from './IntervalPicker.tsx';
 import type { Pad, PadTile } from '@engine/types.ts';
-import { changeKind, duplicateTile, groupNames, moveTile, sliderRange, sliderSteps } from '../lib/pad.ts';
+import { changeKind, duplicateTile, groupNames, moveTile, sliderOutput, sliderRange, sliderSteps } from '../lib/pad.ts';
 import { GROUP_COLORS } from '../lib/colors.ts';
 import { setPadId } from '../store.ts';
 import { formatTime, parseTime } from '@engine/time.ts';
@@ -674,13 +674,16 @@ function SliderFields({ tile, patch }: { tile: PadTile; patch: (fn: (t: PadTile)
   const n = sliderSteps(tile);
   return (
     <>
-      <Field label="范围" hint="这是发给设备的原始值（如 0~255、0~100），不是百分比。">
+      <Field label="范围" hint="操作员看到的范围。未启用数值映射时，也直接作为设备发送值。">
         <span className="row" style={{ gap: 6 }}>
           最小 <NumInput value={min} min={-1e9} width={64} onChange={(v) => patch((t) => { t.min = v ?? 0; })} />
           最大 <NumInput value={max} min={-1e9} width={64} onChange={(v) => patch((t) => { t.max = v ?? 100; })} />
           步长 <NumInput value={step} min={1e-6} width={56} onChange={(v) => patch((t) => { t.step = v ?? 1; })} />
         </span>
       </Field>
+      <Field label="单位"><input value={tile.unit ?? ''} placeholder="如 %、dB（可选）" maxLength={16} onChange={(e) => patch((t) => { t.unit = e.target.value || undefined; })} /></Field>
+      <Field label="数值映射" hint="把界面范围线性转换成设备范围，精度0为四舍五入取整。"><Check checked={!!tile.mapping} label="转换成设备值" onChange={(v) => patch((t) => { t.mapping = v ? { min: 0, max: 255, precision: 0 } : undefined; })} /></Field>
+      {tile.mapping && <Field label="设备范围"><span className="row">起点 <NumInput value={tile.mapping.min} min={-1e9} max={1e9} onChange={(v) => patch((t) => { t.mapping!.min = v ?? 0; })} /> 终点 <NumInput value={tile.mapping.max} min={-1e9} max={1e9} onChange={(v) => patch((t) => { t.mapping!.max = v ?? 255; })} /> 小数位 <NumInput value={tile.mapping.precision ?? 0} min={0} max={6} width={40} onChange={(v) => patch((t) => { t.mapping!.precision = v ?? 0; })} /></span><div className="hint">预览：{min}{tile.unit} → {sliderOutput(tile, min)}；{max}{tile.unit} → {sliderOutput(tile, max)}</div></Field>}
       <Field label="初始位置" hint={`界面首次显示的位置，不会发送。共 ${n + 1} 档。`}>
         <NumInput value={initial} min={-1e9} width={64} onChange={(v) => patch((t) => { t.initial = v; })} allowEmpty />
       </Field>
@@ -690,6 +693,7 @@ function SliderFields({ tile, patch }: { tile: PadTile; patch: (fn: (t: PadTile)
 
 function PadTileInspector({ padId, tileId }: { padId: string; tileId: string }) {
   const project = useStore((s) => s.project)!;
+  const draftPending = useStore((s) => s.saveState !== 'saved');
   const pad = project.pads!.find((p) => p.id === padId)!;
   const tile = pad.tiles.find((t) => t.id === tileId)!;
   const patch = (fn: (t: PadTile) => PadTile | void) =>
@@ -738,7 +742,7 @@ function PadTileInspector({ padId, tileId }: { padId: string; tileId: string }) 
 
       <div className="sech">{tile.kind === 'toggle' ? '切到「开」时执行' : tile.kind === 'slider' ? '每次取值时发送' : '点击时执行'} <span>{tile.actions.length}</span></div>
       {tile.kind === 'slider' && <div className="hint" style={{ marginBottom: 6 }}>在「自定义 UDP」的内容里写 <code>{'{{value}}'}</code>（十进制，如 128），HEX 内容写 <code>{'{{hex}}'}</code>（自动补成整字节，如 80）；用「指令」时，把指令参数的值填成 <code>{'{{value}}'}</code> 或 <code>{'{{hex}}'}</code>。预览按最小值显示。</div>}
-      <ActionList actions={tile.actions} sliderSample={tile.kind === 'slider' ? sliderRange(tile).min : undefined} onChange={(next) => patch((t) => { t.actions = next; })} />
+      <ActionList actions={tile.actions} sliderSample={tile.kind === 'slider' ? sliderOutput(tile, sliderRange(tile).min) : undefined} onChange={(next) => patch((t) => { t.actions = next; })} />
       {tile.kind === 'toggle' && (
         <>
           <div className="sech" style={{ marginTop: 12 }}>切到「关」时执行 <span>{(tile.offActions ?? []).length}</span></div>
@@ -746,7 +750,7 @@ function PadTileInspector({ padId, tileId }: { padId: string; tileId: string }) 
         </>
       )}
       <div className="row" style={{ gap: 8, marginTop: 10 }}>
-        <button className="primary" onClick={tryIt}>{tile.kind === 'slider' ? '▶ 试发一次（初始位置的值）' : '▶ 试按一次'}</button>
+        <button className="primary" disabled={draftPending} title={draftPending ? '先应用面板草稿后再试按' : undefined} onClick={tryIt}>{tile.kind === 'slider' ? '▶ 试发一次（初始位置的值）' : '▶ 试按一次'}</button>
         {res && <span className={`hint ${res.bad ? 'err' : 'okc'}`}>{res.text}</span>}
       </div>
       <div className="hint" style={{ marginTop: 4 }}>真的会发出指令；开关会同时切换状态。</div>
