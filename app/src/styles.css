@@ -388,3 +388,10 @@ select.warnb { border-color: var(--warn); }
 /* 设备在线状态灯 */
 .light { font-size: 11px; white-space: nowrap; }
 .light.on { color: var(--ok); } .light.warn { color: var(--warn); } .light.off { color: var(--err); font-weight: 600; }
+
+/* 批量设置在线检测 */
+.bhlist { max-height: 250px; overflow: auto; border: 1px solid var(--line); border-radius: 7px; background: var(--s2); }
+.bhrow { display: grid; grid-template-columns: 22px minmax(90px, 1.2fr) 112px 1.4fr; gap: 8px; align-items: center; padding: 5px 9px; border-bottom: 1px solid #1f1f23; cursor: pointer; font-size: 12px; }
+.bhrow:last-child { border-bottom: none; }
+.bhrow:hover { background: var(--s3); } .bhrow.on { background: #2a2210; }
+.sechead span button { margin-left: 4px; }

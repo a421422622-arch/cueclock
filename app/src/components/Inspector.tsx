@@ -3,10 +3,11 @@ import type { Command, CommandParam, DayKind, Device, DeviceHealthConfig, Group,
 import { placeholdersOf } from '@engine/commands.ts';
 import { allActions, sceneRefCount } from '../lib/usage.ts';
 import { describeDeviceState } from '../lib/deviceState.ts';
-import { INTERVAL_MAX, INTERVAL_MIN, INTERVAL_PRESETS, intervalLabel, isPreset, offlineDelayLabel } from '../lib/interval.ts';
+import { offlineDelayLabel } from '../lib/interval.ts';
+import { IntervalPicker } from './IntervalPicker.tsx';
 import { formatTime, parseTime } from '@engine/time.ts';
 import { isDateKey } from '@engine/calendar.ts';
-import { edit, engineNow, rpc, select, toast, useStore } from '../store.ts';
+import { edit, engineNow, openBatchHealth, rpc, select, toast, useStore } from '../store.ts';
 import { DAY_KIND_LABEL, genId, ruleText } from '../lib/labels.ts';
 import { ActionList, SendEditor } from './ActionEditor.tsx';
 import { Check, ColorField, Field, NumInput, Seg, ValidatedInput } from './fields.tsx';
@@ -575,20 +576,7 @@ function HealthSection({ device: d, patch }: { device: Device; patch: (fn: (d: D
             label="检测间隔"
             hint={`每台设备单独设置，多久检测一次。连续失败 3 次判定离线并记告警，按当前间隔约 ${offlineDelayLabel(h.intervalSec ?? 30)} 后发现。间隔越短发现越快，但网络流量也越多。`}
           >
-            <span className="row">
-              <select
-                value={isPreset(h.intervalSec ?? 30) ? String(h.intervalSec ?? 30) : 'custom'}
-                onChange={(e) => (e.target.value === 'custom' ? set((c) => (c.intervalSec = (isPreset(c.intervalSec ?? 30) ? 45 : c.intervalSec) ?? 45)) : set((c) => (c.intervalSec = Number(e.target.value))))}
-              >
-                {INTERVAL_PRESETS.map((s) => <option key={s} value={s}>每 {intervalLabel(s)}</option>)}
-                <option value="custom">自定义…</option>
-              </select>
-              {!isPreset(h.intervalSec ?? 30) && (
-                <>
-                  <NumInput value={h.intervalSec ?? 30} min={INTERVAL_MIN} max={INTERVAL_MAX} width={72} onChange={(v) => set((c) => (c.intervalSec = v ?? 30))} />秒
-                </>
-              )}
-            </span>
+            <IntervalPicker value={h.intervalSec ?? 30} onChange={(sec) => set((c) => (c.intervalSec = sec))} />
           </Field>
         )}
         {h?.mode === 'udp' && (
@@ -603,6 +591,7 @@ function HealthSection({ device: d, patch }: { device: Device; patch: (fn: (d: D
           <Field label="">
             <span className="row">
               <button onClick={probe} disabled={busy || (h.mode === 'udp' && !h.probe?.commandId)}>{busy ? '检测中…' : '立即检测一次'}</button>
+              <button title="把这台设备的检测设置应用到其他设备" onClick={() => openBatchHealth(h)}>应用到其他设备…</button>
               {res && <span className={`hint ${res.ok ? 'okc' : 'err'}`}>{res.ok ? '✓ ' : '✗ '}{res.text}</span>}
             </span>
           </Field>

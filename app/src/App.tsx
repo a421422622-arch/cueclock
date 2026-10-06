@@ -8,6 +8,7 @@ import { LogPanel } from './components/LogPanel.tsx';
 import { CalendarView } from './components/Calendar.tsx';
 import { SettingsDialog } from './components/SettingsDialog.tsx';
 import { BackupDialog, UnlockDialog } from './components/LockDialogs.tsx';
+import { BatchHealthDialog } from './components/BatchHealthDialog.tsx';
 import { shouldAutoLock } from './lib/lockUi.ts';
 import { appBridge } from './transport.ts';
 import { EngineVersionBanner } from './components/EngineVersion.tsx';
@@ -24,6 +25,7 @@ export function App() {
   const lock = useStore((s) => s.lock);
   const unlockOpen = useStore((s) => s.unlockOpen);
   const backupOpen = useStore((s) => s.backupOpen);
+  const batchHealthOpen = useStore((s) => s.batchHealthOpen);
   const draftOffer = useStore((s) => s.draftOffer);
   const logCollapsed = useStore((s) => s.logCollapsed);
 
@@ -106,6 +108,7 @@ export function App() {
       {settingsOpen && <SettingsDialog />}
       {unlockOpen && <UnlockDialog />}
       {backupOpen && <BackupDialog />}
+      {batchHealthOpen && <BatchHealthDialog />}
       {toastMsg && <div className="toast">{toastMsg}</div>}
     </div>
   );

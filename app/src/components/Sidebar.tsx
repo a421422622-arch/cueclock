@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { edit, select, useStore } from '../store.ts';
+import { edit, openBatchHealth, select, useStore } from '../store.ts';
 import { genId } from '../lib/labels.ts';
 import { sceneRefCount } from '../lib/usage.ts';
 import { describeDeviceState } from '../lib/deviceState.ts';
@@ -53,7 +53,7 @@ export function Sidebar() {
       <div className="sidebody">
         {tab === 'dev' ? (
           <>
-            <div className="sechead">UDP 设备 <button onClick={addDevice}>＋</button></div>
+            <div className="sechead">UDP 设备 <span><button title="批量设置在线检测（Ping / UDP 探测、间隔）" onClick={() => openBatchHealth()} disabled={project.devices.length === 0}>批量检测…</button> <button onClick={addDevice}>＋</button></span></div>
             {project.devices.length === 0 && <div className="empty">还没有设备。点右上角＋添加接收端的 IP 和端口。</div>}
             {project.devices.map((d) => (
               <div key={d.id} className={`dev ${sel?.kind === 'device' && sel.id === d.id ? 'sel' : ''}`} onClick={() => select({ kind: 'device', id: d.id })}>

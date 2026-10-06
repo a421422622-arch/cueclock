@@ -50,6 +50,9 @@ export interface AppState {
   lock: { enabled: boolean; unlocked: boolean };
   unlockOpen: boolean;
   backupOpen: boolean;
+  /** 批量设置在线检测对话框；init 是起点设置（从某台设备带过来），null/undefined 表示用默认 */
+  batchHealthOpen: boolean;
+  batchHealthInit: import('../../engine/src/types.ts').DeviceHealthConfig | null;
   /** 日志区当前页签；顶栏告警徽标要能直接切过去 */
   logTab: 'log' | 'alerts' | 'issues';
   /** 磁盘上的历史告警（最近 7 天）；实时告警在 logs 里 */
@@ -93,6 +96,8 @@ let state: AppState = {
   lock: { enabled: false, unlocked: true },
   unlockOpen: false,
   backupOpen: false,
+  batchHealthOpen: false,
+  batchHealthInit: null,
   logTab: 'log',
   alertHistory: [],
   alertsSeenAt: readSeenAt(),
@@ -420,6 +425,8 @@ export const setLockPassword = (password: string, current?: string) => lockCall(
 export const removeLockPassword = (password: string) => lockCall('removePassword', { password });
 export const openUnlock = () => set({ unlockOpen: true });
 export const closeUnlock = () => set({ unlockOpen: false });
+export const openBatchHealth = (init: import('../../engine/src/types.ts').DeviceHealthConfig | null = null) => set({ batchHealthOpen: true, batchHealthInit: init });
+export const closeBatchHealth = () => set({ batchHealthOpen: false });
 export const openBackups = () => set({ backupOpen: true });
 export const closeBackups = () => set({ backupOpen: false });
 
