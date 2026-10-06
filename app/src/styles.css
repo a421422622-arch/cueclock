@@ -384,3 +384,7 @@ select.warnb { border-color: var(--warn); }
 .ibody[inert], .testsend[inert] { opacity: .55; }
 .bkrow { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--s2); }
 .modal input[type=password] { width: 100%; }
+
+/* 设备在线状态灯 */
+.light { font-size: 11px; white-space: nowrap; }
+.light.on { color: var(--ok); } .light.warn { color: var(--warn); } .light.off { color: var(--err); font-weight: 600; }

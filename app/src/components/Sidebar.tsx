@@ -2,12 +2,15 @@ import { useState } from 'react';
 import { edit, select, useStore } from '../store.ts';
 import { genId } from '../lib/labels.ts';
 import { sceneRefCount } from '../lib/usage.ts';
+import { describeDeviceState } from '../lib/deviceState.ts';
+import { engineNow } from '../store.ts';
 import { deviceColor, GROUP_COLORS } from '../lib/colors.ts';
 
 export function Sidebar() {
   const [tab, setTab] = useState<'dev' | 'cmd' | 'scene' | 'trig'>('dev');
   const project = useStore((s) => s.project)!;
   const sel = useStore((s) => s.sel);
+  const health = useStore((s) => s.status?.engine?.devices);
 
   const addDevice = () => {
     const id = genId('d');
@@ -56,6 +59,10 @@ export function Sidebar() {
               <div key={d.id} className={`dev ${sel?.kind === 'device' && sel.id === d.id ? 'sel' : ''}`} onClick={() => select({ kind: 'device', id: d.id })}>
                 <div className="n"><i style={{ background: deviceColor(project, d.id), opacity: d.enabled === false ? .4 : 1 }} />{d.name}{d.tag && <span className="tag r">{d.tag}</span>}</div>
                 <div className="a mono"><span>{d.ip}{d.port ? `:${d.port}` : ''}</span><span className={`tag ${d.format === 'hex' ? 'hex' : 'asc'}`}>{(d.format ?? 'ascii').toUpperCase()}</span></div>
+                {(() => {
+                  const st = describeDeviceState(health?.find((x) => x.id === d.id), d.enabled !== false, engineNow());
+                  return st.light === 'unknown' || st.light === 'disabled' ? null : <div className="a"><span className={`light ${st.light}`} title={st.title}>● {st.label}</span></div>;
+                })()}
               </div>
             ))}
           </>

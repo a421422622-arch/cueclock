@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
-import type { Command, CommandParam, DayKind, Device, Group, Rule, Terminator, Timeline, Trigger } from '@engine/types.ts';
+import type { Command, CommandParam, DayKind, Device, DeviceHealthConfig, Group, Rule, Terminator, Timeline, Trigger } from '@engine/types.ts';
 import { placeholdersOf } from '@engine/commands.ts';
 import { allActions, sceneRefCount } from '../lib/usage.ts';
+import { describeDeviceState } from '../lib/deviceState.ts';
+import { INTERVAL_MAX, INTERVAL_MIN, INTERVAL_PRESETS, intervalLabel, isPreset, offlineDelayLabel } from '../lib/interval.ts';
 import { formatTime, parseTime } from '@engine/time.ts';
 import { isDateKey } from '@engine/calendar.ts';
-import { edit, rpc, select, toast, useStore } from '../store.ts';
+import { edit, engineNow, rpc, select, toast, useStore } from '../store.ts';
 import { DAY_KIND_LABEL, genId, ruleText } from '../lib/labels.ts';
 import { ActionList, SendEditor } from './ActionEditor.tsx';
 import { Check, ColorField, Field, NumInput, Seg, ValidatedInput } from './fields.tsx';
@@ -304,6 +306,7 @@ function DeviceInspector({ id }: { id: string }) {
         </Field>
         <Field label="启用"><Check checked={d.enabled !== false} onChange={(v) => patch((x) => (x.enabled = v))} label="参与发送（关闭后动作跳过此设备）" /></Field>
       </div>
+      <HealthSection device={d} patch={patch} />
       <div className="sech">测试发送</div>
       <div className="form">
         <Field label="端口"><NumInput value={testPort} min={1} max={65535} width={80} allowEmpty onChange={setTestPort} /></Field>
@@ -510,6 +513,100 @@ function SceneInspector({ id }: { id: string }) {
           edit((p) => (p.scenes = (p.scenes ?? []).filter((c) => c.id !== id)));
           select(null);
         }}>删除场景</button>
+      </div>
+    </>
+  );
+}
+
+
+// ───────────── 设备在线检测 ─────────────
+
+type HealthMode = 'none' | 'ping' | 'udp';
+
+/** 每台设备单独选检测方式：不检测 / Ping（只判网络通不通）/ UDP 探测（发只读查询并校验回包，最准）。 */
+function HealthSection({ device: d, patch }: { device: Device; patch: (fn: (d: Device) => void) => void }) {
+  const project = useStore((s) => s.project)!;
+  const info = useStore((s) => s.status?.engine?.devices.find((x) => x.id === d.id));
+  const h = d.health;
+  const mode: HealthMode = h?.mode ?? 'none';
+  const probeCmds = (project.commands ?? []).filter((c) => c.reply);
+  const [res, setRes] = useState<{ text: string; ok: boolean } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const st = describeDeviceState(info, d.enabled !== false, engineNow());
+
+  const setMode = (m: HealthMode) => {
+    // 没有可用的探测指令时不允许切到 UDP 探测：否则配置会处于无效状态，自动保存被卡住，连别的修改也存不了
+    if (m === 'udp' && probeCmds.length === 0) {
+      toast('指令库里还没有开了回包校验的指令。请先在「指令」页签添加一条只读的状态查询，并开启回包校验。');
+      return;
+    }
+    patch((x) => {
+      x.health = m === 'none' ? undefined : m === 'ping' ? { mode: 'ping', intervalSec: x.health?.intervalSec ?? 30 } : { mode: 'udp', intervalSec: x.health?.intervalSec ?? 30, probe: x.health?.probe };
+    });
+  };
+  const set = (fn: (c: DeviceHealthConfig) => void) => patch((x) => { if (x.health) fn(x.health); });
+
+  const probe = async () => {
+    setBusy(true);
+    setRes(null);
+    try {
+      const r = await rpc<{ ok: boolean; detail: string }>('probeNow', { device: d });
+      setRes({ text: r.detail, ok: r.ok });
+    } catch (e) {
+      setRes({ text: e instanceof RpcFailure ? e.message : String(e), ok: false });
+    }
+    setBusy(false);
+  };
+
+  return (
+    <>
+      <div className="sech" style={{ marginTop: 6 }}>在线检测 {st.light !== 'unknown' && st.light !== 'disabled' && <span className={`light ${st.light}`} title={st.title}>● {st.label}</span>}</div>
+      <div className="form">
+        <Field label="检测方式">
+          <Seg<HealthMode> value={mode} onChange={setMode} options={[{ value: 'none', label: '不检测' }, { value: 'ping', label: 'Ping' }, { value: 'udp', label: 'UDP 探测' }]} />
+          <div className="hint">
+            {mode === 'none' && '不主动检测。动作如果开了回包校验，也会从中判断设备是否在线。'}
+            {mode === 'ping' && <>调系统 ping。<b>只说明网络层通不通</b>：设备程序死了可能仍能 ping 通，设备屏蔽 ICMP 则会误报离线。</>}
+            {mode === 'udp' && '发一条只读的状态查询并校验回包，最准；设备必须会回。'}
+          </div>
+        </Field>
+        {h && (
+          <Field
+            label="检测间隔"
+            hint={`每台设备单独设置，多久检测一次。连续失败 3 次判定离线并记告警，按当前间隔约 ${offlineDelayLabel(h.intervalSec ?? 30)} 后发现。间隔越短发现越快，但网络流量也越多。`}
+          >
+            <span className="row">
+              <select
+                value={isPreset(h.intervalSec ?? 30) ? String(h.intervalSec ?? 30) : 'custom'}
+                onChange={(e) => (e.target.value === 'custom' ? set((c) => (c.intervalSec = (isPreset(c.intervalSec ?? 30) ? 45 : c.intervalSec) ?? 45)) : set((c) => (c.intervalSec = Number(e.target.value))))}
+              >
+                {INTERVAL_PRESETS.map((s) => <option key={s} value={s}>每 {intervalLabel(s)}</option>)}
+                <option value="custom">自定义…</option>
+              </select>
+              {!isPreset(h.intervalSec ?? 30) && (
+                <>
+                  <NumInput value={h.intervalSec ?? 30} min={INTERVAL_MIN} max={INTERVAL_MAX} width={72} onChange={(v) => set((c) => (c.intervalSec = v ?? 30))} />秒
+                </>
+              )}
+            </span>
+          </Field>
+        )}
+        {h?.mode === 'udp' && (
+          <Field label="探测指令" hint={probeCmds.length === 0 ? <span className="err">指令库里还没有开了回包校验的指令。请先在「指令」页签里添加一条只读的状态查询，并开启回包校验。</span> : '请选择只读的状态查询（不会改变设备状态的那种）。软件不会替你自动选。'}>
+            <select className={h.probe?.commandId ? '' : 'bad'} value={h.probe?.commandId ?? ''} onChange={(e) => set((c) => (c.probe = e.target.value ? { commandId: e.target.value } : undefined))}>
+              <option value="">选择指令…</option>
+              {probeCmds.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            </select>
+          </Field>
+        )}
+        {h && (
+          <Field label="">
+            <span className="row">
+              <button onClick={probe} disabled={busy || (h.mode === 'udp' && !h.probe?.commandId)}>{busy ? '检测中…' : '立即检测一次'}</button>
+              {res && <span className={`hint ${res.ok ? 'okc' : 'err'}`}>{res.ok ? '✓ ' : '✗ '}{res.text}</span>}
+            </span>
+          </Field>
+        )}
       </div>
     </>
   );
