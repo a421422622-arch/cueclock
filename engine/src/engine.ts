@@ -19,6 +19,8 @@ import { matchBuffer } from './match.ts';
 import { substituteCaptureAction } from './captures.ts';
 import { formatClock, formatTime } from './time.ts';
 import type { NetworkSettings } from './network.ts';
+import { staggerMs, systemPing } from './health.ts';
+import type { PingResult } from './health.ts';
 
 export type LogResult =
   | 'sent'
@@ -35,6 +37,15 @@ export type LogResult =
   | 'info';
 
 /** 告警类型：日志里值得关注的事。级别 info 用于「恢复」类，warn 需要留意，error 需要处理。 */
+interface HealthEntry {
+  fails: number;
+  offline: boolean;
+  method: 'ping' | 'udp' | 'reply' | null;
+  lastCheckAt: number | null;
+  lastOkAt: number | null;
+  rttMs?: number;
+}
+
 export type AlertCode =
   | 'reply-timeout'
   | 'reply-mismatch'
@@ -86,6 +97,8 @@ export interface EngineOptions {
   network?: NetworkSettings;
   /** 以急停状态启动：连启动时的断电恢复也不执行 */
   startPaused?: boolean;
+  /** 自定义 ping 实现（测试用）；默认调系统 ping */
+  pinger?: (ip: string, timeoutMs: number) => Promise<PingResult>;
 }
 
 export interface UpcomingCue {
@@ -98,7 +111,21 @@ export interface UpcomingCue {
   cueName: string;
 }
 
+export type DeviceState = 'unknown' | 'online' | 'failing' | 'offline';
+
+/** 设备在线状态（给界面的状态灯用）。method：检测方式；reply = 没配检测，但动作的回包校验提供了信息。 */
+export interface DeviceHealthInfo {
+  id: string;
+  state: DeviceState;
+  method: 'ping' | 'udp' | 'reply' | null;
+  fails: number;
+  lastCheckAt: number | null;
+  lastOkAt: number | null;
+  rttMs?: number;
+}
+
 export interface EngineStatus {
+  devices: DeviceHealthInfo[];
   running: boolean;
   paused: boolean;
   dryRun: boolean;
@@ -152,7 +179,9 @@ export class Engine extends EventEmitter {
   /** 触发端口收到的"没触发任何东西"的包（不匹配/被拒/被忽略）的日志限流：每秒最多逐条记这么多 */
   private rxWindow = { sec: 0, count: 0, dropped: 0 };
   /** 设备连续失败计数与离线状态（只在状态变化时记告警，避免刷屏） */
-  private health = new Map<string, { fails: number; offline: boolean }>();
+  private health = new Map<string, HealthEntry>();
+  /** 在线检测的后台循环：设备 id → 配置签名 + 取消器。热更新时只重启配置变了的 */
+  private healthLoops = new Map<string, { sig: string; ctl: AbortController }>();
   private startedAt: number | null = null;
   private latestDispatch = new Map<string, number>();
   /** 最近的日志，给界面刷新用 */
@@ -184,24 +213,116 @@ export class Engine extends EventEmitter {
     return Number.isInteger(n) && (n as number) >= 1 ? (n as number) : 3;
   }
 
-  /** 设备这次发送最终失败（回包超时/不符，或发送本身出错）。连续达到阈值才判离线，且只记一次。 */
-  private noteDeviceFailure(device: Device): void {
-    const h = this.health.get(device.id) ?? { fails: 0, offline: false };
+  private entry(device: Device): HealthEntry {
+    let h = this.health.get(device.id);
+    if (!h) {
+      h = { fails: 0, offline: false, method: null, lastCheckAt: null, lastOkAt: null };
+      this.health.set(device.id, h);
+    }
+    return h;
+  }
+
+  /** 设备这次检测/发送最终失败。连续达到阈值才判离线，且只在状态变化时记一次告警。 */
+  private noteDeviceFailure(device: Device, method: 'ping' | 'udp' | 'reply' = 'reply'): void {
+    const h = this.entry(device);
     h.fails++;
-    this.health.set(device.id, h);
+    h.method = method;
+    h.lastCheckAt = this.clock.now();
     if (!h.offline && h.fails >= this.offlineAfter()) {
       h.offline = true;
-      this.alert('device-offline', 'error', device.name, `设备「${device.name}」连续 ${h.fails} 次没有收到有效回包，判定为离线（${device.ip}）`);
+      const why = method === 'ping' ? `Ping 无响应（仅说明网络层不通，${device.ip}）` : method === 'udp' ? `UDP 探测没有收到有效回包（${device.ip}）` : `没有收到有效回包（${device.ip}）`;
+      this.alert('device-offline', 'error', device.name, `设备「${device.name}」连续 ${h.fails} 次${why}，判定为离线`);
     }
   }
 
-  private noteDeviceSuccess(device: Device): void {
-    const h = this.health.get(device.id);
-    if (!h) return;
+  private noteDeviceSuccess(device: Device, method: 'ping' | 'udp' | 'reply' = 'reply', rttMs?: number): void {
+    const h = this.entry(device);
     const was = h.offline;
     h.fails = 0;
     h.offline = false;
-    if (was) this.alert('device-online', 'info', device.name, `设备「${device.name}」已恢复：收到了有效回包`);
+    h.method = method;
+    h.lastCheckAt = h.lastOkAt = this.clock.now();
+    h.rttMs = rttMs;
+    if (was) this.alert('device-online', 'info', device.name, `设备「${device.name}」已恢复：${method === 'ping' ? 'Ping 有响应了' : '收到了有效回包'}`);
+  }
+
+  // ───────────── 设备在线检测 ─────────────
+
+  /** 探测一次，不改变状态、不记告警。ping 或 UDP 探测；UDP 探测是后台监控，不写发送日志。 */
+  async probeDevice(device: Device): Promise<{ ok: boolean; method: 'ping' | 'udp'; rttMs?: number; detail: string }> {
+    const h = device.health;
+    if (!h) throw new Error('这台设备没有设置检测方式');
+    if (h.mode === 'ping') {
+      const r = await (this.opts.pinger ?? systemPing)(device.ip, h.timeoutMs ?? 2000);
+      return { ok: r.ok, method: 'ping', rttMs: r.rttMs, detail: r.ok ? `Ping 有响应${r.rttMs !== undefined ? `（${r.rttMs}ms）` : ''}` : (r.error ?? 'Ping 无响应') };
+    }
+    const cmd = this.project.commands?.find((c) => c.id === h.probe?.commandId);
+    if (!cmd) throw new Error(`找不到探测指令 ${h.probe?.commandId ?? ''}`);
+    const r = resolveCommandAction(cmd, { id: '__probe', type: 'command', commandId: cmd.id, args: h.probe?.args });
+    if (!r.action) throw new Error(r.error);
+    const a = r.action;
+    const port = a.port ?? device.port;
+    if (port === undefined) throw new Error('探测指令没有端口，设备也没有默认端口');
+    if (!a.reply) throw new Error(`探测指令「${cmd.name}」必须开启回包校验`);
+    if (!this.transport) throw new Error('引擎未运行');
+    const reply = a.reply;
+    const res = await this.transport.sendAndWaitReply(device.ip, port, buildPayload(a.format, a.payload, a.terminator ?? device.terminator ?? 'none'), {
+      from: a.sendFrom,
+      timeoutMs: reply.timeoutMs,
+      accept: (b) => { try { return matchBuffer(b, reply).matched; } catch { return false; } },
+    });
+    const ok = res.status === 'confirmed';
+    return { ok, method: 'udp', rttMs: res.rttMs, detail: ok ? `UDP 探测收到回包${res.rttMs !== undefined ? `（${res.rttMs}ms）` : ''}` : res.status === 'mismatch' ? 'UDP 探测收到的回包不符合期望' : 'UDP 探测超时，没有回包' };
+  }
+
+  private healthSig(d: Device): string {
+    const cmd = d.health?.mode === 'udp' ? this.project.commands?.find((c) => c.id === d.health!.probe?.commandId) : undefined;
+    return JSON.stringify([d.ip, d.port, d.enabled, d.health, cmd && [cmd.payload, cmd.port, cmd.reply, cmd.format, cmd.terminator, cmd.params]]);
+  }
+
+  /** 让后台检测循环与当前项目一致：没变的设备不动（不重置节奏），变了/删了的重启或停止，新增的启动。 */
+  private syncHealth(): void {
+    const want = new Map<string, Device>();
+    if (this.running && !this.opts.dryRun) for (const d of this.project.devices) if (d.health && d.enabled !== false) want.set(d.id, d);
+    for (const [id, loop] of [...this.healthLoops]) {
+      const d = want.get(id);
+      if (!d || this.healthSig(d) !== loop.sig) {
+        loop.ctl.abort();
+        this.healthLoops.delete(id);
+      }
+    }
+    for (const [id, d] of want) {
+      if (this.healthLoops.has(id)) continue;
+      const ctl = new AbortController();
+      this.healthLoops.set(id, { sig: this.healthSig(d), ctl });
+      this.spawn(this.healthLoop(id, ctl.signal), `设备「${d.name}」在线检测`);
+    }
+  }
+
+  private async healthLoop(id: string, signal: AbortSignal): Promise<void> {
+    const first = this.project.devices.find((d) => d.id === id);
+    if (!first?.health) return;
+    const every = Math.min(3600, Math.max(5, first.health.intervalSec ?? 30)) * 1000;
+    let next = this.clock.now() + 1000 + staggerMs(id);
+    while (!signal.aborted) {
+      await this.clock.sleepUntil(next, signal);
+      if (signal.aborted) return;
+      next += every;
+      const device = this.project.devices.find((d) => d.id === id);
+      if (!device?.health) return;
+      try {
+        const r = await this.probeDevice(device);
+        if (signal.aborted) return;
+        if (r.ok) this.noteDeviceSuccess(device, r.method, r.rttMs);
+        else this.noteDeviceFailure(device, r.method);
+      } catch (e) {
+        // 配置有问题（找不到指令等）：当作一次失败，不让循环死掉；校验会提前拦住大部分情况
+        if (signal.aborted) return;
+        this.noteDeviceFailure(device, device.health.mode);
+        void e;
+      }
+      if (next < this.clock.now()) next = this.clock.now() + every; // 休眠唤醒后不要连环补探测
+    }
   }
 
   /** 放手不管（void）的异步任务统一兜底：出错记日志，绝不让引擎进程因为未处理的拒绝而崩溃。 */
@@ -318,6 +439,7 @@ export class Engine extends EventEmitter {
 
     this.scheduler.start();
     this.startRecovery(now);
+    this.syncHealth();
   }
 
   async stop(): Promise<void> {
@@ -326,6 +448,8 @@ export class Engine extends EventEmitter {
     this.startedAt = null;
     this.runCtl?.abort(); // 取消还在等待中的动作（触发器里的延时、恢复、手动执行）
     this.runCtl = null;
+    for (const l of this.healthLoops.values()) l.ctl.abort();
+    this.healthLoops.clear();
     await this.scheduler?.stop();
     for (const l of this.udpListeners.values()) await l.close();
     this.udpListeners.clear();
@@ -340,6 +464,7 @@ export class Engine extends EventEmitter {
     this.assertValid(project);
     this.project = project;
     this.router.update(project.triggers); // 保留防抖/确认等待状态，不因为保存一次项目就丢失
+    this.syncHealth(); // 检测配置没变的设备保持原节奏
     if (this.running) {
       if (!this.opts.dryRun) await this.syncListeners();
       this.scheduler?.reload();
@@ -781,7 +906,14 @@ export class Engine extends EventEmitter {
     const now = this.clock.now();
     const today = dateKey(new Date(now));
     const res = resolveDay(this.project, today);
+    const devices: DeviceHealthInfo[] = this.project.devices.map((d) => {
+      const h = this.health.get(d.id);
+      const configured = d.health?.mode ?? null;
+      const state: DeviceState = !h || (h.lastCheckAt === null) ? 'unknown' : h.offline ? 'offline' : h.fails > 0 ? 'failing' : h.lastOkAt !== null ? 'online' : 'unknown';
+      return { id: d.id, state, method: configured ?? h?.method ?? null, fails: h?.fails ?? 0, lastCheckAt: h?.lastCheckAt ?? null, lastOkAt: h?.lastOkAt ?? null, ...(h?.rttMs !== undefined ? { rttMs: h.rttMs } : {}) };
+    });
     return {
+      devices,
       running: this.running,
       paused: this.pausedFlag,
       dryRun: this.opts.dryRun === true,

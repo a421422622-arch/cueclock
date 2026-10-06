@@ -51,6 +51,32 @@ export function validateProject(p: Project): Issue[] {
     if (d.port !== undefined && !validPort(d.port)) err(`devices/${d.id}`, `默认端口 ${d.port} 非法`);
   }
 
+  for (const d of p.devices) {
+    const h = d.health;
+    if (!h) continue;
+    const path = `devices/${d.id}`;
+    if (h.mode !== 'ping' && h.mode !== 'udp') {
+      err(path, `检测方式 "${String(h.mode)}" 不支持（只有 ping / udp）`);
+      continue;
+    }
+    if (h.intervalSec !== undefined && !(Number.isFinite(h.intervalSec) && h.intervalSec >= 5 && h.intervalSec <= 3600)) err(path, '检测间隔必须在 5~3600 秒之间');
+    if (h.timeoutMs !== undefined && !(Number.isFinite(h.timeoutMs) && h.timeoutMs >= 100 && h.timeoutMs <= 30_000)) err(path, '检测超时必须在 100~30000 毫秒之间');
+    if (h.mode === 'udp') {
+      if (!h.probe?.commandId) {
+        err(path, 'UDP 探测必须选择一条探测指令（只读的状态查询，并开启回包校验）');
+        continue;
+      }
+      const cmd = commands.find((c) => c.id === h.probe!.commandId);
+      if (!cmd) {
+        err(path, `找不到指令 "${h.probe.commandId}"`);
+        continue;
+      }
+      if (!cmd.reply) err(path, `探测指令「${cmd.name}」必须开启回包校验，否则无法判断设备是否在线`);
+      const r = resolveCommandAction(cmd, { id: '_', type: 'command', commandId: cmd.id, args: h.probe.args });
+      if (!r.action) err(path, r.error!);
+    }
+  }
+
   /** 目标能解析到设备，且每个设备都有可用端口（指令/动作里的端口优先，其次设备默认端口）。 */
   const checkTargets = (path: string, targets: string[], port: number | undefined) => {
     if (targets.length === 0) err(path, '没有选择目标设备');

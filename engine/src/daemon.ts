@@ -3,7 +3,7 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { Command, Project, Scene } from './types.ts';
+import type { Command, Device, Project, Scene } from './types.ts';
 import { Engine } from './engine.ts';
 import type { LogEntry } from './engine.ts';
 import { ProjectStore, normalizeProject } from './store.ts';
@@ -603,6 +603,19 @@ export class Daemon {
         const args = p.args === undefined ? undefined : (obj(p.args, 'args') as Record<string, string>);
         try {
           return { actions: this.needEngine().runCommandNow(cmd, args) };
+        } catch (e) {
+          if (e instanceof RpcError) throw e;
+          throw new RpcError('bad-request', (e as Error).message);
+        }
+      }
+
+      case 'probeNow': {
+        const p = obj(params);
+        const device = p.device as Device | undefined;
+        if (!device || typeof device !== 'object' || typeof device.ip !== 'string') throw new RpcError('bad-request', '缺少设备信息');
+        if (!device.health) throw new RpcError('bad-request', '这台设备没有设置检测方式');
+        try {
+          return await this.needEngine().probeDevice(device);
         } catch (e) {
           if (e instanceof RpcError) throw e;
           throw new RpcError('bad-request', (e as Error).message);

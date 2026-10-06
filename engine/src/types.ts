@@ -5,9 +5,26 @@ export type Terminator = 'none' | 'cr' | 'lf' | 'crlf';
 export type MatchKind = 'exact' | 'prefix' | 'contains' | 'regex';
 export type DayKind = 'workday' | 'makeupWorkday' | 'weekend' | 'holiday';
 
+/**
+ * 设备在线检测。mode：
+ *  - ping：调系统 ping，只说明网络层通不通（设备屏蔽 ICMP 会误报，设备程序死了也可能仍能 ping 通）；
+ *  - udp：发一条探测指令并校验回包，最准，但设备必须会回。探测指令必须由用户明确选择（只读的状态查询），软件绝不自动挑。
+ */
+export interface DeviceHealthConfig {
+  mode: 'ping' | 'udp';
+  /** 探测间隔（秒），5~3600，默认 30 */
+  intervalSec?: number;
+  /** 单次探测超时（毫秒）。ping 默认 2000；udp 用探测指令自己的回包超时 */
+  timeoutMs?: number;
+  /** udp 模式：用哪条指令探测（必须开启回包校验）；参数用默认值或这里给的值 */
+  probe?: { commandId: string; args?: Record<string, string> };
+}
+
 export interface Device {
   id: string;
   name: string;
+  /** 在线检测（可选）。不设置 = 不主动检测 */
+  health?: DeviceHealthConfig;
   /** 界面中目标小时间轴的颜色（#RRGGBB），不影响发送。 */
   color?: string;
   ip: string;
