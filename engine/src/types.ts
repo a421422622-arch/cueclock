@@ -187,7 +187,7 @@ export interface PadTile {
   label: string;
   /** #RRGGBB */
   color?: string;
-  kind: 'button' | 'toggle';
+  kind: 'button' | 'toggle' | 'slider';
   /** 占几列，默认 1 */
   size?: 1 | 2;
   /** 单选组名，只用于按钮 */
@@ -198,6 +198,14 @@ export interface PadTile {
   actions: Action[];
   /** 开关：切到「关」时执行 */
   offActions?: Action[];
+  /**
+   * 滑块（调光一类的范围值）：拖动时把当前值代入 actions 里的 {{value}}（十进制）/ {{hex}}（十六进制，偶数位）再发送。
+   * 范围是**发给设备的原始值**（如 0~255 或 0~100），默认 0~100、步长 1。`initial` 只是界面首次显示的位置，不会发送。
+   */
+  min?: number;
+  max?: number;
+  step?: number;
+  initial?: number;
 }
 
 export interface Pad {

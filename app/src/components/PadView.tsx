@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Pad, PadTile } from '@engine/types.ts';
 import { edit, isLocked, openUnlock, rpc, select, setPadEdit, setPadId, toast, useStore } from '../store.ts';
 import { genId } from '../lib/labels.ts';
-import { newTile, padColumns, textOn } from '../lib/pad.ts';
+import { dragSender, newTile, padColumns, sliderIndex, sliderRange, sliderSteps, sliderValueAt, textOn } from '../lib/pad.ts';
 import { RpcFailure } from '../transport.ts';
 import { Seg } from './fields.tsx';
 
@@ -104,6 +104,22 @@ export function PadView() {
             const on = lit[key] === true;
             const selected = editing && sel?.kind === 'padTile' && sel.padId === pad.id && sel.tileId === t.id;
             const c = t.color ?? '#98989f';
+            if (t.kind === 'slider') {
+              return (
+                <SliderTile
+                  key={t.id}
+                  padId={pad.id}
+                  tile={t}
+                  value={typeof lit[key] === 'number' ? (lit[key] as number) : undefined}
+                  editing={editing}
+                  selected={selected}
+                  disabled={!editing && !running}
+                  flash={flash[key]}
+                  onSelect={() => select({ kind: 'padTile', padId: pad.id, tileId: t.id })}
+                  onResult={(ok, msg) => { mark(key, ok ? 'ok' : 'bad'); if (msg) toast(msg); }}
+                />
+              );
+            }
             return (
               <button
                 key={t.id}
@@ -125,6 +141,7 @@ export function PadView() {
             <>
               <button className="padtile add" onClick={() => addTile('button')}>＋ 按钮</button>
               <button className="padtile add" onClick={() => addTile('toggle')}>＋ 开关</button>
+              <button className="padtile add" onClick={() => addTile('slider')}>＋ 滑块</button>
             </>
           )}
           {!editing && pad.tiles.length === 0 && <div className="empty" style={{ gridColumn: '1 / -1' }}>这个面板还是空的。点右上角「编辑」，添加按钮并绑定场景或指令。</div>}
@@ -139,4 +156,76 @@ export function PadView() {
   );
 }
 
-const NO_STATE: Record<string, boolean> = {};
+const NO_STATE: Record<string, boolean | number> = {};
+
+/**
+ * 滑块（调光等范围值）。拖动时按 ~80ms 节流发送中间值，松手发送最终值；
+ * 显示的是引擎记下的「最后发出的值」，没发过时显示初始位置（不会发送）。
+ */
+function SliderTile({ padId, tile, value, editing, selected, disabled, flash, onSelect, onResult }: {
+  padId: string;
+  tile: PadTile;
+  value: number | undefined;
+  editing: boolean;
+  selected: boolean;
+  disabled: boolean;
+  flash: Flash | undefined;
+  onSelect: () => void;
+  onResult: (ok: boolean, msg?: string) => void;
+}) {
+  const { min, max, initial } = sliderRange(tile);
+  const steps = sliderSteps(tile);
+  // 本地显示的值：拖动中、以及松手后到引擎回报之前；null = 显示引擎里的值
+  const [drag, setDrag] = useState<number | null>(null);
+  const shown = drag ?? value ?? initial;
+  const dragged = useRef<number | null>(null); // 本次拖动最后一个值；null = 没在拖
+  // 最新的 padId/tileId/回调放进 ref，让 dragSender 只创建一次
+  const latest = useRef({ padId, tileId: tile.id, label: tile.label, onResult, reset: () => setDrag(null) });
+  latest.current = { padId, tileId: tile.id, label: tile.label, onResult, reset: () => setDrag(null) };
+  // 引擎回报了新值（本机或别处改的）：不在拖动时就以引擎为准
+  useEffect(() => { if (dragged.current === null) setDrag(null); }, [value]);
+  const sender = useMemo(() => dragSender((v, final) => {
+    const { padId: p, tileId, label, onResult: done, reset } = latest.current;
+    rpc('runPadTile', { padId: p, tileId, value: v, final })
+      .then(() => { if (final) done(true); })
+      .catch((e) => { if (final) { reset(); done(false, `「${label}」发送失败：${e instanceof RpcFailure ? e.message : String(e)}`); } });
+  }), []);
+
+  const c = tile.color ?? '#98989f';
+  const finish = () => {
+    if (dragged.current === null) return;
+    const v = dragged.current;
+    dragged.current = null;
+    sender.end(v); // 不清本地值：等引擎回报后再切回引擎的值，避免松手瞬间跳回旧值
+  };
+  return (
+    <div
+      className={`padtile slider ${selected ? 'selected' : ''} ${flash ?? ''} ${disabled ? 'off' : ''}`}
+      style={{ ['--c' as string]: c, ['--t' as string]: textOn(c), gridColumn: tile.size === 2 ? 'span 2' : undefined }}
+      onClick={editing ? onSelect : undefined}
+    >
+      <span className="pl">{tile.label || '（未命名）'}</span>
+      <span className="pv">{shown}</span>
+      <input
+        type="range"
+        min={0}
+        max={steps}
+        step={1}
+        value={sliderIndex(tile, shown)}
+        disabled={editing || disabled}
+        onChange={(e) => {
+          const v = sliderValueAt(tile, Number(e.target.value));
+          dragged.current = v;
+          setDrag(v);
+          sender.move(v);
+        }}
+        onPointerUp={finish}
+        onPointerCancel={finish}
+        onKeyUp={finish}
+        onBlur={finish}
+      />
+      <span className="pr"><i>{min}</i><i>{max}</i></span>
+      {editing && tile.actions.length === 0 && <span className="pe">未绑定</span>}
+    </div>
+  );
+}

@@ -1,4 +1,5 @@
-import type { Action, Command, Project, Scene } from './types.ts';
+import type { Action, Command, PadTile, Project, Scene } from './types.ts';
+import { sliderRange, sliderTexts, substituteSliderAction, usesSliderValue } from './padvalue.ts';
 import { isDateKey } from './calendar.ts';
 import { buildPayload, parsePayload } from './payload.ts';
 import { matchBuffer } from './match.ts';
@@ -186,6 +187,36 @@ export function validateProject(p: Project): Issue[] {
     }
   };
 
+  /** 滑块：范围/步长合法；动作里的 {{value}}/{{hex}} 用最小值试代入一次，提前发现 HEX 位数等问题。 */
+  const checkSlider = (path: string, t: PadTile) => {
+    const { min, max, step } = sliderRange(t);
+    const nums = [min, max, step, ...(t.initial === undefined ? [] : [t.initial])];
+    if (!nums.every((n) => typeof n === 'number' && Number.isFinite(n))) { err(path, '滑块的最小值/最大值/步长/初始值必须是数字'); return; }
+    if (!(min < max)) { err(path, '滑块的最小值必须小于最大值'); return; }
+    if (!(step > 0)) { err(path, '滑块的步长必须大于 0'); return; }
+    if ((max - min) / step > 10000) err(path, '滑块的档位太多（范围 ÷ 步长 不能超过 10000）');
+    if (t.initial !== undefined && (t.initial < min || t.initial > max)) err(path, '滑块的初始值不在范围内');
+    if (t.confirm) warn(path, '滑块不支持「需要确认」，拖动时不会询问');
+    if ((t.offActions ?? []).length > 0) warn(path, '滑块不使用「关」动作');
+    for (const a of t.actions) {
+      if (a.type === 'scene') err(`${path}/${a.id}`, '滑块里不能使用场景（场景不支持代入滑块的值），请直接用指令或自定义 UDP');
+      if (a.type === 'timeline') err(`${path}/${a.id}`, '滑块里不能放「时间线控制」');
+    }
+    const uses = t.actions.flatMap((a) => sliderTexts(a).map(usesSliderValue));
+    if (t.actions.length > 0 && !uses.some((u) => u.value || u.hex)) warn(path, '动作里没有用 {{value}} 或 {{hex}}，拖动滑块发出去的内容不会变化');
+    const usesHex = uses.some((u) => u.hex);
+    if (usesHex && !(Number.isInteger(min) && min >= 0 && Number.isInteger(step) && Number.isInteger(max))) {
+      err(path, '用到 {{hex}} 时，最小值（≥0）、最大值、步长都必须是整数');
+      return;
+    }
+    const sample = t.actions.filter((a) => a.type !== 'scene' && a.type !== 'timeline');
+    try {
+      checkActions(path, sample.map((a) => substituteSliderAction(a, min)));
+    } catch (e) {
+      err(path, (e as Error).message);
+    }
+  };
+
   for (const pad of p.pads ?? []) {
     const base = `pads/${pad.id}`;
     if (!pad.name.trim()) warn(base, '面板没有名字');
@@ -195,14 +226,18 @@ export function validateProject(p: Project): Issue[] {
       const path = `${base}/${t.id}`;
       if (tileIds.has(t.id)) err(base, `按钮 id "${t.id}" 重复`);
       tileIds.add(t.id);
-      if (t.kind !== 'button' && t.kind !== 'toggle') {
-        err(path, `按钮类型 "${String(t.kind)}" 不支持（只有 button / toggle）`);
+      if (t.kind !== 'button' && t.kind !== 'toggle' && t.kind !== 'slider') {
+        err(path, `按钮类型 "${String(t.kind)}" 不支持（只有 button / toggle / slider）`);
         continue;
       }
       if (!t.label.trim()) warn(path, '按钮没有名字');
       if (t.color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(t.color)) err(path, `颜色 "${t.color}" 必须是 #RRGGBB`);
       if (t.size !== undefined && t.size !== 1 && t.size !== 2) err(path, '按钮大小只能是 1 或 2 列');
-      if (t.group !== undefined && t.kind !== 'button') err(path, '单选组只能用于按钮，不能用于开关');
+      if (t.group !== undefined && t.kind !== 'button') err(path, '单选组只能用于按钮，不能用于开关或滑块');
+      if (t.kind === 'slider') {
+        checkSlider(path, t);
+        continue;
+      }
       if (t.actions.length === 0 && (t.offActions ?? []).length === 0) warn(path, '这个按钮没有绑定任何动作，点了什么也不会发生');
       checkActions(path, t.actions);
       if (t.kind === 'toggle') checkActions(`${path}/off`, t.offActions ?? []);

@@ -212,3 +212,24 @@ test('状态约定：「关」就是没有这个键，开关切到关后状态�
   assert.deepEqual(s.e.status().pads, {});
   await s.e.stop();
 });
+
+test('daemon：滑块的值经 RPC 传入，重启后保留（含 0）；锁定的连接也能拖；缺 value 报 bad-request', async (t) => {
+  const sl = tile('dim', { kind: 'slider', min: 0, max: 255, step: 5, actions: [udp('a', 'DIM {{value}}', { targets: ['L'] })] });
+  const s = await daemonSetup(t, mk([sl], { devices: [{ id: 'L', name: '灯', ip: '127.0.0.1', port: 9 }, { id: 'P', name: '投影', ip: '127.0.0.1', port: 9 }] }));
+  const d1 = await s.start();
+  const admin = await s.connect();
+  assert.deepEqual(await admin.request('runPadTile', { padId: 'pad', tileId: 'dim', value: 37 }), { actions: 1, state: 35 });
+  await admin.request('setPassword', { password: 'secret1' });
+  const operator = await s.connect();
+  await new Promise((r) => setTimeout(r, 60));
+  assert.deepEqual(await operator.request('runPadTile', { padId: 'pad', tileId: 'dim', value: 0, final: true }), { actions: 1, state: 0 });
+  await assert.rejects(operator.request('runPadTile', { padId: 'pad', tileId: 'dim' }), { code: 'bad-request' });
+  await new Promise((r) => setTimeout(r, 300));
+  admin.close();
+  operator.close();
+  await d1.stop();
+  assert.deepEqual(JSON.parse(await readFile(path.join(s.state, 'settings.json'), 'utf8')).padState[s.file], { 'pad/dim': 0 });
+  await s.start();
+  const c2 = await s.connect();
+  assert.deepEqual((await c2.request<{ engine: { pads: Record<string, number> } }>('status')).engine.pads, { 'pad/dim': 0 });
+});

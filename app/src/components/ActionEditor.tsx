@@ -1,6 +1,8 @@
 import type { Action, CommandAction, Project, MatchKind, ReplyCheck, Terminator, UdpAction } from '@engine/types.ts';
 import { paramValues, placeholdersOf, resolveActions, resolveCommandAction, substitute } from '@engine/commands.ts';
 import { expandActions } from '@engine/expand.ts';
+import { substituteSliderAction } from '@engine/padvalue.ts';
+import { sliderSample as sampleValues } from '../lib/pad.ts';
 import { genId } from '../lib/labels.ts';
 import { previewPayload, toHex } from '../lib/payload.ts';
 import { getState, select, useStore } from '../store.ts';
@@ -20,7 +22,7 @@ const TERM_LABEL: Record<Terminator, string> = { none: '无', cr: '\\r', lf: '\\
 const firstCommandId = () => getState().project?.commands?.[0]?.id ?? '';
 
 /** 一组动作的编辑器：事件点和触发器共用。 */
-export function ActionList({ actions, onChange, defaultTarget, focusedAction, triggerTemplate = false, inScene = false }: { actions: Action[]; onChange: (next: Action[]) => void; defaultTarget?: string; focusedAction?: string; triggerTemplate?: boolean; inScene?: boolean }) {
+export function ActionList({ actions, onChange, defaultTarget, focusedAction, triggerTemplate = false, inScene = false, sliderSample }: { actions: Action[]; onChange: (next: Action[]) => void; defaultTarget?: string; focusedAction?: string; triggerTemplate?: boolean; inScene?: boolean; /** 滑块里的动作：内容/参数里的 {{value}}、{{hex}} 用这个值做预览；同时不提供场景和时间线控制 */ sliderSample?: number }) {
   const hasCommands = useStore((s) => (s.project?.commands ?? []).length > 0);
   const hasScenes = useStore((s) => (s.project?.scenes ?? []).length > 0);
   const update = (i: number, next: Action) => onChange(actions.map((a, j) => (j === i ? next : a)));
@@ -56,8 +58,8 @@ export function ActionList({ actions, onChange, defaultTarget, focusedAction, tr
             </div>
           </div>
           <div className="ab">
-            {a.type === 'udp' && <SendEditor v={a} showOffset triggerTemplate={triggerTemplate} onChange={(patch) => update(i, { ...a, ...patch })} />}
-            {a.type === 'command' && <CommandBody a={a} triggerTemplate={triggerTemplate} onChange={(n) => update(i, n)} />}
+            {a.type === 'udp' && <SendEditor v={a} showOffset triggerTemplate={triggerTemplate} previewValues={sliderSample === undefined ? undefined : sampleValues(sliderSample)} onChange={(patch) => update(i, { ...a, ...patch })} />}
+            {a.type === 'command' && <CommandBody a={a} triggerTemplate={triggerTemplate} sliderSample={sliderSample} onChange={(n) => update(i, n)} />}
             {a.type === 'delay' && (
               <Field label="时长" hint="后面的动作整体顺延这么久">
                 <NumInput value={a.ms} width={90} onChange={(v) => update(i, { ...a, ms: v ?? 0 })} /> ms
@@ -79,7 +81,7 @@ export function ActionList({ actions, onChange, defaultTarget, focusedAction, tr
         </button>
         <button onClick={() => onChange([...actions, { id: genId('a'), type: 'udp', targets: defaultTarget ? [defaultTarget] : [], format: 'ascii', payload: '' }])}>＋ 自定义 UDP</button>
         <button onClick={() => onChange([...actions, { id: genId('a'), type: 'delay', ms: 1000 }])}>＋ 延时</button>
-        {!inScene && (
+        {!inScene && sliderSample === undefined && (
           <button
             className={hasScenes ? 'accent' : ''}
             title={hasScenes ? '整体使用一个场景（一组动作）' : '还没有场景：先在左侧「场景」页签里添加'}
@@ -89,7 +91,7 @@ export function ActionList({ actions, onChange, defaultTarget, focusedAction, tr
             ＋ 使用场景
           </button>
         )}
-        {!inScene && <button onClick={() => onChange([...actions, { id: genId('a'), type: 'timeline', op: 'disable', target: '' }])}>＋ 时间线控制</button>}
+        {!inScene && sliderSample === undefined && <button onClick={() => onChange([...actions, { id: genId('a'), type: 'timeline', op: 'disable', target: '' }])}>＋ 时间线控制</button>}
       </div>
     </div>
   );
@@ -264,7 +266,7 @@ export function SendEditor({
 
 // ───────────── 使用指令 ─────────────
 
-function CommandBody({ a, onChange, triggerTemplate = false }: { a: CommandAction; onChange: (n: CommandAction) => void; triggerTemplate?: boolean }) {
+function CommandBody({ a, onChange, triggerTemplate = false, sliderSample }: { a: CommandAction; onChange: (n: CommandAction) => void; triggerTemplate?: boolean; sliderSample?: number }) {
   const project = useStore((s) => s.project)!;
   const commands = project.commands ?? [];
   const cmd = commands.find((c) => c.id === a.commandId);
@@ -286,7 +288,7 @@ function CommandBody({ a, onChange, triggerTemplate = false }: { a: CommandActio
   }
 
   const { missing } = paramValues(cmd, a.args);
-  const resolved = resolveCommandAction(cmd, a);
+  const resolved = resolveCommandAction(cmd, sliderSample === undefined ? a : (substituteSliderAction(a, sliderSample) as CommandAction));
   const dynamic = triggerTemplate && Object.values(a.args ?? {}).some((v) => /\$(?:\$|\d)/.test(v));
   const pv = resolved.action ? previewPayload(resolved.action.format, resolved.action.payload, resolved.action.terminator ?? 'none') : null;
   const setArg = (name: string, value: string) => {

@@ -67,6 +67,8 @@ node bench/jitter.ts 200 6                                 # 毫秒抖动实测
 
 `Project.pads`：按钮 / 开关（开、关动作）/ 单选组（同组按钮互斥点亮）。`Engine.runPadTile` 执行动作并维护"假定亮灭状态"（250ms 防抖、关=无键、`padId/tileId`），`resetPadState` 清空；状态由 daemon 存入 `settings.json.padState[项目文件]`。`runPadTile`/`resetPadState` 在 `LOCKED_ALLOWED`（编辑锁与急停下仍可按）。校验见 `validate.ts` 的 `pads/...`。
 
+**滑块**（`kind:'slider'`，`min/max/step/initial`）：`runPadTile(padId, tileId, to, {value, final})`，把吸附后的值代入动作里的 `{{value}}` / `{{hex}}`（自定义 UDP 内容与指令参数值）；中间值 30ms 节流、`final` 必执行；状态存数值。详见 `padvalue.ts` 与交接文档 19.1。
+
 ## 告警
 
 `LogEntry.alert`（类型/级别/对象）。回包重试用尽才记一条；设备连续 `settings.alerts.offlineAfter`（默认 3）次最终失败判离线，只在状态变化时记一条，收到有效回包记恢复。告警走 `Engine.alert()` 单一出口，随日志按天写盘；RPC `getAlerts` 读最近 N 天。目前**只记录，不对外发送**。

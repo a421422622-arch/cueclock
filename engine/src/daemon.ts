@@ -50,7 +50,7 @@ export interface DaemonSettings {
   /** 编辑锁的密码记录（加盐哈希）。机器级，不进配置文件 */
   lock?: LockRecord;
   /** 面板按钮的亮灯状态，按配置文件区分：{ 配置文件路径: { '面板id/按钮id': 是否亮 } } */
-  padState?: Record<string, Record<string, boolean>>;
+  padState?: Record<string, Record<string, boolean | number>>;
 }
 
 const MAX_RECENT = 8;
@@ -130,7 +130,7 @@ export class Daemon {
         network,
         paused: raw.paused === true,
         lock: isLockRecord(raw.lock) ? raw.lock : undefined,
-        padState: typeof raw.padState === 'object' && raw.padState !== null && !Array.isArray(raw.padState) ? (raw.padState as Record<string, Record<string, boolean>>) : undefined,
+        padState: typeof raw.padState === 'object' && raw.padState !== null && !Array.isArray(raw.padState) ? (raw.padState as Record<string, Record<string, boolean | number>>) : undefined,
       };
     } catch {
       return { recent: [] };
@@ -264,7 +264,7 @@ export class Daemon {
     const file = this.store!.file;
     const engine = new Engine(this.project!, { dryRun: this.opts.dryRun, network: this.settings.network, startPaused: this.pausedBeforeStart, padState: this.settings.padState?.[file] });
     engine.on('log', (e: LogEntry) => this.broadcast({ event: 'log', data: e }));
-    engine.on('pad-state', (st: Record<string, boolean>) => {
+    engine.on('pad-state', (st: Record<string, boolean | number>) => {
       // 面板亮灯状态要在引擎重启后保留；同时推给界面
       const all = { ...(this.settings.padState ?? {}) };
       if (Object.keys(st).length) all[file] = st;
@@ -626,7 +626,10 @@ export class Daemon {
         const p = obj(params);
         if (typeof p.padId !== 'string' || typeof p.tileId !== 'string') throw new RpcError('bad-request', '缺少 padId / tileId');
         try {
-          return this.needEngine().runPadTile(p.padId, p.tileId, typeof p.to === 'boolean' ? p.to : undefined);
+          return this.needEngine().runPadTile(p.padId, p.tileId, typeof p.to === 'boolean' ? p.to : undefined, {
+            value: typeof p.value === 'number' ? p.value : undefined,
+            final: typeof p.final === 'boolean' ? p.final : undefined,
+          });
         } catch (e) {
           if (e instanceof RpcError) throw e;
           throw new RpcError((e as { notFound?: boolean }).notFound ? 'not-found' : 'bad-request', (e as Error).message);

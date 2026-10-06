@@ -1,5 +1,8 @@
 import type { Pad, PadTile } from '../../../engine/src/types.ts';
 import { GROUP_COLORS } from './colors.ts';
+import { hexOf, sliderRange, sliderSteps, sliderValueAt, snapSliderValue } from '../../../engine/src/padvalue.ts';
+
+export { sliderRange, sliderSteps, sliderValueAt, snapSliderValue };
 
 export const DEFAULT_COLUMNS = 4;
 
@@ -10,11 +13,12 @@ export function newTile(kind: PadTile['kind'], existing: PadTile[], id: string):
   const n = existing.filter((t) => t.kind === kind).length + 1;
   return {
     id,
-    label: kind === 'toggle' ? `开关 ${n}` : `按钮 ${n}`,
+    label: kind === 'toggle' ? `开关 ${n}` : kind === 'slider' ? `滑块 ${n}` : `按钮 ${n}`,
     color: GROUP_COLORS[existing.length % GROUP_COLORS.length],
     kind,
     actions: [],
     ...(kind === 'toggle' ? { offActions: [] } : {}),
+    ...(kind === 'slider' ? { size: 2 as const, min: 0, max: 100, step: 1 } : {}),
   };
 }
 
@@ -39,8 +43,71 @@ export const groupNames = (pad: Pad): string[] => [...new Set(pad.tiles.map((t) 
  */
 export function changeKind(tile: PadTile, kind: PadTile['kind']): PadTile {
   if (tile.kind === kind) return tile;
-  const { offActions: _off, group: _group, ...rest } = tile;
-  return kind === 'toggle' ? { ...rest, kind, offActions: tile.offActions ?? [] } : { ...rest, kind, ...(tile.group ? { group: tile.group } : {}) };
+  // 滑块的范围字段只属于滑块；开关的关动作、单选组也各有归属
+  const { offActions: _off, group: _group, min: _min, max: _max, step: _step, initial: _initial, ...rest } = tile;
+  if (kind === 'toggle') return { ...rest, kind, offActions: tile.offActions ?? [] };
+  if (kind === 'slider') return { ...rest, kind, size: rest.size ?? 2, min: 0, max: 100, step: 1 };
+  return { ...rest, kind, ...(tile.group ? { group: tile.group } : {}) };
+}
+
+/** 滑块当前值对应的档位序号（给 <input type=range> 用；停在 max 的尾档也算一档）。 */
+export function sliderIndex(t: PadTile, value: number): number {
+  const { min, step } = sliderRange(t);
+  return Math.min(sliderSteps(t), Math.max(0, Math.round((value - min) / step)));
+}
+
+/** 动作预览里用的滑块取值：{{value}} / {{hex}}。{{hex}} 对非整数无意义，退回 00。 */
+export function sliderSample(value: number): Record<string, string> {
+  let hex = '00';
+  try { hex = hexOf(value); } catch { /* 负数/小数：预览用 00 */ }
+  return { value: String(value), hex };
+}
+
+export interface DragSender {
+  /** 拖动中：节流发送（最快每 gap ms 一次），最新值不丢 */
+  move(v: number): void;
+  /** 松手：取消等待中的值，立刻发送最终值 */
+  end(v: number): void;
+}
+
+/** 滑块拖动发送：首个值立刻发，之后每 gap ms 最多发一次最新值；松手发 final。时钟与定时器可注入，便于测试。 */
+export function dragSender(
+  send: (v: number, final: boolean) => void,
+  gap = 80,
+  now: () => number = Date.now,
+  timers: { set: (f: () => void, ms: number) => unknown; clear: (h: unknown) => void } = { set: (f, ms) => setTimeout(f, ms), clear: (h) => clearTimeout(h as ReturnType<typeof setTimeout>) },
+): DragSender {
+  let last = -Infinity;
+  let pending: number | null = null;
+  let timer: unknown = null;
+  const cancel = () => { if (timer !== null) timers.clear(timer); timer = null; pending = null; };
+  return {
+    move(v) {
+      const t = now();
+      if (t - last >= gap) {
+        cancel();
+        last = t;
+        send(v, false);
+        return;
+      }
+      pending = v;
+      if (timer === null) {
+        timer = timers.set(() => {
+          timer = null;
+          if (pending === null) return;
+          const p = pending;
+          pending = null;
+          last = now();
+          send(p, false);
+        }, gap - (t - last));
+      }
+    },
+    end(v) {
+      cancel();
+      last = now();
+      send(v, true);
+    },
+  };
 }
 
 /** 复制按钮：新 id、新动作 id，名字加「副本」。 */

@@ -6,7 +6,7 @@ import { describeDeviceState } from '../lib/deviceState.ts';
 import { offlineDelayLabel } from '../lib/interval.ts';
 import { IntervalPicker } from './IntervalPicker.tsx';
 import type { Pad, PadTile } from '@engine/types.ts';
-import { changeKind, duplicateTile, groupNames, moveTile } from '../lib/pad.ts';
+import { changeKind, duplicateTile, groupNames, moveTile, sliderRange, sliderSteps } from '../lib/pad.ts';
 import { GROUP_COLORS } from '../lib/colors.ts';
 import { setPadId } from '../store.ts';
 import { formatTime, parseTime } from '@engine/time.ts';
@@ -637,6 +637,25 @@ function PadInspector({ id }: { id: string }) {
   );
 }
 
+function SliderFields({ tile, patch }: { tile: PadTile; patch: (fn: (t: PadTile) => PadTile | void) => void }) {
+  const { min, max, step, initial } = sliderRange(tile);
+  const n = sliderSteps(tile);
+  return (
+    <>
+      <Field label="范围" hint="这是发给设备的原始值（如 0~255、0~100），不是百分比。">
+        <span className="row" style={{ gap: 6 }}>
+          最小 <NumInput value={min} min={-1e9} width={64} onChange={(v) => patch((t) => { t.min = v ?? 0; })} />
+          最大 <NumInput value={max} min={-1e9} width={64} onChange={(v) => patch((t) => { t.max = v ?? 100; })} />
+          步长 <NumInput value={step} min={1e-6} width={56} onChange={(v) => patch((t) => { t.step = v ?? 1; })} />
+        </span>
+      </Field>
+      <Field label="初始位置" hint={`界面首次显示的位置，不会发送。共 ${n + 1} 档。`}>
+        <NumInput value={initial} min={-1e9} width={64} onChange={(v) => patch((t) => { t.initial = v; })} allowEmpty />
+      </Field>
+    </>
+  );
+}
+
 function PadTileInspector({ padId, tileId }: { padId: string; tileId: string }) {
   const project = useStore((s) => s.project)!;
   const pad = project.pads!.find((p) => p.id === padId)!;
@@ -654,7 +673,7 @@ function PadTileInspector({ padId, tileId }: { padId: string; tileId: string }) 
   const tryIt = async () => {
     setRes({ text: '执行中…', bad: false });
     try {
-      const r = await rpc<{ actions: number; ignored?: boolean }>('runPadTile', { padId, tileId });
+      const r = await rpc<{ actions: number; ignored?: boolean }>('runPadTile', { padId, tileId, ...(tile.kind === 'slider' ? { value: sliderRange(tile).initial } : {}) });
       setRes({ text: r.ignored ? '点得太快了，已忽略' : `已执行（${r.actions} 个执行点），结果见下方日志`, bad: false });
     } catch (e) {
       setRes({ text: e instanceof RpcFailure ? e.message : String(e), bad: true });
@@ -665,8 +684,8 @@ function PadTileInspector({ padId, tileId }: { padId: string; tileId: string }) 
     <>
       <div className="form">
         <Field label="名称"><input value={tile.label} onChange={(e) => patch((t) => { t.label = e.target.value; })} /></Field>
-        <Field label="类型" hint={tile.kind === 'toggle' ? '开关：点一下在「开」和「关」之间切换，各绑一组动作。亮灯状态是软件推测的，不代表设备真实状态。' : '按钮：点一下执行绑定的动作。'}>
-          <Seg<PadTile['kind']> value={tile.kind} onChange={(k) => patch((t) => changeKind(t, k))} options={[{ value: 'button', label: '按钮' }, { value: 'toggle', label: '开关' }]} />
+        <Field label="类型" hint={tile.kind === 'toggle' ? '开关：点一下在「开」和「关」之间切换，各绑一组动作。亮灯状态是软件推测的，不代表设备真实状态。' : tile.kind === 'slider' ? '滑块：拖动选一个范围内的值（如调光 0~255），把值代入下面动作里的 {{value}} 或 {{hex}} 再发送。' : '按钮：点一下执行绑定的动作。'}>
+          <Seg<PadTile['kind']> value={tile.kind} onChange={(k) => patch((t) => changeKind(t, k))} options={[{ value: 'button', label: '按钮' }, { value: 'toggle', label: '开关' }, { value: 'slider', label: '滑块' }]} />
         </Field>
         <Field label="颜色">
           <div className="swatches">
@@ -680,11 +699,13 @@ function PadTileInspector({ padId, tileId }: { padId: string; tileId: string }) 
             <datalist id={`groups-${padId}`}>{groupNames(pad).map((g) => <option key={g} value={g} />)}</datalist>
           </Field>
         )}
-        <Field label="确认"><Check checked={tile.confirm === true} onChange={(v) => patch((t) => { t.confirm = v || undefined; })} label="点击前先让操作员确认（适合「全关」这类）" /></Field>
+        {tile.kind === 'slider' && <SliderFields tile={tile} patch={patch} />}
+        {tile.kind !== 'slider' && <Field label="确认"><Check checked={tile.confirm === true} onChange={(v) => patch((t) => { t.confirm = v || undefined; })} label="点击前先让操作员确认（适合「全关」这类）" /></Field>}
       </div>
 
-      <div className="sech">{tile.kind === 'toggle' ? '切到「开」时执行' : '点击时执行'} <span>{tile.actions.length}</span></div>
-      <ActionList actions={tile.actions} onChange={(next) => patch((t) => { t.actions = next; })} />
+      <div className="sech">{tile.kind === 'toggle' ? '切到「开」时执行' : tile.kind === 'slider' ? '每次取值时发送' : '点击时执行'} <span>{tile.actions.length}</span></div>
+      {tile.kind === 'slider' && <div className="hint" style={{ marginBottom: 6 }}>在「自定义 UDP」的内容里写 <code>{'{{value}}'}</code>（十进制，如 128），HEX 内容写 <code>{'{{hex}}'}</code>（自动补成整字节，如 80）；用「指令」时，把指令参数的值填成 <code>{'{{value}}'}</code> 或 <code>{'{{hex}}'}</code>。预览按最小值显示。</div>}
+      <ActionList actions={tile.actions} sliderSample={tile.kind === 'slider' ? sliderRange(tile).min : undefined} onChange={(next) => patch((t) => { t.actions = next; })} />
       {tile.kind === 'toggle' && (
         <>
           <div className="sech" style={{ marginTop: 12 }}>切到「关」时执行 <span>{(tile.offActions ?? []).length}</span></div>
@@ -692,7 +713,7 @@ function PadTileInspector({ padId, tileId }: { padId: string; tileId: string }) 
         </>
       )}
       <div className="row" style={{ gap: 8, marginTop: 10 }}>
-        <button className="primary" onClick={tryIt}>▶ 试按一次</button>
+        <button className="primary" onClick={tryIt}>{tile.kind === 'slider' ? '▶ 试发一次（初始位置的值）' : '▶ 试按一次'}</button>
         {res && <span className={`hint ${res.bad ? 'err' : 'okc'}`}>{res.text}</span>}
       </div>
       <div className="hint" style={{ marginTop: 4 }}>真的会发出指令；开关会同时切换状态。</div>

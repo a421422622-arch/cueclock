@@ -17,6 +17,7 @@ import { validateProject } from './validate.ts';
 import { buildPayload, describeAscii, formatHex } from './payload.ts';
 import { matchBuffer } from './match.ts';
 import { substituteCaptureAction } from './captures.ts';
+import { snapSliderValue, substituteSliderAction } from './padvalue.ts';
 import { formatClock, formatTime } from './time.ts';
 import type { NetworkSettings } from './network.ts';
 import { staggerMs, systemPing } from './health.ts';
@@ -98,7 +99,7 @@ export interface EngineOptions {
   /** 以急停状态启动：连启动时的断电恢复也不执行 */
   startPaused?: boolean;
   /** 面板按钮的亮灯状态（键为 `面板id/按钮id`），启动时从上次恢复。亮灯是推测的，不是设备真实状态 */
-  padState?: Record<string, boolean>;
+  padState?: Record<string, boolean | number>;
   /** 自定义 ping 实现（测试用）；默认调系统 ping */
   pinger?: (ip: string, timeoutMs: number) => Promise<PingResult>;
 }
@@ -129,7 +130,7 @@ export interface DeviceHealthInfo {
 export interface EngineStatus {
   devices: DeviceHealthInfo[];
   /** 面板按钮亮灯状态 */
-  pads: Record<string, boolean>;
+  pads: Record<string, boolean | number>;
   running: boolean;
   paused: boolean;
   dryRun: boolean;
@@ -183,7 +184,7 @@ export class Engine extends EventEmitter {
   /** 触发端口收到的"没触发任何东西"的包（不匹配/被拒/被忽略）的日志限流：每秒最多逐条记这么多 */
   private rxWindow = { sec: 0, count: 0, dropped: 0 };
   /** 设备连续失败计数与离线状态（只在状态变化时记告警，避免刷屏） */
-  private padState = new Map<string, boolean>();
+  private padState = new Map<string, boolean | number>();
   private padPressedAt = new Map<string, number>();
   private health = new Map<string, HealthEntry>();
   /** 在线检测的后台循环：设备 id → 配置签名 + 取消器。热更新时只重启配置变了的 */
@@ -199,7 +200,7 @@ export class Engine extends EventEmitter {
     this.opts = opts;
     this.clock = opts.clock ?? new RealClock();
     this.router = new TriggerRouter(project.triggers);
-    for (const [k, v] of Object.entries(opts.padState ?? {})) this.padState.set(k, v === true);
+    for (const [k, v] of Object.entries(opts.padState ?? {})) if (v === true || (typeof v === 'number' && Number.isFinite(v))) this.padState.set(k, v);
     this.prunePadState(false);
   }
 
@@ -267,7 +268,7 @@ export class Engine extends EventEmitter {
     const valid = new Set((this.project.pads ?? []).flatMap((p) => p.tiles.map((t) => this.padKey(p.id, t.id))));
     let changed = false;
     for (const [k, v] of [...this.padState]) {
-      if (!valid.has(k) || !v) {
+      if (!valid.has(k) || v === false || v === undefined) {
         this.padState.delete(k);
         changed = true;
       }
@@ -280,7 +281,7 @@ export class Engine extends EventEmitter {
    * 手动操作：急停期间照常执行（急停停的是自动日程）。同一按钮 250ms 内重复点击只算一次，开关不会被双击翻两次。
    * 亮灯状态是**推测的**：只要执行了就记，不管设备有没有真的响应。
    */
-  runPadTile(padId: string, tileId: string, to?: boolean): { actions: number; state: boolean | null; ignored?: boolean } {
+  runPadTile(padId: string, tileId: string, to?: boolean, opts: { value?: number; final?: boolean } = {}): { actions: number; state: boolean | number | null; ignored?: boolean } {
     if (!this.running) throw new Error('引擎未运行');
     const pad = this.project.pads?.find((p) => p.id === padId);
     if (!pad) throw Object.assign(new Error(`找不到面板 ${padId}`), { notFound: true });
@@ -288,12 +289,21 @@ export class Engine extends EventEmitter {
     if (!tile) throw Object.assign(new Error(`找不到按钮 ${tileId}`), { notFound: true });
     const key = this.padKey(padId, tileId);
     const now = this.clock.now();
-    if (now - (this.padPressedAt.get(key) ?? -Infinity) < 250) return { actions: 0, state: this.padState.get(key) ?? null, ignored: true };
+    // 滑块拖动会连续发值：中间值最快 30ms 一次，松手的最终值（final）永远执行，保证设备停在手放开的位置
+    const slider = tile.kind === 'slider';
+    const final = opts.final !== false;
+    if (now - (this.padPressedAt.get(key) ?? -Infinity) < (slider ? (final ? 0 : 30) : 250)) return { actions: 0, state: this.padState.get(key) ?? null, ignored: true };
     this.padPressedAt.set(key, now);
 
     let actions = tile.actions;
-    let state: boolean | null = null;
-    if (tile.kind === 'toggle') {
+    let state: boolean | number | null = null;
+    if (slider) {
+      if (opts.value === undefined) throw new Error('滑块需要 value');
+      const v = snapSliderValue(tile, opts.value);
+      actions = tile.actions.map((a) => substituteSliderAction(a, v));
+      this.padState.set(key, v);
+      state = v;
+    } else if (tile.kind === 'toggle') {
       state = to ?? !(this.padState.get(key) ?? false);
       actions = state ? tile.actions : (tile.offActions ?? []);
       if (state) this.padState.set(key, true);
@@ -303,9 +313,9 @@ export class Engine extends EventEmitter {
       this.padState.set(key, true);
       state = true;
     }
-    this.emitPadState();
+    if (!slider || final) this.emitPadState(); // 拖动中的中间值不推送、不落盘，松手时一次
     const source = `面板「${pad.name}」/${tile.label}`;
-    this.log({ dir: 'SYS', result: 'info', source, detail: tile.kind === 'toggle' ? `开关切换为${state ? '开' : '关'}` : '按钮被点击' });
+    if (!slider || final) this.log({ dir: 'SYS', result: 'info', source, detail: slider ? `滑块设为 ${state}` : tile.kind === 'toggle' ? `开关切换为${state ? '开' : '关'}` : '按钮被点击' });
     this.spawn(this.runActionList(actions, now, source, true), '执行面板按钮');
     return { actions: expandActions(resolveActions(this.project, actions).actions).length, state };
   }
