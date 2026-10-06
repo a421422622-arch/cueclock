@@ -37,6 +37,7 @@ export function validateProject(p: Project): Issue[] {
   dup('devices', p.devices.map((d) => d.id));
   dup('commands', commands.map((c) => c.id));
   dup('scenes', (p.scenes ?? []).map((s) => s.id));
+  dup('pads', (p.pads ?? []).map((x) => x.id));
   dup('groups', p.groups.map((g) => g.id));
   dup('timelines', p.timelines.map((t) => t.id));
   dup('triggers', p.triggers.map((t) => t.id));
@@ -184,6 +185,29 @@ export function validateProject(p: Project): Issue[] {
       }
     }
   };
+
+  for (const pad of p.pads ?? []) {
+    const base = `pads/${pad.id}`;
+    if (!pad.name.trim()) warn(base, '面板没有名字');
+    if (pad.columns !== undefined && !(Number.isInteger(pad.columns) && pad.columns >= 1 && pad.columns <= 8)) err(base, '面板列数必须是 1~8 的整数');
+    const tileIds = new Set<string>();
+    for (const t of pad.tiles) {
+      const path = `${base}/${t.id}`;
+      if (tileIds.has(t.id)) err(base, `按钮 id "${t.id}" 重复`);
+      tileIds.add(t.id);
+      if (t.kind !== 'button' && t.kind !== 'toggle') {
+        err(path, `按钮类型 "${String(t.kind)}" 不支持（只有 button / toggle）`);
+        continue;
+      }
+      if (!t.label.trim()) warn(path, '按钮没有名字');
+      if (t.color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(t.color)) err(path, `颜色 "${t.color}" 必须是 #RRGGBB`);
+      if (t.size !== undefined && t.size !== 1 && t.size !== 2) err(path, '按钮大小只能是 1 或 2 列');
+      if (t.group !== undefined && t.kind !== 'button') err(path, '单选组只能用于按钮，不能用于开关');
+      if (t.actions.length === 0 && (t.offActions ?? []).length === 0) warn(path, '这个按钮没有绑定任何动作，点了什么也不会发生');
+      checkActions(path, t.actions);
+      if (t.kind === 'toggle') checkActions(`${path}/off`, t.offActions ?? []);
+    }
+  }
 
   for (const sc of p.scenes ?? []) {
     if (!sc.name.trim()) warn(`scenes/${sc.id}`, '场景没有名字');

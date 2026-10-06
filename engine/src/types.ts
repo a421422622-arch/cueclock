@@ -176,6 +176,38 @@ export interface Rule {
   excludeDates?: string[];
 }
 
+/**
+ * 操作面板：一块按钮网格，用来现场手动操作（和定时日程并行）。
+ * 按钮绑定一串动作（场景/指令/自定义 UDP/延时/时间线控制，复用动作列表）。
+ * 开关有「开」「关」两组动作，亮灯状态是**推测的**（UDP 设备大多不回报，只记「上次按的是开还是关」）。
+ * 单选组（group）：同组按钮点哪个哪个亮、其余熄灭。
+ */
+export interface PadTile {
+  id: string;
+  label: string;
+  /** #RRGGBB */
+  color?: string;
+  kind: 'button' | 'toggle';
+  /** 占几列，默认 1 */
+  size?: 1 | 2;
+  /** 单选组名，只用于按钮 */
+  group?: string;
+  /** 点击前先让操作员确认（界面侧；如「全关」） */
+  confirm?: boolean;
+  /** 按钮：点击时执行；开关：切到「开」时执行 */
+  actions: Action[];
+  /** 开关：切到「关」时执行 */
+  offActions?: Action[];
+}
+
+export interface Pad {
+  id: string;
+  name: string;
+  /** 每行几个，1~8，默认 4 */
+  columns?: number;
+  tiles: PadTile[];
+}
+
 export interface Group {
   id: string;
   name: string;
@@ -236,6 +268,7 @@ export interface Project {
   devices: Device[];
   commands?: Command[];
   scenes?: Scene[];
+  pads?: Pad[];
   groups: Group[];
   timelines: Timeline[];
   triggers: Trigger[];

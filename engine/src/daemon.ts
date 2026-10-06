@@ -49,6 +49,8 @@ export interface DaemonSettings {
   paused?: boolean;
   /** 编辑锁的密码记录（加盐哈希）。机器级，不进配置文件 */
   lock?: LockRecord;
+  /** 面板按钮的亮灯状态，按配置文件区分：{ 配置文件路径: { '面板id/按钮id': 是否亮 } } */
+  padState?: Record<string, Record<string, boolean>>;
 }
 
 const MAX_RECENT = 8;
@@ -128,6 +130,7 @@ export class Daemon {
         network,
         paused: raw.paused === true,
         lock: isLockRecord(raw.lock) ? raw.lock : undefined,
+        padState: typeof raw.padState === 'object' && raw.padState !== null && !Array.isArray(raw.padState) ? (raw.padState as Record<string, Record<string, boolean>>) : undefined,
       };
     } catch {
       return { recent: [] };
@@ -258,8 +261,18 @@ export class Daemon {
 
   private async startEngine(): Promise<void> {
     this.clearRetry();
-    const engine = new Engine(this.project!, { dryRun: this.opts.dryRun, network: this.settings.network, startPaused: this.pausedBeforeStart });
+    const file = this.store!.file;
+    const engine = new Engine(this.project!, { dryRun: this.opts.dryRun, network: this.settings.network, startPaused: this.pausedBeforeStart, padState: this.settings.padState?.[file] });
     engine.on('log', (e: LogEntry) => this.broadcast({ event: 'log', data: e }));
+    engine.on('pad-state', (st: Record<string, boolean>) => {
+      // 面板亮灯状态要在引擎重启后保留；同时推给界面
+      const all = { ...(this.settings.padState ?? {}) };
+      if (Object.keys(st).length) all[file] = st;
+      else delete all[file];
+      this.settings = { ...this.settings, padState: all };
+      void this.persistSettings();
+      this.broadcast({ event: 'status', data: this.statusPayload() });
+    });
     try {
       await engine.start();
     } catch (e) {
@@ -607,6 +620,23 @@ export class Daemon {
           if (e instanceof RpcError) throw e;
           throw new RpcError('bad-request', (e as Error).message);
         }
+      }
+
+      case 'runPadTile': {
+        const p = obj(params);
+        if (typeof p.padId !== 'string' || typeof p.tileId !== 'string') throw new RpcError('bad-request', '缺少 padId / tileId');
+        try {
+          return this.needEngine().runPadTile(p.padId, p.tileId, typeof p.to === 'boolean' ? p.to : undefined);
+        } catch (e) {
+          if (e instanceof RpcError) throw e;
+          throw new RpcError((e as { notFound?: boolean }).notFound ? 'not-found' : 'bad-request', (e as Error).message);
+        }
+      }
+
+      case 'resetPadState': {
+        const p = obj(params ?? {});
+        this.needEngine().resetPadState(typeof p.padId === 'string' ? p.padId : undefined);
+        return { ok: true };
       }
 
       case 'probeNow': {

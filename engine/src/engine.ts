@@ -97,6 +97,8 @@ export interface EngineOptions {
   network?: NetworkSettings;
   /** 以急停状态启动：连启动时的断电恢复也不执行 */
   startPaused?: boolean;
+  /** 面板按钮的亮灯状态（键为 `面板id/按钮id`），启动时从上次恢复。亮灯是推测的，不是设备真实状态 */
+  padState?: Record<string, boolean>;
   /** 自定义 ping 实现（测试用）；默认调系统 ping */
   pinger?: (ip: string, timeoutMs: number) => Promise<PingResult>;
 }
@@ -126,6 +128,8 @@ export interface DeviceHealthInfo {
 
 export interface EngineStatus {
   devices: DeviceHealthInfo[];
+  /** 面板按钮亮灯状态 */
+  pads: Record<string, boolean>;
   running: boolean;
   paused: boolean;
   dryRun: boolean;
@@ -179,6 +183,8 @@ export class Engine extends EventEmitter {
   /** 触发端口收到的"没触发任何东西"的包（不匹配/被拒/被忽略）的日志限流：每秒最多逐条记这么多 */
   private rxWindow = { sec: 0, count: 0, dropped: 0 };
   /** 设备连续失败计数与离线状态（只在状态变化时记告警，避免刷屏） */
+  private padState = new Map<string, boolean>();
+  private padPressedAt = new Map<string, number>();
   private health = new Map<string, HealthEntry>();
   /** 在线检测的后台循环：设备 id → 配置签名 + 取消器。热更新时只重启配置变了的 */
   private healthLoops = new Map<string, { sig: string; ctl: AbortController }>();
@@ -193,6 +199,8 @@ export class Engine extends EventEmitter {
     this.opts = opts;
     this.clock = opts.clock ?? new RealClock();
     this.router = new TriggerRouter(project.triggers);
+    for (const [k, v] of Object.entries(opts.padState ?? {})) this.padState.set(k, v === true);
+    this.prunePadState(false);
   }
 
   private log(e: Omit<LogEntry, 't'> & { t?: number }): void {
@@ -244,6 +252,68 @@ export class Engine extends EventEmitter {
     h.lastCheckAt = h.lastOkAt = this.clock.now();
     h.rttMs = rttMs;
     if (was) this.alert('device-online', 'info', device.name, `设备「${device.name}」已恢复：${method === 'ping' ? 'Ping 有响应了' : '收到了有效回包'}`);
+  }
+
+  // ───────────── 操作面板 ─────────────
+
+  private padKey = (padId: string, tileId: string) => `${padId}/${tileId}`;
+
+  private emitPadState(): void {
+    this.emit('pad-state', Object.fromEntries(this.padState));
+  }
+
+  /** 丢掉已经不存在的按钮的状态（以及不再是真的状态）。 */
+  private prunePadState(emit: boolean): void {
+    const valid = new Set((this.project.pads ?? []).flatMap((p) => p.tiles.map((t) => this.padKey(p.id, t.id))));
+    let changed = false;
+    for (const [k, v] of [...this.padState]) {
+      if (!valid.has(k) || !v) {
+        this.padState.delete(k);
+        changed = true;
+      }
+    }
+    if (changed && emit) this.emitPadState();
+  }
+
+  /**
+   * 点击面板按钮。按钮：执行动作（有单选组则它亮、同组其余熄灭）；开关：在开/关两组动作间切换，to 可指定目标状态。
+   * 手动操作：急停期间照常执行（急停停的是自动日程）。同一按钮 250ms 内重复点击只算一次，开关不会被双击翻两次。
+   * 亮灯状态是**推测的**：只要执行了就记，不管设备有没有真的响应。
+   */
+  runPadTile(padId: string, tileId: string, to?: boolean): { actions: number; state: boolean | null; ignored?: boolean } {
+    if (!this.running) throw new Error('引擎未运行');
+    const pad = this.project.pads?.find((p) => p.id === padId);
+    if (!pad) throw Object.assign(new Error(`找不到面板 ${padId}`), { notFound: true });
+    const tile = pad.tiles.find((t) => t.id === tileId);
+    if (!tile) throw Object.assign(new Error(`找不到按钮 ${tileId}`), { notFound: true });
+    const key = this.padKey(padId, tileId);
+    const now = this.clock.now();
+    if (now - (this.padPressedAt.get(key) ?? -Infinity) < 250) return { actions: 0, state: this.padState.get(key) ?? null, ignored: true };
+    this.padPressedAt.set(key, now);
+
+    let actions = tile.actions;
+    let state: boolean | null = null;
+    if (tile.kind === 'toggle') {
+      state = to ?? !(this.padState.get(key) ?? false);
+      actions = state ? tile.actions : (tile.offActions ?? []);
+      if (state) this.padState.set(key, true);
+      else this.padState.delete(key); // 约定：没有这个键 = 关/熄灭
+    } else if (tile.group) {
+      for (const t of pad.tiles) if (t.group === tile.group && t.id !== tileId) this.padState.delete(this.padKey(padId, t.id));
+      this.padState.set(key, true);
+      state = true;
+    }
+    this.emitPadState();
+    const source = `面板「${pad.name}」/${tile.label}`;
+    this.log({ dir: 'SYS', result: 'info', source, detail: tile.kind === 'toggle' ? `开关切换为${state ? '开' : '关'}` : '按钮被点击' });
+    this.spawn(this.runActionList(actions, now, source, true), '执行面板按钮');
+    return { actions: expandActions(resolveActions(this.project, actions).actions).length, state };
+  }
+
+  /** 清空面板的亮灯状态（不指定面板就清全部）。设备被别的方式改过、面板与实际不同步时用。 */
+  resetPadState(padId?: string): void {
+    for (const k of [...this.padState.keys()]) if (!padId || k.startsWith(`${padId}/`)) this.padState.delete(k);
+    this.emitPadState();
   }
 
   // ───────────── 设备在线检测 ─────────────
@@ -464,6 +534,7 @@ export class Engine extends EventEmitter {
     this.assertValid(project);
     this.project = project;
     this.router.update(project.triggers); // 保留防抖/确认等待状态，不因为保存一次项目就丢失
+    this.prunePadState(true); // 被删掉的按钮，其状态一起清理
     this.syncHealth(); // 检测配置没变的设备保持原节奏
     if (this.running) {
       if (!this.opts.dryRun) await this.syncListeners();
@@ -914,6 +985,7 @@ export class Engine extends EventEmitter {
     });
     return {
       devices,
+      pads: Object.fromEntries(this.padState),
       running: this.running,
       paused: this.pausedFlag,
       dryRun: this.opts.dryRun === true,

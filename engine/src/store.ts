@@ -19,6 +19,7 @@ export function normalizeProject(raw: unknown): Project {
     devices: arr('devices'),
     commands: arr('commands'),
     scenes: arr('scenes'),
+    pads: arr('pads'),
     groups: arr('groups'),
     timelines: arr('timelines'),
     triggers: arr('triggers'),
