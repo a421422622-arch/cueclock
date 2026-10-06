@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { edit, select, useStore } from '../store.ts';
 import { genId } from '../lib/labels.ts';
+import { sceneRefCount } from '../lib/usage.ts';
 import { deviceColor, GROUP_COLORS } from '../lib/colors.ts';
 
 export function Sidebar() {
-  const [tab, setTab] = useState<'dev' | 'cmd' | 'trig'>('dev');
+  const [tab, setTab] = useState<'dev' | 'cmd' | 'scene' | 'trig'>('dev');
   const project = useStore((s) => s.project)!;
   const sel = useStore((s) => s.sel);
 
@@ -23,6 +24,13 @@ export function Sidebar() {
     });
     select({ kind: 'command', id });
   };
+  const addScene = () => {
+    const id = genId('scene');
+    edit((p) => {
+      (p.scenes ??= []).push({ id, name: '新场景', actions: [] });
+    });
+    select({ kind: 'scene', id });
+  };
   const addTrigger = () => {
     const id = genId('tr');
     edit((p) => {
@@ -36,6 +44,7 @@ export function Sidebar() {
       <div className="tabs">
         <span className={tab === 'dev' ? 'on' : ''} onClick={() => setTab('dev')}>设备 {project.devices.length}</span>
         <span className={tab === 'cmd' ? 'on' : ''} onClick={() => setTab('cmd')}>指令 {(project.commands ?? []).length}</span>
+        <span className={tab === 'scene' ? 'on' : ''} onClick={() => setTab('scene')}>场景 {(project.scenes ?? []).length}</span>
         <span className={tab === 'trig' ? 'on' : ''} onClick={() => setTab('trig')}>触发器 {project.triggers.length}</span>
       </div>
       <div className="sidebody">
@@ -61,6 +70,20 @@ export function Sidebar() {
                 <div className="n">{c.name}{(c.params ?? []).length > 0 && <span className="tag r">{(c.params ?? []).length} 参数</span>}</div>
                 <div className="a mono"><span>{c.payload.length > 26 ? c.payload.slice(0, 26) + '…' : c.payload}</span><span className={`tag ${c.format === 'hex' ? 'hex' : 'asc'}`}>{c.format.toUpperCase()}</span></div>
                 <div className="a"><span className="dim">{c.targets.map((t) => (t.startsWith('tag:') ? `标签 ${t.slice(4)}` : (project.devices.find((d) => d.id === t)?.name ?? '？'))).join('、') || '（无目标）'}{c.port ? ` :${c.port}` : ''}</span></div>
+              </div>
+            ))}
+          </>
+        ) : tab === 'scene' ? (
+          <>
+            <div className="sechead">场景库 <button onClick={addScene}>＋</button></div>
+            {(project.scenes ?? []).length === 0 && (
+              <div className="empty">还没有场景。把"开馆""闭馆"这类要同时做几件事的动作配成场景，时间线和触发器上整体选用，改一次处处生效。</div>
+            )}
+            {(project.scenes ?? []).map((sc) => (
+              <div key={sc.id} className={`dev ${sel?.kind === 'scene' && sel.id === sc.id ? 'sel' : ''}`} onClick={() => select({ kind: 'scene', id: sc.id })}>
+                <div className="n">{sc.name}<span className="tag r">{sc.actions.length} 个动作</span></div>
+                {sc.note && <div className="a"><span className="dim">{sc.note}</span></div>}
+                <div className="a"><span className="dim">被使用 {sceneRefCount(project, sc.id)} 次</span></div>
               </div>
             ))}
           </>

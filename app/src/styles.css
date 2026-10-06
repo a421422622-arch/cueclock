@@ -363,3 +363,6 @@ select.warnb { border-color: var(--warn); }
 @media (max-height: 800px) { .body:not(.log-collapsed) { grid-template-rows: minmax(0, 1fr) 140px; } }
 .menu .mi.cur { color: var(--ink); font-weight: 600; cursor: default; }
 .menu .mi.cur:hover { background: transparent; }
+
+.sceneprev { width: 100%; background: var(--canvas); border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; font: 11px/1.7 var(--mono); color: var(--ink2); max-height: 150px; overflow: auto; }
+.sceneprev .tm { color: var(--amber); display: inline-block; min-width: 64px; }

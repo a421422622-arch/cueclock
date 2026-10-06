@@ -1,5 +1,6 @@
-import type { Action, CommandAction, MatchKind, ReplyCheck, Terminator, UdpAction } from '@engine/types.ts';
-import { paramValues, placeholdersOf, resolveCommandAction, substitute } from '@engine/commands.ts';
+import type { Action, CommandAction, Project, MatchKind, ReplyCheck, Terminator, UdpAction } from '@engine/types.ts';
+import { paramValues, placeholdersOf, resolveActions, resolveCommandAction, substitute } from '@engine/commands.ts';
+import { expandActions } from '@engine/expand.ts';
 import { genId } from '../lib/labels.ts';
 import { previewPayload, toHex } from '../lib/payload.ts';
 import { getState, select, useStore } from '../store.ts';
@@ -19,8 +20,9 @@ const TERM_LABEL: Record<Terminator, string> = { none: '无', cr: '\\r', lf: '\\
 const firstCommandId = () => getState().project?.commands?.[0]?.id ?? '';
 
 /** 一组动作的编辑器：事件点和触发器共用。 */
-export function ActionList({ actions, onChange, defaultTarget, focusedAction, triggerTemplate = false }: { actions: Action[]; onChange: (next: Action[]) => void; defaultTarget?: string; focusedAction?: string; triggerTemplate?: boolean }) {
+export function ActionList({ actions, onChange, defaultTarget, focusedAction, triggerTemplate = false, inScene = false }: { actions: Action[]; onChange: (next: Action[]) => void; defaultTarget?: string; focusedAction?: string; triggerTemplate?: boolean; inScene?: boolean }) {
   const hasCommands = useStore((s) => (s.project?.commands ?? []).length > 0);
+  const hasScenes = useStore((s) => (s.project?.scenes ?? []).length > 0);
   const update = (i: number, next: Action) => onChange(actions.map((a, j) => (j === i ? next : a)));
   const move = (i: number, d: -1 | 1) => {
     const j = i + d;
@@ -35,7 +37,7 @@ export function ActionList({ actions, onChange, defaultTarget, focusedAction, tr
     onChange(next);
   };
   const remove = (i: number) => onChange(actions.filter((_, j) => j !== i));
-  const typeName = (a: Action) => (a.type === 'udp' ? '自定义 UDP' : a.type === 'command' ? '使用指令' : a.type === 'delay' ? '延时' : '时间线控制');
+  const typeName = (a: Action) => (a.type === 'udp' ? '自定义 UDP' : a.type === 'command' ? '使用指令' : a.type === 'scene' ? '使用场景' : a.type === 'delay' ? '延时' : '时间线控制');
 
   return (
     <div className="actions">
@@ -61,6 +63,7 @@ export function ActionList({ actions, onChange, defaultTarget, focusedAction, tr
                 <NumInput value={a.ms} width={90} onChange={(v) => update(i, { ...a, ms: v ?? 0 })} /> ms
               </Field>
             )}
+            {a.type === 'scene' && <SceneBody a={a} onChange={(n) => update(i, n)} />}
             {a.type === 'timeline' && <ControlBody a={a} onChange={(n) => update(i, n)} />}
           </div>
         </div>
@@ -76,7 +79,17 @@ export function ActionList({ actions, onChange, defaultTarget, focusedAction, tr
         </button>
         <button onClick={() => onChange([...actions, { id: genId('a'), type: 'udp', targets: defaultTarget ? [defaultTarget] : [], format: 'ascii', payload: '' }])}>＋ 自定义 UDP</button>
         <button onClick={() => onChange([...actions, { id: genId('a'), type: 'delay', ms: 1000 }])}>＋ 延时</button>
-        <button onClick={() => onChange([...actions, { id: genId('a'), type: 'timeline', op: 'disable', target: '' }])}>＋ 时间线控制</button>
+        {!inScene && (
+          <button
+            className={hasScenes ? 'accent' : ''}
+            title={hasScenes ? '整体使用一个场景（一组动作）' : '还没有场景：先在左侧「场景」页签里添加'}
+            disabled={!hasScenes}
+            onClick={() => onChange([...actions, { id: genId('a'), type: 'scene', sceneId: getState().project?.scenes?.[0]?.id ?? '' }])}
+          >
+            ＋ 使用场景
+          </button>
+        )}
+        {!inScene && <button onClick={() => onChange([...actions, { id: genId('a'), type: 'timeline', op: 'disable', target: '' }])}>＋ 时间线控制</button>}
       </div>
     </div>
   );
@@ -333,6 +346,60 @@ function CommandBody({ a, onChange, triggerTemplate = false }: { a: CommandActio
         }
       >
         <code className="mono sendprev">{resolved.action ? `${resolved.action.payload}` : '（参数不全）'}</code>
+      </Field>
+    </>
+  );
+}
+
+/** 场景预览里的一行说明（界面自己写，不能引用引擎的 describe.ts：它依赖 Node 的 Buffer，渲染进程里没有）。 */
+function sendSummary(project: Project, a: Action, i: number, n: number): string {
+  if (a.type !== 'udp') return a.type === 'delay' ? `延时 ${a.ms}ms` : a.type;
+  const names = a.targets.map((t) => (t.startsWith('tag:') ? `标签 ${t.slice(4)}` : (project.devices.find((d) => d.id === t)?.name ?? `？${t}`))).join('、');
+  return `${names}${a.port ? ':' + a.port : ''}  ${a.format === 'hex' ? 'HEX ' : ''}${a.payload || '（空）'}${n > 1 ? `  [${i + 1}/${n}]` : ''}${a.reply ? '  · 校验回包' : ''}`;
+}
+
+/** 使用场景：选一个场景，可整体后移；下方列出展开后会发送什么，改场景会同步变化。 */
+function SceneBody({ a, onChange }: { a: Extract<Action, { type: 'scene' }>; onChange: (n: Action) => void }) {
+  const project = useStore((s) => s.project)!;
+  const scenes = project.scenes ?? [];
+  const scene = scenes.find((s) => s.id === a.sceneId);
+  const resolved = scene ? resolveActions(project, [a]) : null;
+  const items = resolved ? expandActions(resolved.actions) : [];
+
+  if (!scene) {
+    return (
+      <Field label="场景" hint={scenes.length === 0 ? '还没有场景：先在左侧「场景」页签里添加' : a.sceneId ? <span className="err">找不到场景「{a.sceneId}」</span> : undefined}>
+        <select className={a.sceneId ? 'bad' : ''} value={a.sceneId} onChange={(e) => onChange({ ...a, sceneId: e.target.value })}>
+          <option value="">选择场景…</option>
+          {scenes.map((s) => (
+            <option key={s.id} value={s.id}>{s.name}</option>
+          ))}
+        </select>
+      </Field>
+    );
+  }
+  return (
+    <>
+      <Field label="场景" hint={scene.note}>
+        <span className="row">
+          <select value={a.sceneId} onChange={(e) => onChange({ ...a, sceneId: e.target.value })}>
+            {scenes.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+          <button className="ico" title="在场景库里编辑这个场景" onClick={() => select({ kind: 'scene', id: scene.id })}>编辑 ↗</button>
+        </span>
+      </Field>
+      <Field label="整体偏移" hint="整个场景相对事件点后移；场景内部的延时只在场景内部生效，不会顺延后面的动作">
+        <span className="row"><NumInput value={a.offsetMs ?? 0} onChange={(x) => onChange({ ...a, offsetMs: x ?? 0 })} width={64} />ms</span>
+      </Field>
+      <Field label="将发送" hint={resolved && resolved.errors.length > 0 ? <span className="err">{resolved.errors.join('；')}</span> : `${items.length} 个执行点`}>
+        <div className="sceneprev">
+          {items.length === 0 && <span className="dim">（场景是空的）</span>}
+          {items.map((x, i) => (
+            <div key={i}><span className="tm">+{x.relMs}ms</span> {sendSummary(project, x.action, x.repIndex, x.repTotal)}</div>
+          ))}
+        </div>
       </Field>
     </>
   );

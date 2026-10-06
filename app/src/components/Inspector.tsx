@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Command, CommandParam, DayKind, Device, Group, Rule, Terminator, Timeline, Trigger } from '@engine/types.ts';
 import { placeholdersOf } from '@engine/commands.ts';
+import { allActions, sceneRefCount } from '../lib/usage.ts';
 import { formatTime, parseTime } from '@engine/time.ts';
 import { isDateKey } from '@engine/calendar.ts';
 import { edit, rpc, select, toast, useStore } from '../store.ts';
@@ -32,6 +33,9 @@ export function Inspector() {
   } else if (sel?.kind === 'device' && project.devices.some((d) => d.id === sel.id)) {
     title = '设备';
     body = <DeviceInspector key={sel.id} id={sel.id} />;
+  } else if (sel?.kind === 'scene' && (project.scenes ?? []).some((c) => c.id === sel.id)) {
+    title = '场景';
+    body = <SceneInspector key={sel.id} id={sel.id} />;
   } else if (sel?.kind === 'command' && (project.commands ?? []).some((c) => c.id === sel.id)) {
     title = 'UDP 指令';
     body = <CommandInspector key={sel.id} id={sel.id} />;
@@ -261,7 +265,7 @@ function DeviceInspector({ id }: { id: string }) {
   const d = project.devices.find((x) => x.id === id)!;
   const patch = (fn: (d: Device) => void) => edit((p) => { const x = p.devices.find((y) => y.id === id); if (x) fn(x); });
   const used =
-    project.timelines.flatMap((t) => t.cues.flatMap((c) => c.actions)).concat(project.triggers.flatMap((t) => t.actions)).filter((a) => (a.type === 'udp' || a.type === 'command') && (a.targets ?? []).includes(id)).length +
+    allActions(project).filter((a) => (a.type === 'udp' || a.type === 'command') && (a.targets ?? []).includes(id)).length +
     (project.commands ?? []).filter((c) => c.targets.includes(id)).length;
   const [payload, setPayload] = useState('');
   const [testPort, setTestPort] = useState<number | undefined>(d.port);
@@ -380,7 +384,7 @@ function CommandInspector({ id }: { id: string }) {
   const used = placeholdersOf(cmd.payload);
   const undeclared = used.filter((u) => !params.some((p) => p.name === u));
   const unused = params.filter((p) => !used.includes(p.name));
-  const refs = project.timelines.flatMap((t) => t.cues.flatMap((c) => c.actions)).concat(project.triggers.flatMap((t) => t.actions)).filter((a) => a.type === 'command' && a.commandId === id).length;
+  const refs = allActions(project).filter((a) => a.type === 'command' && a.commandId === id).length;
 
   // 预览时没有默认值的参数用占位值代入，免得预览里全是空
   const previewValues = Object.fromEntries(params.map((p) => [p.name, p.default ?? (cmd.format === 'hex' ? '00' : '·')]));
@@ -454,6 +458,57 @@ function CommandInspector({ id }: { id: string }) {
           edit((p) => (p.commands = (p.commands ?? []).filter((c) => c.id !== id)));
           select(null);
         }}>删除指令</button>
+      </div>
+    </>
+  );
+}
+
+
+// ───────────── 场景库 ─────────────
+
+function SceneInspector({ id }: { id: string }) {
+  const project = useStore((s) => s.project)!;
+  const scene = (project.scenes ?? []).find((c) => c.id === id)!;
+  const patch = (fn: (s: typeof scene) => void) => edit((p) => { const x = p.scenes?.find((y) => y.id === id); if (x) fn(x); });
+  const refs = sceneRefCount(project, id);
+  const [res, setRes] = useState<{ text: string; bad: boolean } | null>(null);
+
+  const test = async () => {
+    setRes({ text: '执行中…', bad: false });
+    try {
+      const r = await rpc<{ actions: number }>('runScene', { scene });
+      setRes({ text: `已执行（${r.actions} 个执行点），结果见下方日志`, bad: false });
+    } catch (e) {
+      setRes({ text: e instanceof RpcFailure ? e.message : String(e), bad: true });
+    }
+  };
+
+  return (
+    <>
+      {refs > 0 && <div className="note ok">这个场景被 {refs} 个动作使用。修改后，这些地方都会跟着变。</div>}
+      <div className="form">
+        <Field label="名称"><input value={scene.name} onChange={(e) => patch((s) => (s.name = e.target.value))} /></Field>
+        <Field label="说明"><input value={scene.note ?? ''} placeholder="（可选）" onChange={(e) => patch((s) => (s.note = e.target.value || undefined))} /></Field>
+      </div>
+      <div className="sech">场景里的动作（自成一条小时间线，延时只在场景内部生效） <span>{scene.actions.length}</span></div>
+      <div className="hint pad">可以放「使用指令」「自定义 UDP」「延时」。场景里不能再套场景，也不能放「时间线控制」。</div>
+      <ActionList inScene actions={scene.actions} onChange={(next) => patch((s) => (s.actions = next))} />
+      <div className="row" style={{ gap: 8, marginTop: 10 }}>
+        <button className="primary" onClick={test}>▶ 立即执行这个场景</button>
+        {res && <span className={`hint ${res.bad ? 'err' : 'okc'}`}>{res.text}</span>}
+      </div>
+      <div className="hint" style={{ marginTop: 4 }}>用的是当前正在编辑的内容（即使还没保存），按真实时间依次发出。</div>
+      <div className="foot">
+        <button onClick={() => {
+          const nid = genId('scene');
+          edit((p) => { const src = p.scenes!.find((c) => c.id === id)!; p.scenes!.push({ ...structuredClone(src), id: nid, name: src.name + ' 副本', actions: src.actions.map((a) => ({ ...structuredClone(a), id: genId('a') })) }); });
+          select({ kind: 'scene', id: nid });
+        }}>复制</button>
+        <button className="danger" onClick={() => {
+          if (!window.confirm(refs ? `「${scene.name}」正被 ${refs} 个动作使用，删除后这些动作会报错。仍要删除？` : `删除场景「${scene.name}」？`)) return;
+          edit((p) => (p.scenes = (p.scenes ?? []).filter((c) => c.id !== id)));
+          select(null);
+        }}>删除场景</button>
       </div>
     </>
   );

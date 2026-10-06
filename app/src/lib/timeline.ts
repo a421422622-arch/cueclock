@@ -1,5 +1,6 @@
 import type { Action, Cue, Device, Project, Timeline } from '../../../engine/src/types.ts';
 import { parseTime, DAY_MS } from '../../../engine/src/time.ts';
+import { resolveActions } from '../../../engine/src/commands.ts';
 
 export interface TargetMark {
   key: string;
@@ -17,6 +18,7 @@ export interface TargetTrack { device: Device; marks: TargetMark[] }
 /** 使用动作覆盖目标 > 指令目标，按实际设备展开标签；参数未填全时也能继续编辑。 */
 export function actionTargets(project: Project, action: Action): string[] {
   if (action.type === 'udp') return action.targets;
+  if (action.type === 'scene') return resolveActions(project, [action]).actions.flatMap((a) => (a.type === 'udp' ? a.targets : []));
   if (action.type !== 'command') return [];
   return action.targets?.length ? action.targets : (project.commands?.find((c) => c.id === action.commandId)?.targets ?? []);
 }
@@ -39,6 +41,27 @@ export function targetTracks(project: Project, timeline: Timeline): TargetTrack[
     for (const action of cue.actions) {
       if (action.type === 'delay') {
         if (action.enabled !== false) delay += Math.max(0, action.ms);
+        continue;
+      }
+      if (action.type === 'scene') {
+        // 场景：展开成它内部的各次发送，各自落到对应设备的目标轨上；重复发送合并成一个带次数的标记
+        const scene = project.scenes?.find((s) => s.id === action.sceneId);
+        const merged = new Map<string, { a: Extract<Action, { type: 'udp' }>; count: number }>();
+        for (const a of resolveActions(project, [action]).actions) {
+          if (a.type !== 'udp') continue;
+          const key = a.id.replace(/#\d+$/, '');
+          const prev = merged.get(key);
+          if (prev) prev.count++;
+          else merged.set(key, { a, count: 1 });
+        }
+        if (merged.size > 0) hasSend = true;
+        for (const [key, { a, count }] of merged) {
+          const relMs = delay + (a.offsetMs ?? 0);
+          const mark: TargetMark = { key: `${cue.id}/${key}`, cue, actionId: action.id, atMs: base + relMs, relMs,
+            label: scene ? `${scene.name}：${a.payload || '（空）'}` : '未找到场景', disabled: cue.enabled === false || action.enabled === false, pending: false, repeat: count };
+          for (const d of devicesForTargets(project, a.targets)) byId.get(d.id)!.marks.push(mark);
+        }
+        if (!scene) hasSend = true;
         continue;
       }
       if (action.type !== 'udp' && action.type !== 'command') continue;

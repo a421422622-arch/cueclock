@@ -76,3 +76,42 @@ test('历史有长度上限，切换项目清空历史', () => {
   assert.equal(h.canUndo, false);
   assert.equal(h.canRedo, false);
 });
+
+import { cueDevices as _cueDevices } from '../src/lib/timeline.ts';
+import { allActions, sceneRefCount } from '../src/lib/usage.ts';
+
+test('场景：目标轨按场景内部各次发送落到对应设备和时刻；重复发送合并为一个带次数的标记', () => {
+  const project = {
+    name: 'p', groups: [], triggers: [],
+    devices: [
+      { id: 'L', name: '灯', ip: '10.0.0.1', port: 1 },
+      { id: 'P', name: '投影', ip: '10.0.0.2', port: 2 },
+    ],
+    scenes: [{ id: 'sc', name: '开馆', actions: [
+      { id: 'a', type: 'udp', targets: ['L'], format: 'ascii', payload: 'LIGHT', repeat: 3, repeatGapMs: 100 },
+      { id: 'd', type: 'delay', ms: 2000 },
+      { id: 'b', type: 'udp', targets: ['P'], format: 'ascii', payload: 'PROJ' },
+    ] }],
+    timelines: [{ id: 't', name: 't', cues: [{ id: 'c', name: '开馆', time: '09:00', actions: [{ id: 's', type: 'scene', sceneId: 'sc', offsetMs: 500 }] }] }],
+  } as unknown as Parameters<typeof targetTracks>[0];
+  const tracks = targetTracks(project, project.timelines[0]!);
+  const L = tracks.find((t) => t.device.id === 'L')!.marks;
+  const P = tracks.find((t) => t.device.id === 'P')!.marks;
+  assert.equal(L.length, 1, '3 次重复合并成 1 个标记');
+  assert.equal(L[0]!.repeat, 3);
+  assert.equal(L[0]!.atMs, 9 * 3600_000 + 500);
+  assert.equal(L[0]!.label, '开馆：LIGHT');
+  assert.equal(P[0]!.atMs, 9 * 3600_000 + 2500, '场景内 2 秒延时 + 整体偏移 500ms');
+  assert.deepEqual(_cueDevices(project, project.timelines[0]!.cues[0]!).map((d) => d.id).sort(), ['L', 'P']);
+});
+
+test('用法统计：场景里的动作也算引用；场景被引用次数正确', () => {
+  const project = {
+    name: 'p', groups: [], devices: [], triggers: [{ id: 'tr', actions: [{ id: 'x', type: 'scene', sceneId: 'sc' }] }],
+    scenes: [{ id: 'sc', name: 's', actions: [{ id: 'i', type: 'command', commandId: 'c' }] }],
+    timelines: [{ id: 't', cues: [{ id: 'c', actions: [{ id: 'y', type: 'scene', sceneId: 'sc' }] }] }],
+  } as unknown as Parameters<typeof allActions>[0];
+  assert.equal(allActions(project).length, 3);
+  assert.equal(sceneRefCount(project, 'sc'), 2);
+  assert.equal(sceneRefCount(project, 'none'), 0);
+});

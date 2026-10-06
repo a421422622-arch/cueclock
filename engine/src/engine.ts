@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import type { Action, Command, Device, Project, UdpAction } from './types.ts';
+import type { Action, Command, Device, Project, Scene, UdpAction } from './types.ts';
 import { resolveActions, resolveCommandAction } from './commands.ts';
 import { RealClock } from './clock.ts';
 import type { Clock } from './clock.ts';
@@ -653,6 +653,27 @@ export class Engine extends EventEmitter {
     this.log({ dir: 'SYS', result: 'info', source, detail: '手动立即执行' });
     this.spawn(this.runActionList([r.action], this.clock.now(), source, true), '手动执行指令');
     return expandActions([r.action]).length;
+  }
+
+  /** 立即执行一个场景（可以是尚未保存的草稿）。返回展开后的执行点个数。 */
+  runSceneNow(scene: Scene): number {
+    if (!this.running) throw new Error('引擎未运行');
+    const draft: Project = { ...this.project, scenes: [...(this.project.scenes ?? []).filter((s) => s.id !== scene.id), scene] };
+    const r = resolveActions(draft, [{ id: '__scene', type: 'scene', sceneId: scene.id }]);
+    if (r.errors.length > 0) throw new Error(r.errors.join('；'));
+    // 代入参数后的最终内容要当场检查（HEX 位数、转义错误等），别等到后台发送时才悄悄记一条日志
+    for (const a of r.actions) {
+      if (a.type !== 'udp') continue;
+      try {
+        buildPayload(a.format, a.payload, a.terminator);
+      } catch (err) {
+        throw new Error(`发送内容无效：${(err as Error).message}`);
+      }
+    }
+    const source = `手动·场景「${scene.name}」`;
+    this.log({ dir: 'SYS', result: 'info', source, detail: '手动立即执行' });
+    this.spawn(this.runActionList(r.actions, this.clock.now(), source, true), '手动执行场景');
+    return expandActions(r.actions).length;
   }
 
   /** 接下来的 n 个事件点（今天剩余 + 之后几天）。 */

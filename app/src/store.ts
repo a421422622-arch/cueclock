@@ -21,6 +21,7 @@ export type Selection =
   | { kind: 'device'; id: string }
   | { kind: 'trigger'; id: string }
   | { kind: 'command'; id: string }
+  | { kind: 'scene'; id: string }
   | null;
 
 export type View = 'timeline' | 'calendar';

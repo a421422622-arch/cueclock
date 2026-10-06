@@ -215,6 +215,12 @@ export function validateProject(p: Project): Issue[] {
   return issues;
 }
 
+/** 单个场景的检查（界面里试执行一个尚未保存的草稿场景时用）。 */
+export function validateScene(p: Project, scene: Scene): Issue[] {
+  const draft: Project = { ...p, scenes: [...(p.scenes ?? []).filter((s) => s.id !== scene.id), scene] };
+  return validateProject(draft).filter((i) => i.path === `scenes/${scene.id}` || i.path.startsWith(`scenes/${scene.id}/`));
+}
+
 /** 单条指令的检查（界面里测试发送一条尚未保存的草稿指令时用）。 */
 export function validateCommand(p: Project, cmd: Command): Issue[] {
   const draft: Project = { ...p, commands: [...(p.commands ?? []).filter((c) => c.id !== cmd.id), cmd] };

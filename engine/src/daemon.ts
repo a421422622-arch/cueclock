@@ -3,11 +3,11 @@ import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { Command, Project } from './types.ts';
+import type { Command, Project, Scene } from './types.ts';
 import { Engine } from './engine.ts';
 import type { LogEntry } from './engine.ts';
 import { ProjectStore, normalizeProject } from './store.ts';
-import { validateCommand, validateProject } from './validate.ts';
+import { validateCommand, validateProject, validateScene } from './validate.ts';
 import { simulateDays } from './simulate.ts';
 import { attachFileLogger } from './logfile.ts';
 import { defaultStateDir } from './paths.ts';
@@ -494,6 +494,20 @@ export class Daemon {
         const args = p.args === undefined ? undefined : (obj(p.args, 'args') as Record<string, string>);
         try {
           return { actions: this.needEngine().runCommandNow(cmd, args) };
+        } catch (e) {
+          if (e instanceof RpcError) throw e;
+          throw new RpcError('bad-request', (e as Error).message);
+        }
+      }
+
+      case 'runScene': {
+        const p = obj(params);
+        const scene = (p.scene !== undefined ? p.scene : this.project!.scenes?.find((s) => s.id === String(p.sceneId))) as Scene | undefined;
+        if (!scene || typeof scene !== 'object' || !Array.isArray(scene.actions)) throw new RpcError('not-found', `找不到场景 ${String(p.sceneId)}`);
+        const bad = validateScene(this.project!, scene).filter((i) => i.level === 'error');
+        if (bad.length > 0) throw new RpcError('bad-request', bad.map((i) => i.message).join('；'), bad);
+        try {
+          return { actions: this.needEngine().runSceneNow(scene) };
         } catch (e) {
           if (e instanceof RpcError) throw e;
           throw new RpcError('bad-request', (e as Error).message);

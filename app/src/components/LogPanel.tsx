@@ -104,6 +104,7 @@ function Issues() {
     else if (kind === 'triggers' && a) select({ kind: 'trigger', id: a });
     else if (kind === 'groups' && a) select({ kind: 'group', id: a });
     else if (kind === 'commands' && a) select({ kind: 'command', id: a });
+    else if (kind === 'scenes' && a) select({ kind: 'scene', id: a });
     else if (kind === 'timelines' && a) select(b ? { kind: 'cue', timelineId: a, cueId: b } : { kind: 'timeline', id: a });
   };
   return (

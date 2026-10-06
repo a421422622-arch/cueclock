@@ -150,3 +150,29 @@ test('端到端：触发器收到真实 UDP 包后执行场景（场景内延时
   assert.ok(Date.now() - t0 >= 140, '第二个包应在约 150ms 之后');
   s.close(); await e.stop(); await dev.close();
 });
+
+import os from 'node:os';
+import path from 'node:path';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { Daemon } from '../src/daemon.ts';
+import { DaemonClient } from '../src/client.ts';
+
+test('daemon runScene：立即执行未保存的草稿场景；内容有误/找不到时返回明确错误', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'cueclock-scene-'));
+  const dev = await fakeDevice();
+  const file = path.join(dir, 'p.json');
+  await writeFile(file, JSON.stringify({ ...project([]), devices: [{ id: 'D', name: 'd', ip: '127.0.0.1', port: dev.port }], settings: { localAddress: '127.0.0.1' } }));
+  const d = new Daemon({ projectFile: file, stateDir: path.join(dir, 'state'), port: 0 });
+  await d.start();
+  const c = DaemonClient.forStateDir(path.join(dir, 'state'));
+  await c.connect();
+  t.after(async () => { c.close(); await d.stop(); await dev.close(); await rm(dir, { recursive: true, force: true }); });
+
+  const draft: Scene = { id: 'draft', name: '草稿', actions: [udp('a', 'ONE', { targets: ['D'] }), { id: 'd', type: 'delay', ms: 100 }, udp('b', 'TWO', { targets: ['D'] })] };
+  assert.deepEqual(await c.request('runScene', { scene: draft }), { actions: 2 });
+  await waitFor(() => dev.received.length === 2, 3000, '草稿场景的两个包');
+  assert.deepEqual(dev.received.map((b) => b.toString()), ['ONE', 'TWO']);
+  await assert.rejects(c.request('runScene', { scene: { ...draft, actions: [udp('x', 'X', { targets: ['NOPE'] })] } }), { code: 'bad-request' });
+  await assert.rejects(c.request('runScene', { scene: { ...draft, actions: [{ id: 'n', type: 'scene', sceneId: 'draft' }] } }), { code: 'bad-request' });
+  await assert.rejects(c.request('runScene', { sceneId: 'not-saved' }), { code: 'not-found' });
+});
