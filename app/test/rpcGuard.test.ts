@@ -1,9 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { isBlockedByVersion } from '../electron/rpcGuard.ts';
-import { assessEngine, ENGINE_VERSION } from '../../engine/src/version.ts';
+import { assessEngine, engineHello, ENGINE_VERSION } from '../../engine/src/version.ts';
 
-const sameProtocolOldBuild = assessEngine({ protocol: 2, engineVersion: ENGINE_VERSION, engineBuild: 'older-build' });
+const sameProtocolOldBuild = assessEngine({ ...engineHello(), engineBuild: 'older-build' });
 const oldProtocol = assessEngine({ protocol: 1 });
 
 test('协议兼容、仅构建不同：写操作照常放行（现场有日程在跑时不能连保存都不行）', () => {
@@ -33,4 +33,11 @@ test('同协议但功能版本过旧：不能把接管或顺序场景配置交�
   assert.equal(isBlockedByVersion('saveProject', old), true);
   assert.equal(isBlockedByVersion('setDeviceOverride', old), true);
   assert.equal(isBlockedByVersion('pause', old), false);
+});
+
+test('版本号相同但缺少所需能力：仍然提示更新并拒绝新配置写入', () => {
+  const partial = assessEngine({ ...engineHello(), capabilities: ['operation-status'] });
+  assert.equal(partial.compatible, false);
+  assert.equal(partial.needsRestart, true);
+  assert.equal(isBlockedByVersion('applyProject', partial), true);
 });

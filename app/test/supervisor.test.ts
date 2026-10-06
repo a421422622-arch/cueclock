@@ -5,11 +5,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { Supervisor } from '../electron/supervisor.ts';
-import { assessEngine, ENGINE_BUILD, ENGINE_VERSION } from '../../engine/src/version.ts';
+import { assessEngine, engineHello } from '../../engine/src/version.ts';
 
 test('同版本号但构建不同仍提示更新，精确相同构建才算修复已加载', () => {
-  assert.equal(assessEngine({ protocol: 2, engineVersion: ENGINE_VERSION, engineBuild: ENGINE_BUILD }).needsRestart, false);
-  assert.equal(assessEngine({ protocol: 2, engineVersion: ENGINE_VERSION, engineBuild: 'other-build' }).needsRestart, true);
+  assert.equal(assessEngine(engineHello()).needsRestart, false);
+  assert.equal(assessEngine({ ...engineHello(), engineBuild: 'other-build' }).needsRestart, true);
   assert.equal(assessEngine({ protocol: 1 }).needsRestart, true);
 });
 

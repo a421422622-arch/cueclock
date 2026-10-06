@@ -24,6 +24,7 @@ export interface EventMessage {
 }
 
 export type ErrorCode =
+  | 'settings-write-failed'
   | 'bad-request'
   | 'locked'
   | 'bad-password'

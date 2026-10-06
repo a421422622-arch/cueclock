@@ -12,7 +12,8 @@
     "build": "vite build && node scripts/build-electron.mjs",
     "start": "npm run build && electron .",
     "typecheck": "tsc --noEmit",
-    "test": "node --test \"test/*.test.ts\""
+    "test": "node --test \"test/*.test.ts\"",
+    "verify:isolated": "node scripts/verify-isolated.mjs"
   },
   "devDependencies": {
     "@types/node": "^24.19.1",

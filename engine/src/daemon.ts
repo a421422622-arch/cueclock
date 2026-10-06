@@ -1,9 +1,10 @@
 import net from 'node:net';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Command, Device, Project, Scene } from './types.ts';
+import { SleepGuard } from './sleepguard.ts';
 import { configurationChanges } from './configuration.ts';
 import { Engine } from './engine.ts';
 import type { LogEntry } from './engine.ts';
@@ -48,6 +49,7 @@ export interface DaemonSettings {
   network?: NetworkSettings;
   /** 急停状态。急停是安全开关，引擎重启（崩溃、断电）后必须保持，不能悄悄恢复调度 */
   paused?: boolean;
+  preventSleep?: boolean;
   /** 编辑锁的密码记录（加盐哈希）。机器级，不进配置文件 */
   lock?: LockRecord;
   /** 面板按钮的亮灯状态，按配置文件区分：{ 配置文件路径: { '面板id/按钮id': 是否亮 } } */
@@ -83,8 +85,11 @@ export class Daemon {
   private store: ProjectStore | null = null;
   private notice: string | null = null;
   private settings: DaemonSettings = { recent: [] };
+  private sleepGuard = new SleepGuard(process.platform, process.pid, undefined, (message) => this.recordAlert({ dir: 'SYS', result: 'error', detail: `后台防休眠失败：${message}`, alert: { code: 'internal-error', level: 'error' } }));
   private project: Project | null = null;
   private rev = 0;
+  private instanceId = randomBytes(12).toString('hex');
+  private settingsWrites: Promise<void> = Promise.resolve();
   private engine: Engine | null = null;
   private startError: string | null = null;
   private server: net.Server | null = null;
@@ -131,6 +136,7 @@ export class Daemon {
         recent: Array.isArray(raw.recent) ? raw.recent.filter((x): x is string => typeof x === 'string') : [],
         network,
         paused: raw.paused === true,
+        preventSleep: raw.preventSleep === true,
         overrides: raw.overrides && typeof raw.overrides === 'object' && !Array.isArray(raw.overrides) ? raw.overrides : undefined,
         lock: isLockRecord(raw.lock) ? raw.lock : undefined,
         padState: typeof raw.padState === 'object' && raw.padState !== null && !Array.isArray(raw.padState) ? (raw.padState as Record<string, Record<string, boolean | number>>) : undefined,
@@ -150,11 +156,20 @@ export class Daemon {
     await this.persistSettings();
   }
 
-  private async persistSettings(): Promise<void> {
-    try {
-      await writeFile(this.settingsFile, JSON.stringify(this.settings, null, 2));
-    } catch {
-      /* 状态目录不可写时只是不记住 */
+  private async persistSettings(required = false): Promise<void> {
+    const snapshot = JSON.stringify(this.settings, null, 2);
+    const run = this.settingsWrites.then(async () => {
+      const temporary = `${this.settingsFile}.${randomBytes(8).toString('hex')}.tmp`;
+      try {
+        await writeFile(temporary, snapshot, { mode: 0o600, flag: 'wx' });
+        await rename(temporary, this.settingsFile);
+      } finally { await rm(temporary, { force: true }).catch(() => {}); }
+    });
+    this.settingsWrites = run.catch(() => {});
+    try { await run; }
+    catch (e) {
+      this.recordAlert({ dir: 'SYS', result: 'error', detail: `机器设置保存失败：${(e as Error).message}`, alert: { code: 'internal-error', level: 'error' } });
+      if (required) throw new RpcError('settings-write-failed', `机器设置保存失败：${(e as Error).message}`);
     }
   }
 
@@ -222,11 +237,13 @@ export class Daemon {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.sleepGuard.set(false);
     this.clearRetry();
     for (const c of this.conns) c.socket.destroy();
     this.conns.clear();
     await new Promise<void>((r) => (this.server ? this.server.close(() => r()) : r()));
     await this.engine?.stop();
+    await this.settingsWrites;
     this.detachFileLog?.();
     // 只删自己写的 daemon.json
     try {
@@ -238,11 +255,6 @@ export class Daemon {
   }
 
   // ───────────── 引擎生命周期 ─────────────
-
-  private async persistPaused(): Promise<void> {
-    this.settings = { ...this.settings, paused: this.pausedBeforeStart };
-    await this.persistSettings();
-  }
 
   private get logsDir(): string {
     return path.join(this.stateDir, 'logs');
@@ -283,6 +295,7 @@ export class Daemon {
     });
     try {
       await engine.start();
+      if (this.sleepGuard.supported) this.sleepGuard.set(this.settings.preventSleep === true);
     } catch (e) {
       this.engine = null;
       const err = e as Error & { bindFailure?: boolean };
@@ -333,7 +346,7 @@ export class Daemon {
     return {
       ...engineHello(),
       lock: { enabled: !!this.settings.lock },
-      daemon: { pid: process.pid, projectFile: this.store!.file, rev: this.rev, startError: this.startError, notice: this.notice },
+      daemon: { pid: process.pid, projectFile: this.store!.file, rev: this.rev, instanceId: this.instanceId, startError: this.startError, notice: this.notice },
       network: this.networkInfo(),
       engine: this.engine?.status() ?? null,
     };
@@ -510,7 +523,7 @@ export class Daemon {
         return this.statusPayload();
 
       case 'getProject':
-        return { project: this.project, rev: this.rev, file: this.store!.file };
+        return { project: this.project, rev: this.rev, instanceId: this.instanceId, file: this.store!.file };
 
       case 'validateProject': {
         const p = obj(params);
@@ -521,12 +534,15 @@ export class Daemon {
         const p = obj(params);
         const project = this.parseProject(p.project);
         if (p.baseRev !== this.rev) throw new RpcError('conflict', '运行配置已变化，请重新加载后再预览');
-        return { rev: this.rev, changes: configurationChanges(this.project!, project), issues: validateProject(project) };
+        return { rev: this.rev, instanceId: this.instanceId, changes: configurationChanges(this.project!, project), issues: validateProject(project) };
       }
 
       case 'applyProject': {
         const p = obj(params);
-        return this.serialize(() => this.saveProject({ ...p, forceBackup: true }));
+        return this.serialize(() => {
+          if (p.instanceId !== this.instanceId) throw new RpcError('conflict', '引擎已重启，旧预览已失效，请重新检查运行配置');
+          return this.saveProject({ ...p, forceBackup: true });
+        });
       }
 
       case 'saveProject': {
@@ -549,6 +565,22 @@ export class Daemon {
           throw new RpcError('bad-request', (e as Error).message);
         }
         return this.serialize(() => this.setNetwork(net));
+      }
+
+      case 'getRuntimeOptions':
+        return { preventSleep: this.settings.preventSleep === true, sleepSupported: this.sleepGuard.supported, sleepActive: this.sleepGuard.active };
+
+      case 'setRuntimeOptions': {
+        const p = obj(params);
+        if (typeof p.preventSleep !== 'boolean') throw new RpcError('bad-request', 'preventSleep 必须是布尔值');
+        if (p.preventSleep && !this.sleepGuard.supported) throw new RpcError('bad-request', '当前系统不支持后台引擎防休眠');
+        const preventSleep = p.preventSleep;
+        return this.serialize(async () => {
+          this.sleepGuard.set(preventSleep && !!this.engine);
+          this.settings = { ...this.settings, preventSleep };
+          await this.persistSettings();
+          return { preventSleep, sleepSupported: this.sleepGuard.supported, sleepActive: this.sleepGuard.active };
+        });
       }
 
       case 'getSettings':
@@ -582,18 +614,27 @@ export class Daemon {
       }
 
       case 'pause':
-        this.pausedBeforeStart = true;
-        await this.persistPaused();
-        this.engine?.pause();
-        this.broadcast({ event: 'status', data: this.statusPayload() });
-        return { paused: true };
+        return this.serialize(async () => {
+          this.pausedBeforeStart = true;
+          this.settings = { ...this.settings, paused: true };
+          this.engine?.pause(); // 先立即暂停，磁盘故障也不能继续自动执行。
+          this.broadcast({ event: 'status', data: this.statusPayload() });
+          try { await this.persistSettings(true); }
+          catch (e) { throw new RpcError('settings-write-failed', `暂停已生效，但重启持久化失败：${(e as Error).message}`); }
+          return { paused: true };
+        });
 
       case 'resume':
-        this.pausedBeforeStart = false;
-        await this.persistPaused();
-        this.engine?.resume();
-        this.broadcast({ event: 'status', data: this.statusPayload() });
-        return { paused: false };
+        return this.serialize(async () => {
+          const previous = this.pausedBeforeStart;
+          this.pausedBeforeStart = false;
+          this.settings = { ...this.settings, paused: false };
+          try { await this.persistSettings(true); }
+          catch (e) { this.pausedBeforeStart = previous; this.settings = { ...this.settings, paused: previous }; throw e; }
+          this.engine?.resume();
+          this.broadcast({ event: 'status', data: this.statusPayload() });
+          return { paused: false };
+        });
 
       case 'testSend': {
         const p = obj(params);
@@ -645,19 +686,24 @@ export class Daemon {
       case 'setDeviceOverride': {
         const p = obj(params);
         if (typeof p.deviceId !== 'string' || (p.durationMs !== null && typeof p.durationMs !== 'number')) throw new RpcError('bad-request', '缺少设备或接管期限');
-        try { this.needEngine().setDeviceOverride(p.deviceId, p.durationMs as number | null); }
-        catch (e) { throw new RpcError('bad-request', (e as Error).message); }
-        return { ok: true };
+        return this.serialize(async () => {
+          try { this.needEngine().setDeviceOverride(p.deviceId as string, p.durationMs as number | null); }
+          catch (e) { throw new RpcError('bad-request', (e as Error).message); }
+          await this.persistSettings(true);
+          return { ok: true };
+        });
       }
 
       case 'runPadTile': {
         const p = obj(params);
         if (typeof p.padId !== 'string' || typeof p.tileId !== 'string') throw new RpcError('bad-request', '缺少 padId / tileId');
         try {
-          return this.needEngine().runPadTile(p.padId, p.tileId, typeof p.to === 'boolean' ? p.to : undefined, {
+          const result = this.needEngine().runPadTile(p.padId, p.tileId, typeof p.to === 'boolean' ? p.to : undefined, {
             value: typeof p.value === 'number' ? p.value : undefined,
             final: typeof p.final === 'boolean' ? p.final : undefined,
           });
+          if (!result.ignored && p.final !== false) await this.persistSettings(true);
+          return result;
         } catch (e) {
           if (e instanceof RpcError) throw e;
           throw new RpcError((e as { notFound?: boolean }).notFound ? 'not-found' : 'bad-request', (e as Error).message);

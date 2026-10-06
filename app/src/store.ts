@@ -9,7 +9,7 @@ import { normalizeEngineStatus } from './lib/status.ts';
 
 export interface DaemonStatus {
   protocol: number;
-  daemon: { pid: number; projectFile: string; rev: number; startError: string | null; notice: string | null };
+  daemon: { instanceId?: string; pid: number; projectFile: string; rev: number; startError: string | null; notice: string | null };
   engine: EngineStatus | null;
   lock?: { enabled: boolean };
   network?: { settings: { localAddresses?: string[]; localPort?: number; listenAll?: boolean }; source: string; missing: string[]; available: boolean };
@@ -42,7 +42,7 @@ export interface AppState {
   rev: number;
   saveState: SaveState;
   issues: Issue[];
-  applyPreview: { project: Project; rev: number; version: number; changes: string[]; issues: Issue[] } | null;
+  applyPreview: { project: Project; instanceId: string; rev: number; version: number; changes: string[]; issues: Issue[] } | null;
   logs: LogEntry[];
   sel: Selection;
   modeId: string | null;
@@ -152,7 +152,7 @@ function writeDraft(): void {
     if (state.project) localStorage.setItem(draftKey(), JSON.stringify({ at: Date.now(), project: state.project }));
   } catch {
     set({ saveState: 'error' });
-    toast('本机草稿保存失败，请保持窗口打开并尽快检查应用或导出配置');
+    toast('本机草稿保存失败，请保持窗口打开，检查并应用后再关闭');
   }
 }
 function clearDraft(): void {
@@ -205,9 +205,10 @@ function denyLocked(): void {
 function applyStatus(st: DaemonStatus): void {
   // 引擎状态里带着「是否设了密码」；密码被移除时本连接自然变成已解锁
   if (st.lock && st.lock.enabled !== state.lock.enabled) set({ lock: { enabled: st.lock.enabled, unlocked: st.lock.enabled ? state.lock.unlocked : true } });
+  const changedInstance = !!state.status?.daemon.instanceId && !!st.daemon.instanceId && state.status.daemon.instanceId !== st.daemon.instanceId;
   const now = st.engine?.now;
   set({ status: { ...st, engine: normalizeEngineStatus(st.engine) }, ...(now ? { clockOffset: now - Date.now() } : {}) });
-  if (state.loaded && st.daemon.rev !== state.rev && !inflight && !runtimeFetching) {
+  if (state.loaded && (st.daemon.rev !== state.rev || changedInstance) && !inflight && !runtimeFetching) {
     runtimeFetching = true;
     const session = projectSession;
     if (editVersion !== savedVersion) set({ saveState: 'conflict' });
@@ -326,7 +327,7 @@ export async function prepareApply(): Promise<void> {
   if (!state.project || state.conn !== 'connected') { toast('请先连接引擎'); return; }
   const project = structuredClone(state.project), version = editVersion, session = projectSession;
   try {
-    const r = await transport.request<{ rev: number; changes: string[]; issues: Issue[] }>('previewProject', { project, baseRev: state.rev });
+    const r = await transport.request<{ instanceId: string; rev: number; changes: string[]; issues: Issue[] }>('previewProject', { project, baseRev: state.rev });
     if (session === projectSession) set({ applyPreview: { ...r, project, version }, issues: r.issues });
   } catch (e) {
     if (e instanceof RpcFailure && e.code === 'conflict') set({ saveState: 'conflict' });
@@ -340,7 +341,7 @@ export async function applyConfiguration(): Promise<void> {
   const preview = state.applyPreview, session = projectSession;
   inflight = true; set({ saveState: 'saving' });
   try {
-    const r = await transport.request<{ rev: number; warnings: Issue[] }>('applyProject', { project: preview.project, baseRev: preview.rev });
+    const r = await transport.request<{ rev: number; warnings: Issue[] }>('applyProject', { project: preview.project, baseRev: preview.rev, instanceId: preview.instanceId });
     if (session !== projectSession) return;
     savedVersion = preview.version;
     const clean = editVersion === savedVersion;

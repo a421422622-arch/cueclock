@@ -111,3 +111,41 @@ test('状态回读后又发出新控制指令：旧回读立即标为过期，�
   await waitFor(() => e.status().devices[0]?.lastCommand?.source.includes('开机') === true);
   assert.equal(e.status().devices[0]!.feedback?.stale, true);
 });
+
+test('总览下一事件：临时禁用模式不显示今日事件，午夜恢复后仍显示明日事件', async (t) => {
+  const p = project([{ id: 'tl', name: '目标', cues: [{ id: 'c', name: 'c', time: '09:00:01', actions: [udp('a', 'A')] }] },
+    { id: 'ctl', name: '控制', enabled: false, cues: [{ id: 'off', name: 'off', time: '08:00', actions: [{ id: 'disable', type: 'timeline', op: 'disable', target: 'tl', until: 'midnight' }] }] }]);
+  const e = new Engine(p, { clock: new VirtualClock(base), transport: new RecordingTransport() }); await e.start(); t.after(() => e.stop());
+  e.runCueNow('ctl', 'off'); await new Promise((r) => setImmediate(r));
+  assert.equal(e.upcoming()[0]?.date, '2026-10-07');
+});
+
+test('被新状态压过的旧恢复动作跳过后，不得把最后操作改成永远等待的旧恢复', async (t) => {
+  const p = project([{ id: 'tl', name: 'tl', cues: [
+    { id: 'old', name: '旧状态', time: '08:00', actions: [udp('old', 'OLD', { chase: true })] },
+    { id: 'new', name: '新状态', time: '09:00:02', actions: [udp('new', 'NEW')] },
+  ] }], { settings: { recovery: { delayMs: 3000 } } });
+  const clock = new VirtualClock(base), tr = new RecordingTransport();
+  const e = new Engine(p, { clock, transport: tr }); await e.start(); t.after(() => e.stop());
+  await clock.advanceTo(base + 4000);
+  assert.deepEqual(tr.sent.map((s) => s.text), ['NEW']);
+  assert.equal(e.status().devices[0]!.lastCommand?.result, 'sent');
+  assert.match(e.status().devices[0]!.lastCommand?.source ?? '', /新状态/);
+});
+
+test('以暂停状态启动不排队断电恢复；恢复自动后也不放出那批启动补发', async (t) => {
+  const p = project([{ id: 'tl', name: 'tl', cues: [{ id: 'old', name: 'old', time: '08:00', actions: [udp('old', 'OLD', { chase: true })] }] }], { settings: { recovery: { delayMs: 5000 } } });
+  const clock = new VirtualClock(base), tr = new RecordingTransport();
+  const e = new Engine(p, { clock, transport: tr, startPaused: true }); await e.start(); t.after(() => e.stop());
+  await clock.advanceTo(base + 1000); e.resume(); await clock.advanceTo(base + 6000);
+  assert.deepEqual(tr.sent, []);
+});
+
+test('状态来源真实：配置Ping但最后证据来自指令回包，不能把ACK标成Ping成功', async (t) => {
+  const p = project([]); p.devices[0]!.health = { mode: 'ping' };
+  const tr = new RecordingTransport(); tr.replies = [{ status: 'confirmed', reply: Buffer.from('POWER=ON') }];
+  const e = new Engine(p, { clock: new VirtualClock(base), transport: tr, pinger: async () => ({ ok: false }) }); await e.start(); t.after(() => e.stop());
+  e.runCommandNow({ id: 'c', name: '开机', targets: ['D1'], format: 'ascii', payload: 'ON', reply });
+  await waitFor(() => e.logs.some((l) => l.result === 'confirmed'));
+  assert.equal(e.status().devices[0]!.method, 'reply');
+});

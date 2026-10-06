@@ -41,6 +41,7 @@ export function SettingsDialog() {
             <EngineVersionSection />
             <NetworkSection />
             <StartupSection />
+            <RuntimeSection />
             <LockSection />
             <ExitSection />
           </div>
@@ -213,10 +214,28 @@ function StartupSection() {
           <Field label="后台常驻" hint="关闭窗口后界面继续留在托盘/菜单栏，引擎无论如何都在后台独立运行">
             <Check checked={st.keepInTray} onChange={(v) => void appBridge!.appAction('setKeepInTray', v)} label={`关闭窗口后留在${st.isMac ? '菜单栏' : '托盘'}`} />
           </Field>
+          <Field label="登录守护" hint="macOS：下次登录后，软件异常退出由系统重新拉起；正常退出不拉起。崩溃重试间隔至少10秒。">
+            <Check checked={st.guardAtLogin === true} disabled={!st.isMac || !st.launchAtLogin} label="异常退出自动拉起（下次登录生效）" onChange={(v) => void appBridge!.appAction('setGuardAtLogin', v).catch((e) => toast((e as Error).message))} />
+            {!st.isMac && <span className="hint">其他系统的系统守护尚未实现。</span>}
+          </Field>
         </div>
       )}
     </>
   );
+}
+
+function RuntimeSection() {
+  const [options, setOptions] = useState<{ preventSleep: boolean; sleepSupported: boolean; sleepActive: boolean } | null>(null);
+  const [error, setError] = useState('');
+  useEffect(() => { void rpc<typeof options>('getRuntimeOptions').then(setOptions).catch((e) => setError((e as Error).message)); }, []);
+  return <>
+    <div className="sech">无人值守运行</div>
+    <div className="form wide"><Field label="防止休眠" hint="macOS后台引擎运行时阻止系统空闲休眠。显示器仍可休眠；合盖、手动休眠、断电不受此选项保证。">
+      <Check checked={options?.preventSleep === true} disabled={!options?.sleepSupported} label="引擎运行时防止空闲休眠" onChange={(on) => void rpc<NonNullable<typeof options>>('setRuntimeOptions', { preventSleep: on }).then((r) => { setOptions(r); setError(''); }).catch((e) => setError((e as Error).message))} />
+      {options && <div className="hint">{!options.sleepSupported ? '当前系统不支持后台引擎防休眠。' : options.sleepActive ? '当前后台防休眠进程已启动。' : '当前未开启后台防休眠。'}</div>}
+      {error && <span className="err hint">{error}</span>}
+    </Field></div>
+  </>;
 }
 
 

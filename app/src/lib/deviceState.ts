@@ -35,8 +35,8 @@ export function describeDeviceState(info: DeviceHealthInfo | undefined, enabled:
     case 'online':
       return { light: 'on', label: m, title: `在线 · ${m}${last}${rtt}（${METHOD_NOTE[info.method]}）` };
     case 'failing':
-      return { light: 'warn', label: `${m} 异常`, title: `${m} 已连续失败 ${info.fails} 次${last}，尚未判定离线` };
+      return { light: 'warn', label: `${m} 异常`, title: `检测/回包累计连续失败 ${info.fails} 次${last}，最新来源 ${m}，尚未判定离线` };
     default:
-      return { light: 'off', label: `${m} 离线`, title: `离线 · ${m} 连续失败 ${info.fails} 次${last}` };
+      return { light: 'off', label: `${m} 离线`, title: `判定离线 · 检测/回包累计连续失败 ${info.fails} 次${last}，最新来源 ${m}` };
   }
 }

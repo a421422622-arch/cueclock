@@ -124,7 +124,7 @@ export interface UpcomingCue {
 
 export type DeviceState = 'unknown' | 'online' | 'failing' | 'offline';
 
-/** 设备在线状态（给界面的状态灯用）。method：检测方式；reply = 没配检测，但动作的回包校验提供了信息。 */
+/** 设备在线状态（给界面的状态灯用）。method：最近一次证据来源；尚无结果时显示配置的检测方式。 */
 export interface DeviceHealthInfo {
   id: string;
   state: DeviceState;
@@ -851,6 +851,7 @@ export class Engine extends EventEmitter {
   }
 
   private startRecovery(now: number): void {
+    if (this.pausedFlag) return; // 暂停启动不排队旧补发，之后恢复自动也不能把这批动作放出来。
     const rec = this.project.settings?.recovery;
     if (rec?.enabled === false) return;
     // 被动作「临时禁用」的时间线，唤醒后也不能补它的状态
@@ -997,7 +998,6 @@ export class Engine extends EventEmitter {
       if (!ctx.signal?.aborted && device.id !== '__test' && order >= (this.commands.get(device.id)?.order ?? 0)) this.commands.set(device.id, { at: this.clock.now(), result, source: base.source, order });
     };
     const dry = this.opts.dryRun === true;
-    if (!dry) record('pending');
     if (ctx.recoveryAt !== undefined && (this.latestDispatch.get(device.id) ?? -Infinity) > ctx.recoveryAt) {
       this.log({ ...base, result: 'skipped', detail: `设备「${device.name}」已执行更新的状态，跳过旧恢复动作` });
       return 'skipped';
@@ -1007,6 +1007,7 @@ export class Engine extends EventEmitter {
       this.latestDispatch.set(device.id, Math.max(this.latestDispatch.get(device.id) ?? -Infinity, stateAt));
     }
 
+    if (!dry) record('pending');
     if (!action.reply) {
       try {
         await transport.send(device.ip, port, buf, { from: action.sendFrom });
@@ -1168,6 +1169,8 @@ export class Engine extends EventEmitter {
         if (seen.has(key)) continue;
         seen.add(key);
         const epoch = midnight + it.cueAtMs;
+        const until = this.runtimeDisabled.get(it.timelineId);
+        if (this.runtimeDisabled.has(it.timelineId) && (until === null || epoch < (until ?? 0))) continue;
         if (epoch <= now) continue;
         out.push({ epoch, date, time: formatTime(it.cueAtMs), timelineId: it.timelineId, timelineName: it.timelineName, cueId: it.cueId, cueName: it.cueName });
       }
@@ -1190,7 +1193,7 @@ export class Engine extends EventEmitter {
       const override = this.activeOverride(d.id);
       return { ...(command ? { lastCommand: { at: command.at, result: command.result, source: command.source } } : {}),
         ...(feedback ? { feedback: { at: feedback.at, values: feedback.values, stale: now - feedback.at >= (d.feedback?.staleMs ?? 60000) || (command?.order ?? 0) > feedback.order } } : {}),
-        ...(override ? { override } : {}), id: d.id, state, method: configured ?? h?.method ?? null, fails: h?.fails ?? 0, lastCheckAt: h?.lastCheckAt ?? null, lastOkAt: h?.lastOkAt ?? null, ...(h?.rttMs !== undefined ? { rttMs: h.rttMs } : {}) };
+        ...(override ? { override } : {}), id: d.id, state, method: h?.method ?? configured, fails: h?.fails ?? 0, lastCheckAt: h?.lastCheckAt ?? null, lastOkAt: h?.lastOkAt ?? null, ...(h?.rttMs !== undefined ? { rttMs: h.rttMs } : {}) };
     });
     return {
       devices,

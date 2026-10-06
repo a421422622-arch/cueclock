@@ -16,8 +16,8 @@ function sourceBuild(): string {
 }
 export const ENGINE_BUILD = typeof __CUECLOCK_ENGINE_BUILD__ === 'undefined' ? sourceBuild() : __CUECLOCK_ENGINE_BUILD__;
 export interface EngineHello { protocol: number; engineVersion?: string; engineBuild?: string; capabilities?: string[] }
-export const engineHello = (): EngineHello => ({ protocol: PROTOCOL_VERSION, engineVersion: ENGINE_VERSION, engineBuild: ENGINE_BUILD,
-  capabilities: ['wall-clock-pending-actions', 'regex-trigger-parameters', 'network-missing', 'operation-status', 'device-override', 'device-feedback'] });
+export const ENGINE_CAPABILITIES = ['wall-clock-pending-actions', 'regex-trigger-parameters', 'network-missing', 'operation-status', 'device-override', 'device-feedback', 'sequenced-scenes', 'configuration-apply', 'slider-mapping', 'runtime-options'];
+export const engineHello = (): EngineHello => ({ protocol: PROTOCOL_VERSION, engineVersion: ENGINE_VERSION, engineBuild: ENGINE_BUILD, capabilities: [...ENGINE_CAPABILITIES] });
 export interface EngineUpdate {
   runningVersion: string | null;
   runningBuild: string | null;
@@ -29,8 +29,9 @@ export interface EngineUpdate {
   compatible: boolean;
 }
 export function assessEngine(hello: EngineHello): EngineUpdate {
+  const compatible = hello.protocol === PROTOCOL_VERSION && hello.engineVersion === ENGINE_VERSION && ENGINE_CAPABILITIES.every((c) => hello.capabilities?.includes(c));
   return { runningVersion: hello.engineVersion ?? null, runningBuild: hello.engineBuild ?? null,
     expectedVersion: ENGINE_VERSION, expectedBuild: ENGINE_BUILD, protocol: hello.protocol, expectedProtocol: PROTOCOL_VERSION,
-    compatible: hello.protocol === PROTOCOL_VERSION && hello.engineVersion === ENGINE_VERSION,
-    needsRestart: hello.protocol !== PROTOCOL_VERSION || hello.engineVersion !== ENGINE_VERSION || hello.engineBuild !== ENGINE_BUILD };
+    compatible,
+    needsRestart: !compatible || hello.engineBuild !== ENGINE_BUILD };
 }

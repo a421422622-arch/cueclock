@@ -81,6 +81,7 @@ export interface AppState {
   keepInTray: boolean;
   launchAtLogin: boolean;
   launchAtLoginStale: boolean;
+  guardAtLogin?: boolean;
   canLaunchAtLogin: boolean;
   isPackaged: boolean;
   platform: string;

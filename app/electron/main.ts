@@ -16,6 +16,7 @@ import { createTray } from './tray.ts';
 import { autostart } from './autostart.ts';
 import type { AutostartState } from './autostart.ts';
 import { assessEngine } from '../../engine/src/version.ts';
+import { assertIsolatedSmoke } from './smokeSafety.ts';
 import { isBlockedByVersion } from './rpcGuard.ts';
 import type { EngineUpdate } from '../../engine/src/version.ts';
 
@@ -35,6 +36,13 @@ const argValue = (name: string) => {
 
 const isMac = process.platform === 'darwin';
 const stateDir = argValue('--state-dir') ?? defaultStateDir();
+if (ANY_SMOKE) {
+  try {
+    assertIsolatedSmoke(argValue('--daemon-port'), argValue('--state-dir'), defaultStateDir(true));
+    mkdirSync(stateDir, { recursive: true });
+    app.setPath('userData', path.join(stateDir, 'smoke-profile'));
+  } catch (e) { console.error((e as Error).message); app.exit(1); }
+}
 const explicitProject = argValue('--project') ? path.resolve(argValue('--project')!) : undefined;
 const appRoot = path.resolve(__dirname, '..', '..'); // dist/electron → app 根目录
 const engineBundle = path.join(appRoot, 'dist', 'engine', 'cli.mjs');
@@ -192,11 +200,11 @@ async function quitAndStopEngine(skipConfirm = false): Promise<void> {
 
 const actions: MenuActions & { togglePause(): void } = {
   newProject: () => {
-    if (engineUpdate && !engineUpdate.compatible) { void dialog.showMessageBox({ message: '界面与引擎协议不兼容，请先确认重启引擎，再新建配置' }); return; }
+    if (engineUpdate && !engineUpdate.compatible) { void dialog.showMessageBox({ message: '界面与引擎协议或功能版本不兼容，请先确认重启引擎，再新建配置' }); return; }
     void ensureUnlocked('新建配置').then((ok) => (ok ? newProject(deps()) : false)).then((ok) => (ok ? refreshFromEngine() : undefined));
   },
   openProject: (file) => {
-    if (engineUpdate && !engineUpdate.compatible) { void dialog.showMessageBox({ message: '界面与引擎协议不兼容，请先确认重启引擎，再切换配置' }); return; }
+    if (engineUpdate && !engineUpdate.compatible) { void dialog.showMessageBox({ message: '界面与引擎协议或功能版本不兼容，请先确认重启引擎，再切换配置' }); return; }
     void ensureUnlocked('切换配置').then((ok) => (ok ? openProject(deps(), file) : false)).then((ok) => (ok ? refreshFromEngine() : undefined));
   },
   reveal: () => revealProject(lastStatus?.daemon.projectFile ?? null),
@@ -266,7 +274,7 @@ ipcMain.handle('rpc', async (_e, method: string, params: unknown) => {
   }
 });
 ipcMain.handle('app:info', () => ({ stateDir, projectFile: lastStatus?.daemon.projectFile ?? null, connected: client?.connected ?? false, platform: process.platform }));
-ipcMain.handle('app:state', () => ({ ...menuState(), engineUpdate, platform: process.platform }));
+ipcMain.handle('app:state', () => ({ ...menuState(), guardAtLogin: autostartState.guardEnabled === true, engineUpdate, platform: process.platform }));
 ipcMain.handle('app:action', async (_e, name: string, arg?: unknown) => {
   switch (name) {
     case 'restartEngine': {
@@ -274,7 +282,7 @@ ipcMain.handle('app:action', async (_e, name: string, arg?: unknown) => {
       if (!(await ensureUnlocked('重启引擎'))) return;
       const options = {
         type: 'warning' as const, message: '确认重启引擎？',
-        detail: '将短暂停止调度并加载当前版本。当前项目和急停状态会保留；执行中的触发动作和回包等待可能中断。',
+        detail: '将短暂停止调度并加载当前版本。当前项目和暂停状态会保留；执行中的触发动作和回包等待可能中断。',
         buttons: ['取消', '确认重启'], defaultId: 0, cancelId: 0,
       };
       const result = win ? await dialog.showMessageBox(win, options) : await dialog.showMessageBox(options);
@@ -289,6 +297,10 @@ ipcMain.handle('app:action', async (_e, name: string, arg?: unknown) => {
     case 'reveal': return actions.reveal();
     case 'setKeepInTray': return actions.setKeepInTray(arg === true);
     case 'setLaunchAtLogin': return actions.setLaunchAtLogin(arg === true);
+    case 'setGuardAtLogin':
+      if (!(await ensureUnlocked('修改登录守护'))) return;
+      await autostart.setGuard(arg === true);
+      await refreshAutostart(); refreshUi(); return;
     case 'quit': return actions.quit();
     case 'quitAndStopEngine': return actions.quitAndStopEngine();
     default: return undefined;
