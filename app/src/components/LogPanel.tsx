@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatClock } from '@engine/time.ts';
 import type { LogEntry } from '@engine/engine.ts';
-import { rpc, select, toast, toggleLog, useStore } from '../store.ts';
+import { markAlertsSeen, rpc, select, showLogTab, toast, toggleLog, useStore } from '../store.ts';
+import { ALERT_LABEL, mergeAlerts, unseenCount } from '../lib/alerts.ts';
 import { RESULT_LABEL, RESULT_TONE } from '../lib/labels.ts';
 import { RpcFailure } from '../transport.ts';
 import { Seg } from './fields.tsx';
@@ -9,7 +10,11 @@ import { Seg } from './fields.tsx';
 type Filter = 'all' | 'tx' | 'rx' | 'bad';
 
 export function LogPanel() {
-  const [tab, setTab] = useState<'log' | 'issues'>('log');
+  const tab = useStore((s) => s.logTab);
+  const logs = useStore((s) => s.logs);
+  const history = useStore((s) => s.alertHistory);
+  const seenAt = useStore((s) => s.alertsSeenAt);
+  const unseen = useMemo(() => unseenCount(mergeAlerts(history, logs), seenAt), [history, logs, seenAt]);
   const issues = useStore((s) => s.issues);
   const errors = issues.filter((i) => i.level === 'error').length;
   const collapsed = useStore((s) => s.logCollapsed);
@@ -17,15 +22,18 @@ export function LogPanel() {
     <section className="log">
       <div className="loghead">
         <div className="tabs2">
-          <span className={tab === 'log' ? 'on' : ''} onClick={() => { setTab('log'); if (collapsed) toggleLog(); }}>日志</span>
-          <span className={tab === 'issues' ? 'on' : ''} onClick={() => { setTab('issues'); if (collapsed) toggleLog(); }}>
+          <span className={tab === 'log' ? 'on' : ''} onClick={() => showLogTab('log')}>日志</span>
+          <span className={tab === 'alerts' ? 'on' : ''} onClick={() => showLogTab('alerts')}>
+            告警{unseen.count > 0 && <b className={unseen.hasError ? 'bad' : 'warn'}> {unseen.count}</b>}
+          </span>
+          <span className={tab === 'issues' ? 'on' : ''} onClick={() => showLogTab('issues')}>
             问题{issues.length > 0 && <b className={errors ? 'bad' : 'warn'}> {issues.length}</b>}
           </span>
         </div>
         <span className="grow" />
         <button className="ico" onClick={toggleLog} aria-expanded={!collapsed}>{collapsed ? '展开日志' : '收起日志'}</button>
       </div>
-      {tab === 'log' ? <Logs /> : <Issues />}
+      {tab === 'log' ? <Logs /> : tab === 'alerts' ? <Alerts /> : <Issues />}
       <TestSend />
     </section>
   );
@@ -87,12 +95,56 @@ function LogRow({ l, view }: { l: LogEntry; view: 'ascii' | 'hex' }) {
       <span className={l.dir === 'TX' ? 'tx' : l.dir === 'RX' ? 'rx' : 'sys'}>{l.dir}</span>
       <span className="ip">{l.remote ?? ''}</span>
       <span className="c" title={`${l.ascii ?? ''}\n${l.hex ?? ''}`}>{content}</span>
-      <span className={`res ${tone}`}>{RESULT_LABEL[l.result] ?? l.result}</span>
+      <span className={`res ${l.alert ? (l.alert.level === 'error' ? 'bad' : l.alert.level === 'warn' ? 'warn' : tone) : tone}`}>{l.alert ? '⚠ ' : ''}{RESULT_LABEL[l.result] ?? l.result}</span>
       <span className="det" title={l.detail}>
         {l.source && <b>{l.source}</b>} {l.detail}
         {l.lagMs !== undefined && <i className="lag"> +{l.lagMs}ms</i>}
       </span>
     </div>
+  );
+}
+
+type AlertFilter = 'all' | 'attention' | 'error';
+
+/** 告警页签：磁盘上最近 7 天的历史 + 本次运行实时收到的。只记录，不对外发送。 */
+function Alerts() {
+  const history = useStore((s) => s.alertHistory);
+  const logs = useStore((s) => s.logs);
+  const seenAt = useStore((s) => s.alertsSeenAt);
+  const [filter, setFilter] = useState<AlertFilter>('attention');
+  // 进入页签时记下"上次查看时间"用来高亮新告警，然后立刻标为已读（徽标清零）
+  const [viewedBefore] = useState(seenAt);
+  useEffect(() => {
+    markAlertsSeen();
+  }, []);
+
+  const all = useMemo(() => mergeAlerts(history, logs), [history, logs]);
+  const shown = useMemo(
+    () => all.filter((a) => (filter === 'all' ? true : filter === 'error' ? a.alert!.level === 'error' : a.alert!.level !== 'info')).reverse().slice(0, 300),
+    [all, filter],
+  );
+  const dayOf = (t: number) => { const d = new Date(t); return `${d.getMonth() + 1}/${d.getDate()}`; };
+
+  return (
+    <>
+      <div className="logtools">
+        <Seg<AlertFilter> value={filter} onChange={setFilter} options={[{ value: 'attention', label: '需留意' }, { value: 'error', label: '仅错误' }, { value: 'all', label: '全部（含恢复）' }]} />
+        <span className="grow" />
+        <span className="dim" style={{ fontSize: 11 }}>最近 7 天 · 共 {all.length} 条 · 仅记录在日志里，不对外发送</span>
+      </div>
+      <div className="logbody">
+        {shown.length === 0 && <div className="empty">{filter === 'all' ? '最近 7 天没有告警。' : '没有需要留意的告警。'}</div>}
+        {shown.map((a, i) => (
+          <div key={`${a.t}-${i}`} className={`alrow ${a.alert!.level} ${a.t > viewedBefore ? 'fresh' : ''}`}>
+            <span className="ts">{dayOf(a.t)} {formatClock(a.t)}</span>
+            <span className={`lv ${a.alert!.level}`}>{a.alert!.level === 'error' ? '错误' : a.alert!.level === 'warn' ? '警告' : '恢复'}</span>
+            <span className="code">{ALERT_LABEL[a.alert!.code] ?? a.alert!.code}</span>
+            <span className="subj">{a.alert!.subject ?? ''}</span>
+            <span className="det" title={a.detail}>{a.detail}</span>
+          </div>
+        ))}
+      </div>
+    </>
   );
 }
 

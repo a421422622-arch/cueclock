@@ -45,6 +45,12 @@ export interface AppState {
   canRedo: boolean;
   view: View;
   settingsOpen: boolean;
+  /** 日志区当前页签；顶栏告警徽标要能直接切过去 */
+  logTab: 'log' | 'alerts' | 'issues';
+  /** 磁盘上的历史告警（最近 7 天）；实时告警在 logs 里 */
+  alertHistory: LogEntry[];
+  /** 上次查看告警的时间戳，之后的 warn/error 才算新告警 */
+  alertsSeenAt: number;
   logCollapsed: boolean;
   engineUpdate: EngineUpdate | null;
   /** 上次没能保存（有错误）的草稿，等用户决定恢复还是丢弃 */
@@ -52,6 +58,15 @@ export interface AppState {
   /** 引擎时间 - 本机时间，用来显示引擎的时钟 */
   clockOffset: number;
   toast: string | null;
+}
+
+const SEEN_KEY = 'cueclock-alerts-seen';
+function readSeenAt(): number {
+  try {
+    return Number(localStorage.getItem(SEEN_KEY)) || 0;
+  } catch {
+    return 0;
+  }
 }
 
 let state: AppState = {
@@ -70,6 +85,9 @@ let state: AppState = {
   canRedo: false,
   view: 'timeline',
   settingsOpen: false,
+  logTab: 'log',
+  alertHistory: [],
+  alertsSeenAt: readSeenAt(),
   logCollapsed: false,
   engineUpdate: null,
   draftOffer: null,
@@ -167,6 +185,7 @@ async function loadAll(): Promise<void> {
   set({ project, rev, loaded: true, saveState: 'saved', issues: [], logs, draftOffer: null, ...historyState(),
     ...(changedFile ? { sel: null, modeId: null, followActive: true } : {}) });
   applyStatus(st);
+  void loadAlertHistory();
   // 有没有上次遗留的、没能保存的草稿？内容和引擎里的一样就没必要提示
   const draft = readDraft();
   if (draft && JSON.stringify(draft.project) !== JSON.stringify(project)) set({ draftOffer: draft });
@@ -328,6 +347,26 @@ export function syncActiveMode(id: string): void {
 
 export function setView(view: View): void {
   set({ view });
+}
+
+export function showLogTab(tab: AppState['logTab']): void {
+  set({ logTab: tab, ...(state.logCollapsed ? { logCollapsed: false } : {}) });
+}
+export function markAlertsSeen(): void {
+  const t = Date.now();
+  try {
+    localStorage.setItem(SEEN_KEY, String(t));
+  } catch {
+    /* 存储不可用就只在本次有效 */
+  }
+  set({ alertsSeenAt: t });
+}
+export async function loadAlertHistory(): Promise<void> {
+  try {
+    set({ alertHistory: await transport.request<LogEntry[]>('getAlerts', { days: 7, limit: 500 }) });
+  } catch {
+    set({ alertHistory: [] }); // 旧版引擎没有这个接口：只显示本次运行里的实时告警
+  }
 }
 
 export const openSettings = () => set({ settingsOpen: true });

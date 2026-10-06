@@ -54,6 +54,10 @@ node bench/jitter.ts 200 6                                 # 毫秒抖动实测
 - 网络设置是机器级的（`settings.json` 的 `network`），优先于项目里的旧 `settings.localAddress`。发送套接字绑定失败（网卡不存在/端口被占）时引擎不运行，并按 `retryMs`（默认 5 秒）重试直到成功；`setNetwork` 会重启引擎。
 - 急停：暂停期间到点的事件、收到的触发、启动时的断电恢复都不执行并写日志；手动测试发送、手动执行事件点不受影响；恢复后不补发。**急停状态持久化**在 `settings.json`，引擎/daemon 重启后仍保持，需手动恢复。
 
+## 告警
+
+`LogEntry.alert`（类型/级别/对象）。回包重试用尽才记一条；设备连续 `settings.alerts.offlineAfter`（默认 3）次最终失败判离线，只在状态变化时记一条，收到有效回包记恢复。告警走 `Engine.alert()` 单一出口，随日志按天写盘；RPC `getAlerts` 读最近 N 天。目前**只记录，不对外发送**。
+
 ## 场景
 
 `Project.scenes`：命名的一组动作（UDP/指令/延时）。动作类型 `scene` 引用它，`offsetMs` 整体后移。展开在 `resolveActions`：场景内先展开（延时/偏移/重复），再整体后移，变成带绝对偏移的普通 UDP 动作，所以场景内的延时**不会顺延场景外的动作**。场景里不能套场景/放时间线控制。RPC：`runScene`。

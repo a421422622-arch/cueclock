@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { edit, engineNow, openSettings, reloadFromEngine, rpc, toast, useStore } from '../store.ts';
+import { useEffect, useMemo, useState } from 'react';
+import { edit, engineNow, openSettings, reloadFromEngine, rpc, showLogTab, toast, useStore } from '../store.ts';
+import { mergeAlerts, unseenCount } from '../lib/alerts.ts';
 import type { SaveState } from '../store.ts';
 import { ProjectMenu } from './ProjectMenu.tsx';
 
@@ -55,6 +56,10 @@ export function TopBar() {
   const conn = useStore((s) => s.conn);
   const status = useStore((s) => s.status);
   const saveState = useStore((s) => s.saveState);
+  const logs = useStore((s) => s.logs);
+  const history = useStore((s) => s.alertHistory);
+  const seenAt = useStore((s) => s.alertsSeenAt);
+  const alerts = useMemo(() => unseenCount(mergeAlerts(history, logs), seenAt), [history, logs, seenAt]);
   const engine = status?.engine ?? null;
   const paused = engine?.paused === true;
 
@@ -82,6 +87,11 @@ export function TopBar() {
       <button className={`estop ${paused ? 'on' : ''}`} disabled={!engine} onClick={togglePause} title="暂停期间到点的事件和 UDP 触发都不执行（手动测试不受影响）">
         {paused ? '▶ 已急停 · 点击恢复' : '■ 急停调度'}
       </button>
+      {alerts.count > 0 && (
+        <button className={`alertpill ${alerts.hasError ? 'bad' : 'warn'}`} onClick={() => showLogTab('alerts')} title="有新的告警，点击查看（只记录在日志里，不对外发送）">
+          ⚠ {alerts.count} 条新告警
+        </button>
+      )}
       <button onClick={openSettings} title="本机网卡、开机自启等设置">⚙ 设置</button>
       <div className="nic">
         <span className={`dot ${tone}`} />{engineText}

@@ -366,3 +366,15 @@ select.warnb { border-color: var(--warn); }
 
 .sceneprev { width: 100%; background: var(--canvas); border: 1px solid var(--line); border-radius: 5px; padding: 5px 8px; font: 11px/1.7 var(--mono); color: var(--ink2); max-height: 150px; overflow: auto; }
 .sceneprev .tm { color: var(--amber); display: inline-block; min-width: 64px; }
+
+/* 告警 */
+.alertpill { font-weight: 600; }
+.alertpill.warn { color: var(--warn); border-color: #6b4a10; background: #2a1f0a; }
+.alertpill.bad { color: #ff8a82; border-color: var(--err); background: #3a1312; }
+.alrow { display: grid; grid-template-columns: 112px 40px 84px minmax(60px, 120px) 1fr; gap: 10px; padding: 2px 6px; border-left: 3px solid transparent; font-family: inherit; white-space: nowrap; }
+.alrow > span { overflow: hidden; text-overflow: ellipsis; }
+.alrow.error { border-left-color: var(--err); } .alrow.warn { border-left-color: var(--warn); } .alrow.info { border-left-color: var(--ok); }
+.alrow.fresh { background: #ffffff0a; }
+.alrow .ts, .alrow .det, .alrow .subj { color: var(--muted); }
+.alrow .code { color: var(--ink); font-weight: 500; }
+.alrow .lv.error { color: var(--err); } .alrow .lv.warn { color: var(--warn); } .alrow .lv.info { color: var(--ok); }
