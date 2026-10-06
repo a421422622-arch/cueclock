@@ -413,7 +413,7 @@ function CommandInspector({ id }: { id: string }) {
     setRes({ text: '发送中…', bad: false });
     try {
       const r = await rpc<{ actions: number }>('runCommand', { command: cmd, args: testArgs });
-      setRes({ text: `已执行（${r.actions} 个执行点），结果见下方日志`, bad: false });
+      setRes({ text: `已启动（${r.actions} 个执行点），进度见运行总览，结果见日志`, bad: false });
     } catch (e) {
       setRes({ text: e instanceof RpcFailure ? e.message : String(e), bad: true });
     }
@@ -493,7 +493,7 @@ function SceneInspector({ id }: { id: string }) {
     setRes({ text: '执行中…', bad: false });
     try {
       const r = await rpc<{ actions: number }>('runScene', { scene });
-      setRes({ text: `已执行（${r.actions} 个执行点），结果见下方日志`, bad: false });
+      setRes({ text: `已启动（${r.actions} 个执行点），进度见运行总览，结果见日志`, bad: false });
     } catch (e) {
       setRes({ text: e instanceof RpcFailure ? e.message : String(e), bad: true });
     }
@@ -504,6 +504,8 @@ function SceneInspector({ id }: { id: string }) {
       {refs > 0 && <div className="note ok">这个场景被 {refs} 个动作使用。修改后，这些地方都会跟着变。</div>}
       <div className="form">
         <Field label="名称"><input value={scene.name} onChange={(e) => patch((s) => (s.name = e.target.value))} /></Field>
+        <Field label="执行方式" hint={scene.execution === 'sequence' ? '按列表顺序执行，等上一动作结果再执行下一步。有回包校验才会等待确认；无回包只等待发出。延时/偏移相对前一步完成。' : '保持现有按偏移时间发送的方式，各动作可并行等待回包。'}><Seg value={scene.execution ?? 'timed'} options={[{ value: 'timed', label: '按时间' }, { value: 'sequence', label: '按顺序' }]} onChange={(v) => patch((s) => { s.execution = v; })} /></Field>
+        {scene.execution === 'sequence' && <Field label="失败策略"><Seg value={scene.onFailure ?? 'stop'} options={[{ value: 'stop', label: '停止后续' }, { value: 'continue', label: '继续后续' }]} onChange={(v) => patch((s) => { s.onFailure = v; })} /></Field>}
         <Field label="说明"><input value={scene.note ?? ''} placeholder="（可选）" onChange={(e) => patch((s) => (s.note = e.target.value || undefined))} /></Field>
       </div>
       <div className="sech">场景里的动作（自成一条小时间线，延时只在场景内部生效） <span>{scene.actions.length}</span></div>
@@ -513,7 +515,7 @@ function SceneInspector({ id }: { id: string }) {
         <button className="primary" onClick={test}>▶ 立即执行这个场景</button>
         {res && <span className={`hint ${res.bad ? 'err' : 'okc'}`}>{res.text}</span>}
       </div>
-      <div className="hint" style={{ marginTop: 4 }}>用的是当前正在编辑的内容（即使还没保存），按真实时间依次发出。</div>
+      <div className="hint" style={{ marginTop: 4 }}>用的是当前正在编辑的内容（即使还没保存），按配置方式执行；应用配置会取消仍在等待的旧动作链。</div>
       <div className="foot">
         <button onClick={() => {
           const nid = genId('scene');
@@ -703,7 +705,7 @@ function PadTileInspector({ padId, tileId }: { padId: string; tileId: string }) 
     setRes({ text: '执行中…', bad: false });
     try {
       const r = await rpc<{ actions: number; ignored?: boolean }>('runPadTile', { padId, tileId, ...(tile.kind === 'slider' ? { value: sliderRange(tile).initial } : {}) });
-      setRes({ text: r.ignored ? '点得太快了，已忽略' : `已执行（${r.actions} 个执行点），结果见下方日志`, bad: false });
+      setRes({ text: r.ignored ? '点得太快了，已忽略' : `已启动（${r.actions} 个执行点），进度见运行总览，结果见日志`, bad: false });
     } catch (e) {
       setRes({ text: e instanceof RpcFailure ? e.message : String(e), bad: true });
     }

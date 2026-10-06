@@ -61,6 +61,8 @@ export interface ReplyCheck extends MatchSpec {
 export interface UdpAction {
   id: string;
   type: 'udp';
+  /** 引擎展开场景时生成，供执行进度关联。 */
+  sceneStep?: { refId: string; sceneId: string; name: string; index: number; names: string[] };
   enabled?: boolean;
   /** 设备 id，或 "tag:标签名" */
   targets: string[];
@@ -148,6 +150,9 @@ export interface Scene {
   id: string;
   name: string;
   note?: string;
+  /** timed 为原有偏移日程；sequence 按列表顺序等待每一步结果。 */
+  execution?: 'timed' | 'sequence';
+  onFailure?: 'stop' | 'continue';
   actions: Action[];
 }
 
@@ -158,6 +163,8 @@ export interface SceneAction {
   enabled?: boolean;
   sceneId: string;
   offsetMs?: number;
+  /** 展开时捕获的场景快照，输入项目里的值不会被采用。 */
+  resolvedScene?: Scene;
 }
 
 export type Action = UdpAction | CommandAction | SceneAction | DelayAction | TimelineControlAction;

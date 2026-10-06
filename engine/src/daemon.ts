@@ -670,6 +670,13 @@ export class Daemon {
         }
       }
 
+      case 'cancelScene': {
+        const p = obj(params);
+        if (typeof p.runId !== 'string') throw new RpcError('bad-request', '缺少场景运行 id');
+        this.needEngine().cancelScene(p.runId);
+        return { ok: true };
+      }
+
       case 'runScene': {
         const p = obj(params);
         const scene = (p.scene !== undefined ? p.scene : this.project!.scenes?.find((s) => s.id === String(p.sceneId))) as Scene | undefined;

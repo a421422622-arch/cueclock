@@ -21,6 +21,8 @@ export function expandActions(actions: Action[]): ExpandedAction[] {
     if (a.enabled === false) continue;
     if (a.type === 'delay') {
       acc += Math.max(0, a.ms);
+    } else if (a.type === 'scene' && a.resolvedScene?.execution === 'sequence') {
+      out.push({ relMs: acc + (a.offsetMs ?? 0), action: a, repIndex: 0, repTotal: 1 });
     } else if (a.type === 'command' || a.type === 'scene') {
       continue; // 引用指令/场景的动作要先经 resolveActions 展开
     } else if (a.type === 'udp') {

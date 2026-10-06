@@ -52,7 +52,7 @@ export function resolveCommandAction(cmd: Command, a: CommandAction): { action?:
  * 把动作列表里的"引用指令"展开成普通 UDP 动作，其余动作原样保留。
  * 找不到指令或缺参数的动作被丢弃并记入 errors（项目校验会提前拦住，这里是运行时兜底）。
  */
-export function resolveActions(project: Project, actions: Action[]): { actions: Action[]; errors: string[] } {
+export function resolveActions(project: Project, actions: Action[], options: { preview?: boolean } = {}): { actions: Action[]; errors: string[] } {
   const out: Action[] = [];
   const errors: string[] = [];
   for (const a of actions) {
@@ -63,17 +63,24 @@ export function resolveActions(project: Project, actions: Action[]): { actions: 
         errors.push(`找不到场景 "${a.sceneId}"`);
         continue;
       }
+      if (sc.execution === 'sequence' && !options.preview) {
+        out.push({ ...a, resolvedScene: structuredClone(sc) });
+        continue;
+      }
       // 场景自成一条小时间线：先在场景内部展开（延时、偏移、重复），再整体后移 offsetMs。
       // 展开后每个动作都是带绝对偏移的普通 UDP，所以场景内的延时不会顺延场景外的动作。
       // （校验已禁止场景里套场景/放时间线控制，这里再防御一次，避免递归。）
       const inner = resolveActions(project, sc.actions.filter((x) => x.type !== 'scene' && x.type !== 'timeline'));
       errors.push(...inner.errors.map((e) => `场景「${sc.name}」：${e}`));
-      for (const x of expandActions(inner.actions)) {
+      const expanded = expandActions(inner.actions);
+      const names = expanded.map((x, i) => x.action.type === 'udp' ? x.action.commandName ?? `动作 ${i + 1}` : `动作 ${i + 1}`);
+      for (const [index, x] of expanded.entries()) {
         if (x.action.type !== 'udp') continue;
         out.push({
           ...x.action,
           id: `${a.id}/${x.action.id}${x.repTotal > 1 ? `#${x.repIndex}` : ''}`,
           commandName: sc.name,
+          sceneStep: { refId: a.id, sceneId: sc.id, name: sc.name, index, names },
           offsetMs: x.relMs + (a.offsetMs ?? 0),
           repeat: 1,
           repeatGapMs: undefined,

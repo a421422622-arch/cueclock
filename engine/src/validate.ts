@@ -260,6 +260,14 @@ export function validateProject(p: Project): Issue[] {
   }
 
   for (const sc of p.scenes ?? []) {
+    if (sc.execution !== undefined && sc.execution !== 'timed' && sc.execution !== 'sequence') err(`scenes/${sc.id}`, '场景执行方式只能是 timed / sequence');
+    if (sc.onFailure !== undefined && sc.onFailure !== 'stop' && sc.onFailure !== 'continue') err(`scenes/${sc.id}`, '场景失败策略只能是 stop / continue');
+    if (sc.execution === 'sequence') {
+      for (const a of sc.actions) {
+        const resolved = a.type === 'command' ? commands.find((c) => c.id === a.commandId) : a.type === 'udp' ? a : undefined;
+        if (resolved?.chase) err(`scenes/${sc.id}/${a.id}`, '顺序场景不支持自动断电补发；请查询设备状态后由操作员重跑');
+      }
+    }
     if (!sc.name.trim()) warn(`scenes/${sc.id}`, '场景没有名字');
     if (sc.actions.length === 0) warn(`scenes/${sc.id}`, '场景是空的，使用它不会发送任何东西');
     checkActions(`scenes/${sc.id}`, sc.actions, undefined, true);

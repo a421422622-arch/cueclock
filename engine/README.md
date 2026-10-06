@@ -140,3 +140,9 @@ node bench/jitter.ts 200 6                                 # 毫秒抖动实测
 `status.engine.devices` 增加 `lastCommand`（发出/回包结果）、`feedback`（已校验回包解析出的字段、更新时间和过期标记）、`override`（接管截止时间）。设备可配置 `feedback.format/pattern/fields/staleMs`，只解析该设备的已校验回包，不从 Ping 推测开关状态。HEX 正则匹配连续大写十六进制。
 
 `setDeviceOverride {deviceId,durationMs}` 接管 1 秒至 24 小时，`durationMs:null` 交回自动。接管期间该设备的自动日程、UDP 触发、恢复及自动重试跳过，手动仍可操作；到期不补发。接管按项目保存在机器设置中，重启保留尚未过期的期限。面板可设置 `takeoverSec`，操作时自动接管目标。功能版本过旧时界面只允许查看/暂停，需人工确认更新引擎。
+
+### 场景进度与顺序执行
+
+场景默认 `execution:timed`，保持偏移/延时并行调度；`sequence` 按列表顺序等待每一步的发送或回包结果，偏移/延时从前一步完成后计算。`onFailure:stop` 默认停止后续，`continue` 继续但整体保留失败。无回包的 `sent` 仅说明发出，不能证明设备已执行。总览提供进度及 `cancelScene {runId}`；取消、暂停自动或应用新配置会停止对应后续步骤，已经发出的内容不可撤回。
+
+定时时间场景仍逐动作调度，保留重启后尚未到点的偏移动作。启动前步骤标记 `not-observed`。顺序场景不自动断电重放，禁止 chase，需查设备再重跑。记录是运行期内存，最近20条返回界面，细节另记日志。

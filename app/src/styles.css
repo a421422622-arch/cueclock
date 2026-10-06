@@ -462,3 +462,10 @@ select.warnb { border-color: var(--warn); }
 .overview-alert { display: flex; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); font-size: 12px; }
 .overview-alert span { flex: none; color: var(--muted); }
 .overview-alert p { overflow-wrap: anywhere; }
+.scene-run { border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; font-size: 12px; }
+.scene-run summary { cursor: pointer; line-height: 1.8; }
+.scene-run summary span { margin-left: 12px; color: var(--muted); }
+.scene-run summary small { display: block; color: var(--muted); }
+.scene-run ol { margin: 10px 0 10px 24px; }
+.scene-run li { padding: 5px; }
+.scene-run li span { margin-left: 16px; color: var(--muted); }

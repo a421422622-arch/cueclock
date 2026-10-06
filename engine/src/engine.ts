@@ -137,7 +137,7 @@ export interface DeviceHealthInfo {
   override?: DeviceOverride;
 }
 
-export interface SceneRunStatus { id: string; name: string; source: string; startedAt: number; finishedAt?: number; state: 'running' | 'completed' | 'failed' | 'cancelled'; steps: { name: string; state: string }[] }
+export interface SceneRunStatus { id: string; name: string; source: string; startedAt: number; finishedAt?: number; state: 'running' | 'completed' | 'failed' | 'cancelled' | 'incomplete'; steps: { name: string; state: string }[] }
 
 export interface EngineStatus {
   devices: DeviceHealthInfo[];
@@ -162,6 +162,8 @@ export interface EngineStatus {
 interface RunCtx {
   source: string;
   manual?: boolean;
+  signal?: AbortSignal;
+  invocation?: string;
   scheduledAt?: number;
   /** 恢复动作原来的墙上执行时刻，用来阻止旧补偿覆盖后来已发出的新状态。 */
   recoveryAt?: number;
@@ -209,6 +211,10 @@ export class Engine extends EventEmitter {
   private commands = new Map<string, CommandState & { order: number }>();
   private feedback = new Map<string, Omit<FeedbackState, 'stale'>>();
   private dispatchOrder = 0;
+  private sceneRuns = new Map<string, SceneRunStatus>();
+  private sceneKeys = new Map<string, string>();
+  private sceneControls = new Map<string, { ctl: AbortController; manual: boolean }>();
+  private runNumber = 0;
   /** 最近的日志，给界面刷新用 */
   readonly logs: LogEntry[] = [];
 
@@ -293,7 +299,8 @@ export class Engine extends EventEmitter {
   }
 
   private noteFeedback(device: Device, reply: Buffer | undefined): void {
-    if (!reply || !device.feedback || this.project.devices.find((d) => d.id === device.id)?.ip !== device.ip) return;
+    const current = this.project.devices.find((d) => d.id === device.id);
+    if (!reply || !device.feedback || current?.ip !== device.ip || JSON.stringify(current.feedback) !== JSON.stringify(device.feedback)) return;
     const values = readFeedback(device.feedback, reply);
     if (values) this.feedback.set(device.id, { at: this.clock.now(), values });
   }
@@ -481,6 +488,7 @@ export class Engine extends EventEmitter {
   pause(): void {
     if (this.pausedFlag) return;
     this.pausedFlag = true;
+    for (const [id, c] of this.sceneControls) if (!c.manual) this.cancelScene(id);
     const msg = '自动日程与 UDP 触发已暂停：期间到点的事件将被跳过';
     if (this.running) this.alert('paused', 'warn', undefined, msg);
     else this.log({ dir: 'SYS', result: 'info', detail: msg });
@@ -578,6 +586,7 @@ export class Engine extends EventEmitter {
     if (!this.running) return;
     this.running = false;
     this.startedAt = null;
+    for (const id of this.sceneRuns.keys()) this.cancelScene(id);
     this.runCtl?.abort(); // 取消还在等待中的动作（触发器里的延时、恢复、手动执行）
     this.runCtl = null;
     for (const l of this.healthLoops.values()) l.ctl.abort();
@@ -594,6 +603,10 @@ export class Engine extends EventEmitter {
   /** 热更新项目：检查不通过会抛错，原项目继续运行。 */
   async reload(project: Project): Promise<void> {
     this.assertValid(project);
+    // 应用新配置时取消旧配置中仍在等待的动作链，防止混用新旧目标或内容。
+    for (const id of this.sceneRuns.keys()) this.cancelScene(id);
+    this.runCtl?.abort();
+    if (this.running) this.runCtl = new AbortController();
     for (const d of this.project.devices) {
       const next = project.devices.find((x) => x.id === d.id);
       if (!next || next.ip !== d.ip || next.port !== d.port) {
@@ -733,6 +746,7 @@ export class Engine extends EventEmitter {
     const signal = this.runCtl?.signal;
     if (!signal || signal.aborted) return;
     const resolved = resolveActions(this.project, actions);
+    const invocation = `list-${++this.runNumber}`;
     for (const err of resolved.errors) this.log({ dir: 'SYS', result: 'error', source, detail: err });
     for (const x of expandActions(resolved.actions)) {
       await this.clock.sleepUntil(base + x.relMs, signal);
@@ -741,9 +755,96 @@ export class Engine extends EventEmitter {
         this.log({ dir: 'SYS', result: 'skipped', source, scheduledAt: base + x.relMs, detail: '自动日程与 UDP 触发已暂停' });
         continue;
       }
-      this.spawn(this.runAction(x.action, { source, manual, scheduledAt: base + x.relMs,
+      this.spawn(this.runAction(x.action, { source, manual, signal, invocation, scheduledAt: base + x.relMs,
         ...(recoveryBase === undefined ? {} : { recoveryAt: recoveryBase + x.relMs }) }), '执行动作');
     }
+  }
+
+  private createSceneRun(name: string, names: string[], ctx: RunCtx): SceneRunStatus {
+    const run: SceneRunStatus = { id: `run-${++this.runNumber}`, name, source: ctx.source, startedAt: this.clock.now(), state: 'running', steps: names.map((name) => ({ name, state: 'pending' })) };
+    this.sceneRuns.set(run.id, run);
+    if (this.sceneRuns.size > 100) {
+      const expired = [...this.sceneRuns.values()].find((r) => r.state !== 'running');
+      if (expired) {
+        this.sceneRuns.delete(expired.id); this.sceneControls.delete(expired.id);
+        for (const [key, id] of this.sceneKeys) if (id === expired.id) this.sceneKeys.delete(key);
+      }
+    }
+    return run;
+  }
+
+  private timedSceneRun(action: UdpAction, ctx: RunCtx): SceneRunStatus {
+    const meta = action.sceneStep!;
+    const key = `${ctx.invocation ?? ctx.source}|${(ctx.scheduledAt ?? this.clock.now()) - (action.offsetMs ?? 0)}|${meta.refId}`;
+    const existing = this.sceneRuns.get(this.sceneKeys.get(key) ?? '');
+    if (existing) return existing;
+    const run = this.createSceneRun(meta.name, meta.names, ctx);
+    for (let i = 0; i < meta.index; i++) run.steps[i]!.state = 'not-observed';
+    this.sceneKeys.set(key, run.id);
+    this.sceneControls.set(run.id, { ctl: new AbortController(), manual: ctx.manual === true });
+    return run;
+  }
+
+  private stepResult(results: LogResult[]): string {
+    if (!results.length) return 'error';
+    return results.find((r) => r === 'error' || r === 'timeout' || r === 'mismatch' || r === 'skipped') ?? (results.every((r) => r === 'confirmed') ? 'confirmed' : 'sent');
+  }
+
+  private finishRun(run: SceneRunStatus): void {
+    if (run.state !== 'running' || run.steps.some((s) => s.state === 'pending' || s.state === 'running' || s.state === 'waiting')) return;
+    run.state = run.steps.some((s) => ['error', 'timeout', 'mismatch', 'skipped'].includes(s.state)) ? 'failed'
+      : run.steps.some((s) => s.state === 'not-observed') ? 'incomplete' : 'completed';
+    run.finishedAt = this.clock.now();
+    this.sceneControls.delete(run.id);
+    this.log({ dir: 'SYS', result: run.state === 'failed' ? 'error' : 'info', source: run.source, detail: `场景「${run.name}」${run.state === 'completed' ? '动作处理完成（设备状态以回读为准）' : run.state === 'incomplete' ? '启动前步骤未观察，需检查设备状态' : '有失败或跳过的动作'}` });
+  }
+
+  cancelScene(id: string): void {
+    const run = this.sceneRuns.get(id);
+    if (!run || run.state !== 'running') return;
+    this.sceneControls.get(id)?.ctl.abort();
+    run.state = 'cancelled'; run.finishedAt = this.clock.now();
+    for (const step of run.steps) if (['pending', 'running', 'waiting'].includes(step.state)) step.state = 'cancelled';
+    this.log({ dir: 'SYS', result: 'info', source: run.source, detail: `场景「${run.name}」已停止后续步骤；已经发出的指令不能撤回` });
+  }
+
+  private async runSequence(scene: Scene, ctx: RunCtx): Promise<void> {
+    const actions = scene.actions.filter((a) => a.enabled !== false);
+    const run = this.createSceneRun(scene.name, actions.map((a, i) => a.type === 'delay' ? `等待 ${a.ms}ms` : a.type === 'command' ? this.project.commands?.find((c) => c.id === a.commandId)?.name ?? `动作 ${i + 1}` : `动作 ${i + 1}`), ctx);
+    const ctl = new AbortController();
+    this.sceneControls.set(run.id, { ctl, manual: ctx.manual === true });
+    const signal = AbortSignal.any([ctl.signal, ...(ctx.signal ? [ctx.signal] : []), ...(this.runCtl ? [this.runCtl.signal] : [])]);
+    let stopped = false;
+    for (const [index, original] of actions.entries()) {
+      const step = run.steps[index]!;
+      if (stopped) { step.state = 'skipped'; continue; }
+      if (signal.aborted || (!ctx.manual && this.pausedFlag)) { this.cancelScene(run.id); return; }
+      step.state = 'waiting';
+      if (original.type === 'delay') {
+        await this.clock.sleepUntil(this.clock.now() + original.ms, signal);
+        if (signal.aborted) { this.cancelScene(run.id); return; }
+        step.state = 'done'; continue;
+      }
+      const resolved = resolveActions(this.project, [original]);
+      const action = resolved.actions[0];
+      if (!action || action.type !== 'udp') step.state = 'error';
+      else {
+        await this.clock.sleepUntil(this.clock.now() + (action.offsetMs ?? 0), signal);
+        const results: LogResult[] = [];
+        const count = action.reply ? 1 : Math.max(1, action.repeat ?? 1);
+        for (let repeat = 0; repeat < count; repeat++) {
+          if (repeat) await this.clock.sleepUntil(this.clock.now() + (action.repeatGapMs ?? 0), signal);
+          if (signal.aborted) { this.cancelScene(run.id); return; }
+          step.state = 'running';
+          results.push(...await this.runAction({ ...action, sceneStep: undefined, repeat: 1 }, { ...ctx, signal, source: `${ctx.source} / ${scene.name} / 第 ${index + 1} 步`, scheduledAt: this.clock.now() }));
+          if (results.some((r) => ['error', 'timeout', 'mismatch', 'skipped'].includes(r))) break;
+        }
+        if (signal.aborted) { this.cancelScene(run.id); return; }
+        step.state = this.stepResult(results);
+      }
+      if (['error', 'timeout', 'mismatch', 'skipped'].includes(step.state) && scene.onFailure !== 'continue') stopped = true;
+    }
+    this.finishRun(run);
   }
 
   private startRecovery(now: number): void {
@@ -814,25 +915,38 @@ export class Engine extends EventEmitter {
       this.log({ dir: 'SYS', result: 'skipped', source, scheduledAt: item.epoch, detail: '时间线已被动作临时禁用' });
       return;
     }
-    await this.runAction(item.action, { source, scheduledAt: item.epoch });
+    await this.runAction(item.action, { source, invocation: `${item.timelineId}/${item.cueId}`, signal: this.runCtl?.signal, scheduledAt: item.epoch });
   }
 
-  private async runAction(action: Action, ctx: RunCtx): Promise<void> {
+  private async runAction(action: Action, ctx: RunCtx): Promise<LogResult[]> {
+    if (ctx.signal?.aborted) return ['skipped'];
+    if (action.type === 'scene' && action.resolvedScene) {
+      await this.runSequence(action.resolvedScene, ctx);
+      return [];
+    }
     if (action.type === 'timeline') {
       this.applyControl(action.op, action.target, action.until ?? 'restart', ctx);
-      return;
+      return ['sent'];
     }
-    if (action.type !== 'udp') return;
+    if (action.type !== 'udp') return [];
     const startedAt = this.clock.now();
     const lagMs = ctx.scheduledAt === undefined ? undefined : startedAt - ctx.scheduledAt;
     const devices = this.resolveDevices(action.targets);
     if (devices.length === 0) {
       this.log({ dir: 'TX', result: 'error', source: ctx.source, detail: '没有可用的目标设备' });
-      return;
+      return ['error'];
     }
-    await Promise.all(
+    const run = action.sceneStep && ctx.recoveryAt === undefined ? this.timedSceneRun(action, ctx) : undefined;
+    if (run?.state === 'cancelled') return ['skipped'];
+    if (run) run.steps[action.sceneStep!.index]!.state = 'running';
+    const results = await Promise.all(
       devices.map((d) => this.sendOne(d, action, { ...ctx, startedAt, lagMs })),
     );
+    if (run && this.sceneRuns.get(run.id)?.state !== 'cancelled') {
+      run.steps[action.sceneStep!.index]!.state = this.stepResult(results);
+      this.finishRun(run);
+    }
+    return results;
   }
 
   private resolveDevices(targets: string[]): Device[] {
@@ -877,7 +991,7 @@ export class Engine extends EventEmitter {
     }
     const order = ++this.dispatchOrder;
     const record = (result: LogResult) => {
-      if (device.id !== '__test' && order >= (this.commands.get(device.id)?.order ?? 0)) this.commands.set(device.id, { at: this.clock.now(), result, source: base.source, order });
+      if (!ctx.signal?.aborted && device.id !== '__test' && order >= (this.commands.get(device.id)?.order ?? 0)) this.commands.set(device.id, { at: this.clock.now(), result, source: base.source, order });
     };
     const dry = this.opts.dryRun === true;
     if (ctx.recoveryAt !== undefined && (this.latestDispatch.get(device.id) ?? -Infinity) > ctx.recoveryAt) {
@@ -906,7 +1020,7 @@ export class Engine extends EventEmitter {
     const attempts = 1 + Math.max(0, reply.retries);
     let last: LogResult = 'error';
     for (let i = 0; i < attempts; i++) {
-      if (!this.running || (!ctx.manual && (this.pausedFlag || this.activeOverride(device.id)))) {
+      if (ctx.signal?.aborted || !this.running || (!ctx.manual && (this.pausedFlag || this.activeOverride(device.id)))) {
         this.log({ ...base, result: 'skipped', detail: '停止、暂停或设备接管：取消后续重试' });
         return 'skipped';
       }
@@ -938,6 +1052,7 @@ export class Engine extends EventEmitter {
         last = res.status === 'skipped' ? 'skipped' : res.status;
         record(last);
         if (res.status === 'confirmed') {
+          if (ctx.signal?.aborted) return 'skipped';
           this.noteDeviceSuccess(device);
           if (order >= (this.commands.get(device.id)?.order ?? 0)) this.noteFeedback(device, res.reply);
           return last;
@@ -1032,7 +1147,7 @@ export class Engine extends EventEmitter {
     const source = `手动·场景「${scene.name}」`;
     this.log({ dir: 'SYS', result: 'info', source, detail: '手动立即执行' });
     this.spawn(this.runActionList(r.actions, this.clock.now(), source, true), '手动执行场景');
-    return expandActions(r.actions).length;
+    return expandActions(resolveActions(draft, [{ id: '__scene', type: 'scene', sceneId: scene.id }], { preview: true }).actions).length;
   }
 
   /** 接下来的 n 个事件点（今天剩余 + 之后几天）。 */
@@ -1075,7 +1190,7 @@ export class Engine extends EventEmitter {
     });
     return {
       devices,
-      sceneRuns: [],
+      sceneRuns: [...this.sceneRuns.values()].slice(-20).reverse(),
       pads: Object.fromEntries(this.padState),
       running: this.running,
       paused: this.pausedFlag,

@@ -4,6 +4,8 @@ import { commandLabel, feedbackLabel, runningModes } from '../lib/operations.ts'
 import { describeDeviceState } from '../lib/deviceState.ts';
 
 const time = (at: number) => new Date(at).toLocaleTimeString('zh-CN', { hour12: false });
+const RUN: Record<string, string> = { running: '执行中', completed: '动作处理完成', failed: '有失败步骤', cancelled: '已停止后续', incomplete: '有未观察步骤' };
+const STEP: Record<string, string> = { pending: '待执行', waiting: '等待中', running: '发送 / 等回包', confirmed: '回包确认', sent: '已发出（未确认）', timeout: '回包超时', mismatch: '回包不符', error: '失败', skipped: '跳过', cancelled: '停止', done: '延时完成', 'not-observed': '启动前未观察' };
 
 export function Overview() {
   const project = useStore((s) => s.runningProject ?? s.project)!;
@@ -53,6 +55,12 @@ export function Overview() {
         </tr>;
       })}
     </tbody></table></div>
+    <div className="overview-heading"><h3>场景执行进度</h3><span className="hint">完成表示动作已处理，设备状态以回读为准。</span></div>
+    {(engine?.sceneRuns ?? []).length ? engine!.sceneRuns.map((run) => <details className="scene-run" key={run.id} open={run.state === 'running'}>
+      <summary><strong>{run.name}</strong><span>{RUN[run.state]} · {run.steps.filter((s) => !['pending', 'waiting', 'running'].includes(s.state)).length}/{run.steps.length}</span><small>{time(run.startedAt)} · {run.source}</small></summary>
+      <ol>{run.steps.map((step, i) => <li key={i}>{step.name}<span>{STEP[step.state] ?? step.state}</span></li>)}</ol>
+      {run.state === 'running' && <button onClick={() => { if (window.confirm(`停止「${run.name}」后续步骤？已经发出的指令不能撤回。`)) void rpc('cancelScene', { runId: run.id }).catch((e) => toast((e as Error).message)); }}>停止后续步骤</button>}
+    </details>) : <p className="hint" style={{ marginBottom: 20 }}>当前引擎尚无场景执行记录。</p>}
     <div className="overview-heading"><h3>最近需关注的记录</h3><button onClick={() => showLogTab('alerts')}>查看全部告警</button></div>
     {failures.length ? failures.map((l, i) => <div className="overview-alert" key={`${l.t}-${i}`}><span>{time(l.t)}</span><p>{l.detail}</p></div>) : <p className="hint">当前加载的日志中没有告警记录。</p>}
   </div>;
