@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { discardDraft, handleEditShortcut, init, lockNow, openSettings, openUnlock, reloadFromEngine, restoreDraft, setView, useStore } from './store.ts';
+import { ApplyDialog } from './components/ApplyDialog.tsx';
 import { Overview } from './components/Overview.tsx';
 import { TopBar } from './components/TopBar.tsx';
 import { Sidebar } from './components/Sidebar.tsx';
@@ -70,7 +71,7 @@ export function App() {
       <EngineVersionBanner />
       {lock.enabled && !lock.unlocked && (
         <div className="banner warn">
-          🔒 编辑已锁定，当前只读：可以查看日程、日志，也可以急停；修改配置需要先解锁。
+          🔒 编辑已锁定，当前只读：可以查看日程、日志，也可以暂停自动日程、操作面板和接管设备；修改配置需要先解锁。
           <button onClick={openUnlock}>解锁</button>
         </div>
       )}
@@ -82,7 +83,7 @@ export function App() {
       )}
       {draftOffer && (
         <div className="banner warn">
-          发现上次没能保存的草稿（{new Date(draftOffer.at).toLocaleString()}，当时项目有错误，所以没有交给引擎）。
+          发现尚未应用的本机草稿（{new Date(draftOffer.at).toLocaleString()}，尚未交给引擎）。
           <button onClick={restoreDraft}>恢复草稿</button>
           <button onClick={discardDraft}>丢弃</button>
         </div>
@@ -109,6 +110,7 @@ export function App() {
         <Inspector />
         <LogPanel />
       </div>
+      <ApplyDialog />
       {settingsOpen && <SettingsDialog />}
       {unlockOpen && <UnlockDialog />}
       {backupOpen && <BackupDialog />}

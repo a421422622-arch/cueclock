@@ -75,6 +75,7 @@ function CueInspector({ timelineId, cueId }: { timelineId: string; cueId: string
   const sel = useStore((s) => s.sel);
   const focusedAction = sel?.kind === 'cue' ? sel.actionId : undefined;
   const targets = cueDevices(project, cue);
+  const draftPending = useStore((s) => s.saveState !== 'saved');
   useEffect(() => {
     if (focusedAction) document.querySelector(`[data-action-id="${CSS.escape(focusedAction)}"]`)?.scrollIntoView({ block: 'nearest' });
   }, [focusedAction]);
@@ -121,7 +122,7 @@ function CueInspector({ timelineId, cueId }: { timelineId: string; cueId: string
       <div className="sech">动作（按顺序，延时会让后面的整体顺延） <span>{cue.actions.length}</span></div>
       <ActionList actions={cue.actions} defaultTarget={cue.defaultTarget} focusedAction={focusedAction} onChange={(next) => patch((c) => (c.actions = next))} />
       <div className="foot">
-        <button onClick={run}>▶ 立即执行</button>
+        <button disabled={draftPending} title={draftPending ? '先应用草稿后再立即执行' : undefined} onClick={run}>▶ 立即执行</button>
         <button onClick={() => {
           const id = genId('c');
           edit((p) => {

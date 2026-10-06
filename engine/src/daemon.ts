@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Command, Device, Project, Scene } from './types.ts';
+import { configurationChanges } from './configuration.ts';
 import { Engine } from './engine.ts';
 import type { LogEntry } from './engine.ts';
 import { ProjectStore, normalizeProject } from './store.ts';
@@ -516,6 +517,18 @@ export class Daemon {
         return validateProject(this.parseProject(p.project));
       }
 
+      case 'previewProject': {
+        const p = obj(params);
+        const project = this.parseProject(p.project);
+        if (p.baseRev !== this.rev) throw new RpcError('conflict', '运行配置已变化，请重新加载后再预览');
+        return { rev: this.rev, changes: configurationChanges(this.project!, project), issues: validateProject(project) };
+      }
+
+      case 'applyProject': {
+        const p = obj(params);
+        return this.serialize(() => this.saveProject({ ...p, forceBackup: true }));
+      }
+
       case 'saveProject': {
         const p = obj(params);
         return this.serialize(() => this.saveProject(p));
@@ -807,7 +820,7 @@ export class Daemon {
     if (issues.some((i) => i.level === 'error')) {
       throw new RpcError('invalid-project', '项目检查未通过，未保存', issues);
     }
-    await this.store!.save(project);
+    await this.store!.save(project, { forceBackup: p.forceBackup === true });
     this.project = project;
     this.rev++;
     if (this.engine) await this.engine.reload(project);

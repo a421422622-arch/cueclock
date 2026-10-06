@@ -10,7 +10,7 @@ type Flash = 'ok' | 'bad';
 
 /** 操作面板：一块按钮网格，现场手动操作。操作模式点按钮就执行；编辑模式点按钮选中、在右侧检查器里改绑定。 */
 export function PadView() {
-  const project = useStore((s) => s.project)!;
+  const project = useStore((s) => s.padEdit ? s.project : s.runningProject ?? s.project)!;
   const padId = useStore((s) => s.padId);
   const editing = useStore((s) => s.padEdit);
   const sel = useStore((s) => s.sel);
@@ -97,7 +97,7 @@ export function PadView() {
         <Seg<'op' | 'edit'> value={editing ? 'edit' : 'op'} onChange={(v) => toggleEdit(v === 'edit')} options={[{ value: 'op', label: '操作' }, { value: 'edit', label: '编辑' }]} />
       </div>
 
-      <div className="hint" style={{ padding: '6px 14px' }}>亮灭与数值表示最后操作记录；设备真实状态请查看「运行总览」。暂停自动日程时仍可手动操作。</div>
+      <div className="hint" style={{ padding: '6px 14px' }}>操作模式使用已应用配置。亮灭与数值表示最后操作记录；设备真实状态请查看「运行总览」。暂停自动日程时仍可手动操作。</div>
       {pad && (
         <div className={`padgrid ${editing ? 'editing' : ''}`} style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
           {pad.tiles.map((t) => {

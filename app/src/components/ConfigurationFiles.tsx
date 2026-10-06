@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { appBridge } from '../transport.ts';
 import type { AppState } from '../transport.ts';
-import { openBackups, toast, useStore } from '../store.ts';
+import { openBackups, prepareApply, toast, useStore } from '../store.ts';
 import { configName } from '../lib/configName.ts';
 
 /** 文件页沿用原生对话框、切换确认、编辑锁和备份恢复。 */
 export function ConfigurationFiles() {
   const project = useStore((s) => s.project)!;
+  const saveState = useStore((s) => s.saveState);
   const file = useStore((s) => s.status?.daemon.projectFile ?? null);
   const [info, setInfo] = useState<AppState | null>(null);
   const bridge = appBridge;
@@ -30,12 +31,13 @@ export function ConfigurationFiles() {
       <span className="configuration-path mono" title={file ?? ''}>{file ?? '尚未读取配置位置'}</span>
       <button disabled={!bridge || !file} onClick={() => void act('reveal')}>在文件夹中显示</button>
     </div>
+    {saveState !== 'saved' && <div className="note warn">当前有本机草稿，运行仍使用已应用配置。<button onClick={() => void prepareApply()}>检查并应用</button></div>}
     <div className="configuration-actions">
       <button className="primary" disabled={!bridge} onClick={() => void act('newProject')}>新建配置…</button>
       <button disabled={!bridge} onClick={() => void act('openProject')}>打开配置…</button>
     </div>
     {!bridge && <div className="hint">新建和打开配置请在桌面应用中操作。</div>}
-    <div className="hint">打开其他配置前会确认切换；当前日程会改为使用新配置。</div>
+    <div className="hint">打开其他配置前会确认切换；当前日程会改为使用新配置。本机草稿按文件保留，重新打开时可恢复。</div>
     <div className="sech">最近配置</div>
     <div className="configuration-recents">
       {!info && bridge ? <div className="empty">读取中…</div> : recent.length === 0 ? <div className="empty">暂无其他最近配置。</div> :

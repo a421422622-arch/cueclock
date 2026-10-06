@@ -469,3 +469,7 @@ select.warnb { border-color: var(--warn); }
 .scene-run ol { margin: 10px 0 10px 24px; }
 .scene-run li { padding: 5px; }
 .scene-run li span { margin-left: 16px; color: var(--muted); }
+
+.apply-dialog { width: min(680px, calc(100vw - 40px)); }
+.apply-changes { padding-left: 20px; margin-bottom: 16px; line-height: 1.8; font-size: 12px; }
+.apply-changes small { color: var(--muted); }

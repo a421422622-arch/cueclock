@@ -1,0 +1,33 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import path from 'node:path';
+import os from 'node:os';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { Daemon } from '../src/daemon.ts';
+import { DaemonClient } from '../src/client.ts';
+import { project } from './helpers.ts';
+
+test('配置预览不改运行项目，应用前强制备份；版本冲突和校验错误保留运行配置', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'cueclock-apply-'));
+  const file = path.join(dir, 'p.json'); const original = project([], { commands: [], scenes: [], pads: [] }); await writeFile(file, JSON.stringify(original));
+  const daemon = new Daemon({ projectFile: file, stateDir: path.join(dir, 'state'), port: 0, dryRun: true }); await daemon.start();
+  const client = DaemonClient.forStateDir(path.join(dir, 'state')); await client.connect();
+  t.after(async () => { client.close(); await daemon.stop(); await rm(dir, { recursive: true, force: true }); });
+  const before = await client.request<{ project: typeof original; rev: number }>('getProject');
+  const draft = structuredClone(original); draft.name = '新名称'; draft.devices[0]!.ip = '127.0.0.2';
+  const preview = await client.request<{ rev: number; changes: string[]; issues: unknown[] }>('previewProject', { project: draft, baseRev: before.rev });
+  assert.equal(preview.rev, before.rev); assert(preview.changes.some((s) => s.includes('设备')));
+  assert.deepEqual((await client.request<typeof before>('getProject')).project, original);
+  assert.deepEqual(JSON.parse(await readFile(file, 'utf8')), original);
+  const applied = await client.request<{ rev: number }>('applyProject', { project: draft, baseRev: preview.rev });
+  assert.equal(applied.rev, before.rev + 1);
+  assert.deepEqual((await client.request<typeof before>('getProject')).project, draft);
+  const backups = await client.request<{ name: string }[]>('listBackups'); assert(backups.length >= 1);
+  await assert.rejects(client.request('applyProject', { project: original, baseRev: before.rev }), { code: 'conflict' });
+  const bad = structuredClone(draft); bad.devices[0]!.ip = 'bad';
+  await assert.rejects(client.request('applyProject', { project: bad, baseRev: applied.rev }), { code: 'invalid-project' });
+  assert.deepEqual((await client.request<typeof before>('getProject')).project, draft);
+  const last = await client.request<{ project: typeof original; rev: number }>('getProject');
+  await client.request('applyProject', { project: original, baseRev: last.rev });
+  assert((await client.request<unknown[]>('listBackups')).length >= 2, '连续应用不受普通保存60秒备份节流限制');
+});

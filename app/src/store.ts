@@ -36,12 +36,13 @@ export interface AppState {
   conn: 'connecting' | 'connected' | 'disconnected';
   loaded: boolean;
   status: DaemonStatus | null;
-  /** 本地草稿，界面上的编辑都改它，防抖后自动保存给引擎 */
+  /** 本地草稿，界面上的编辑都改它，本机自动保存，确认应用才交给引擎 */
   project: Project | null;
   runningProject: Project | null;
   rev: number;
   saveState: SaveState;
   issues: Issue[];
+  applyPreview: { project: Project; rev: number; version: number; changes: string[]; issues: Issue[] } | null;
   logs: LogEntry[];
   sel: Selection;
   modeId: string | null;
@@ -94,6 +95,7 @@ let state: AppState = {
   rev: 0,
   saveState: 'saved',
   issues: [],
+  applyPreview: null,
   logs: [],
   sel: null,
   modeId: null,
@@ -149,7 +151,8 @@ function writeDraft(): void {
   try {
     if (state.project) localStorage.setItem(draftKey(), JSON.stringify({ at: Date.now(), project: state.project }));
   } catch {
-    /* 存储不可用就算了 */
+    set({ saveState: 'error' });
+    toast('本机草稿保存失败，请保持窗口打开并尽快检查应用或导出配置');
   }
 }
 function clearDraft(): void {
@@ -168,9 +171,9 @@ function readDraft(): { at: number; project: Project } | null {
   }
 }
 
-/** 恢复草稿：作为本地修改载入，随后照常尝试保存（仍有错误会在「问题」里显示）。 */
+/** 恢复草稿：作为本地修改载入，等待检查并应用（仍有错误会在「问题」里显示）。 */
 export function restoreDraft(): void {
-  if (state.engineUpdate && !state.engineUpdate.compatible) { toast('界面与引擎协议不兼容，请先确认重启引擎，再恢复本地草稿'); return; }
+  if (state.engineUpdate && !state.engineUpdate.compatible) { toast('界面与引擎协议或功能版本不兼容，请先确认重启引擎，再恢复本地草稿'); return; }
   if (isLocked()) { denyLocked(); return; }
   const d = state.draftOffer;
   if (!d) return;
@@ -204,7 +207,21 @@ function applyStatus(st: DaemonStatus): void {
   if (st.lock && st.lock.enabled !== state.lock.enabled) set({ lock: { enabled: st.lock.enabled, unlocked: st.lock.enabled ? state.lock.unlocked : true } });
   const now = st.engine?.now;
   set({ status: { ...st, engine: normalizeEngineStatus(st.engine) }, ...(now ? { clockOffset: now - Date.now() } : {}) });
+  if (state.loaded && st.daemon.rev !== state.rev && !inflight && !runtimeFetching) {
+    runtimeFetching = true;
+    const session = projectSession;
+    if (editVersion !== savedVersion) set({ saveState: 'conflict' });
+    void transport.request<{ project: Project; rev: number }>('getProject').then((r) => {
+      if (session !== projectSession) return;
+      if (editVersion === savedVersion) {
+        history.clear();
+        set({ project: r.project, runningProject: r.project, rev: r.rev, ...historyState() });
+      } else set({ runningProject: r.project });
+    }).finally(() => { runtimeFetching = false; }).catch(() => {});
+  }
 }
+
+let runtimeFetching = false;
 
 async function loadAll(): Promise<void> {
   const session = ++projectSession;
@@ -218,7 +235,7 @@ async function loadAll(): Promise<void> {
   const changedFile = state.status?.daemon.projectFile !== st.daemon.projectFile;
   if (changedFile || JSON.stringify(state.project) !== JSON.stringify(project)) history.clear();
   editVersion = savedVersion = 0;
-  set({ project, runningProject: project, rev, loaded: true, saveState: 'saved', issues: [], logs, draftOffer: null, ...historyState(),
+  set({ project, runningProject: project, applyPreview: null, rev, loaded: true, saveState: 'saved', issues: [], logs, draftOffer: null, ...historyState(),
     ...(changedFile ? { sel: null, modeId: null, followActive: true } : {}) });
   applyStatus(st);
   void loadAlertHistory();
@@ -262,6 +279,7 @@ export async function init(): Promise<void> {
     } else if (event === 'status') {
       applyStatus(data as DaemonStatus);
     } else if (event === 'project-changed') {
+      protectDraft();
       // 引擎切换了项目（本机或别的客户端触发）：丢弃本地草稿，整体重载
       select(null);
       void loadAll().catch(() => {});
@@ -280,64 +298,67 @@ export async function init(): Promise<void> {
   }, 5000);
 }
 
-// ───────────── 编辑与自动保存 ─────────────
+// ───────────── 编辑草稿与确认应用 ─────────────
 
 let timer: ReturnType<typeof setTimeout> | undefined;
 let inflight = false;
-let again = false;
 
+/** 草稿在本机自动保存并检查；不会自动交给引擎。 */
 function scheduleSave(delay = 700): void {
+  writeDraft();
   clearTimeout(timer);
-  timer = setTimeout(() => void save(), delay);
+  timer = setTimeout(() => void checkDraft(), delay);
 }
 
-async function save(): Promise<void> {
+async function checkDraft(): Promise<void> {
   if (!state.project) return;
-  if (inflight) {
-    again = true;
-    return;
-  }
-  inflight = true;
-  const sentVersion = editVersion;
-  const session = projectSession;
-  set({ saveState: 'saving' });
+  const version = editVersion, session = projectSession;
   try {
-    const r = await transport.request<{ rev: number; warnings: Issue[] }>('saveProject', {
-      project: state.project,
-      baseRev: state.rev,
-    });
+    const issues = await transport.request<Issue[]>('validateProject', { project: state.project });
+    if (version === editVersion && session === projectSession) set({ issues });
+  } catch { /* 断线时草稿保留，运行配置不变。应用时会重新检查。 */ }
+}
+
+export const closeApplyPreview = () => { if (!inflight) set({ applyPreview: null }); };
+
+export async function prepareApply(): Promise<void> {
+  if (isLocked()) { denyLocked(); return; }
+  if (!state.project || state.conn !== 'connected') { toast('请先连接引擎'); return; }
+  const project = structuredClone(state.project), version = editVersion, session = projectSession;
+  try {
+    const r = await transport.request<{ rev: number; changes: string[]; issues: Issue[] }>('previewProject', { project, baseRev: state.rev });
+    if (session === projectSession) set({ applyPreview: { ...r, project, version }, issues: r.issues });
+  } catch (e) {
+    if (e instanceof RpcFailure && e.code === 'conflict') set({ saveState: 'conflict' });
+    toast(`预览失败：${(e as Error).message}`);
+  }
+}
+
+export async function applyConfiguration(): Promise<void> {
+  if (inflight || !state.applyPreview) return;
+  if (isLocked()) { denyLocked(); return; }
+  const preview = state.applyPreview, session = projectSession;
+  inflight = true; set({ saveState: 'saving' });
+  try {
+    const r = await transport.request<{ rev: number; warnings: Issue[] }>('applyProject', { project: preview.project, baseRev: preview.rev });
     if (session !== projectSession) return;
-    savedVersion = sentVersion;
-    if (editVersion === savedVersion) clearDraft();
-    set({ runningProject: state.project, rev: r.rev, issues: r.warnings, saveState: editVersion === savedVersion ? 'saved' : 'dirty' });
+    savedVersion = preview.version;
+    const clean = editVersion === savedVersion;
+    if (clean) clearDraft(); else writeDraft();
+    set({ runningProject: preview.project, rev: r.rev, issues: clean ? r.warnings : state.issues, saveState: clean ? 'saved' : 'dirty', applyPreview: null });
+    toast('配置已应用，旧版本已备份');
   } catch (e) {
     if (session !== projectSession) return;
-    if (e instanceof RpcFailure && e.code === 'invalid-project') {
-      set({ issues: e.details as Issue[], saveState: 'error' });
-      writeDraft(); // 有错误，引擎不会收；本地留一份草稿，免得关窗口丢失
-    } else if (e instanceof RpcFailure && e.code === 'locked') {
-      // 保存途中被自动锁定了：修改仍在草稿里，解锁后会自动继续保存
-      set({ lock: { enabled: true, unlocked: false }, saveState: 'dirty', unlockOpen: true });
-    } else if (e instanceof RpcFailure && e.code === 'conflict') {
-      set({ saveState: 'conflict' });
-    } else {
-      set({ saveState: 'error', toast: `保存失败：${(e as Error).message}` });
-    }
-  } finally {
-    inflight = false;
-    if (again) {
-      again = false;
-      if (state.saveState !== 'conflict') scheduleSave(0);
-    } else if (state.saveState === 'dirty') {
-      scheduleSave(0);
-    }
-  }
+    if (e instanceof RpcFailure && e.code === 'conflict') set({ saveState: 'conflict', applyPreview: null });
+    else if (e instanceof RpcFailure && e.code === 'invalid-project') set({ issues: e.details as Issue[], saveState: 'dirty' });
+    else set({ saveState: 'dirty' });
+    writeDraft(); toast(`应用失败：${(e as Error).message}`);
+  } finally { inflight = false; }
 }
 
-/** 修改草稿：回调里直接改一份克隆，然后触发防抖保存。 */
 export function edit(fn: (draft: Project) => void): void {
   if (!state.project) return;
-  if (state.engineUpdate && !state.engineUpdate.compatible) { toast('界面与引擎协议不兼容，请先确认重启引擎后再编辑'); return; }
+  if (state.engineUpdate && !state.engineUpdate.compatible) { toast('界面与引擎协议或功能版本不兼容，请先确认重启引擎后再编辑'); return; }
   if (isLocked()) { denyLocked(); return; }
   const next = structuredClone(state.project);
   fn(next);
@@ -358,7 +379,7 @@ function restoreEdit(next: EditSnapshot | null): void {
 export function protectDraft(): void { if (editVersion !== savedVersion) writeDraft(); }
 export const undo = () => state.project && editable() && restoreEdit(history.undo(snapshot()));
 export const redo = () => state.project && editable() && restoreEdit(history.redo(snapshot()));
-/** 协议不兼容时不允许编辑（保存会被拦截）；仅构建不同则照常。 */
+/** 协议或功能版本不兼容时不允许编辑（保存会被拦截）；仅构建不同则照常。 */
 function editable(): boolean {
   if (isLocked()) { denyLocked(); return false; }
   return !state.engineUpdate || state.engineUpdate.compatible;
@@ -374,6 +395,7 @@ export function handleEditShortcut(e: KeyboardEvent): void {
 }
 
 export async function reloadFromEngine(): Promise<void> {
+  clearDraft();
   await loadAll();
 }
 

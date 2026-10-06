@@ -36,7 +36,7 @@ export const isLockRecord = (v: unknown): v is LockRecord =>
  */
 export const LOCKED_ALLOWED = new Set([
   'ping', 'status', 'getProject', 'getLogs', 'getAlerts', 'getSettings', 'getNetwork', 'listInterfaces', 'listBackups',
-  'validateProject', 'simulate', 'pause', 'resume', 'lockStatus', 'unlock', 'lock',
+  'validateProject', 'previewProject', 'simulate', 'pause', 'resume', 'lockStatus', 'unlock', 'lock',
   // 操作面板：配置锁定后，现场操作员仍然可以点按钮（这正是「配置上锁、面板可用」的用法）
   'runPadTile', 'resetPadState', 'setDeviceOverride', 'cancelScene',
 ]);

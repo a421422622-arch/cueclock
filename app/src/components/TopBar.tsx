@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
-import { edit, engineNow, lockNow, openUnlock, reloadFromEngine, rpc, showLogTab, toast, useStore } from '../store.ts';
+import { edit, engineNow, lockNow, openUnlock, prepareApply, reloadFromEngine, rpc, showLogTab, toast, useStore } from '../store.ts';
 import { mergeAlerts, unseenCount } from '../lib/alerts.ts';
 import type { SaveState } from '../store.ts';
 import { ProjectMenu } from './ProjectMenu.tsx';
 
 const SAVE_TEXT: Record<SaveState, string> = {
-  saved: '已保存',
-  dirty: '有未保存的修改…',
-  saving: '保存中…',
-  error: '未保存：项目有错误',
+  saved: '运行配置已应用',
+  dirty: '本机草稿 · 尚未应用',
+  saving: '应用中…',
+  error: '草稿保存失败',
   conflict: '冲突：项目已被其他客户端修改',
 };
 
@@ -82,6 +82,7 @@ export function TopBar() {
       <ProjectMenu file={status?.daemon.projectFile ?? null} />
       <input className="projname" value={project.name} onChange={(e) => edit((p) => (p.name = e.target.value))} title={status?.daemon.projectFile} />
       <span className={`savestate ${saveState}`}>{SAVE_TEXT[saveState]}</span>
+      {saveState !== 'saved' && <button className="primary apply-open" disabled={saveState === 'saving' || conn !== 'connected'} onClick={() => void prepareApply()}>检查并应用</button>}
       {saveState === 'conflict' && <button onClick={() => void reloadFromEngine()}>放弃本地修改并重新加载</button>}
       <span className="grow" />
       <Clock />
