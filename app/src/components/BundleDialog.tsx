@@ -77,7 +77,7 @@ export function BundleRestore() {
             <div><small>生成时间</small><b>{new Date(preview.p.createdAt).toLocaleString('zh-CN', { hour12: false })}</b></div>
             <div><small>来源</small><b>{preview.p.from?.engineVersion ?? '未知'} · {preview.p.from?.platform ?? ''}</b></div>
           </div>
-          {c && <p className="hint">包含：{c.devices} 台设备、{c.commands} 条指令、{c.scenes} 个场景、{c.timelines} 个模式（{c.cues} 个事件点）、{c.pads} 个面板（{c.tiles} 个按钮）、{c.triggers} 个触发器；另有 {preview.p.logCount} 条日志和 {preview.p.auditCount} 条操作记录供查阅。</p>}
+          {c && <details className="bundle-extra"><summary>备份内容 · {c.devices} 台设备 · {c.timelines} 个模式 · {c.tiles} 个按钮</summary><p className="hint">包含：{c.devices} 台设备、{c.commands} 条指令、{c.scenes} 个场景、{c.timelines} 个模式（{c.cues} 个事件点）、{c.pads} 个面板（{c.tiles} 个按钮）、{c.triggers} 个触发器；另有 {preview.p.logCount} 条日志和 {preview.p.auditCount} 条操作记录供查阅。</p></details>}
           <p className="note">还原会<b>替换当前正在运行的配置</b>「{preview.p.current.projectName}」。还原前先自动备份当前配置，可以从「从备份恢复」里回到现在的样子。</p>
           {dirty && <p className="note warn">你有尚未应用的本机草稿：它会保留在本机，还原后可以在提示里恢复，但可能和新配置冲突。</p>}
           {preview.p.warnings.map((w, i) => <p key={i} className="note warn">{w}</p>)}

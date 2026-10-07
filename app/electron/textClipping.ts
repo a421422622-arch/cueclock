@@ -65,16 +65,18 @@ export function inspectTextClipping(): TextClipping[] {
   for (const el of [root, ...root.querySelectorAll<HTMLElement>('*')]) {
     if (!(el instanceof HTMLElement) || el.matches('input, textarea, select, option, script, style') || !el.textContent?.trim()) continue;
     const rect = el.getBoundingClientRect(), css = getComputedStyle(el);
-    if (!rect.width || !rect.height || !el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) continue;
+    if (!rect.height || !el.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) continue;
     for (const axis of ['x', 'y'] as const) {
       const client = axis === 'x' ? el.clientWidth : el.clientHeight;
       const scroll = axis === 'x' ? el.scrollWidth : el.scrollHeight;
       const overflow = axis === 'x' ? css.overflowX : css.overflowY;
       if (overflow === 'visible' || scroll <= client + 2) continue;
-      const allowed = axis === 'x' && css.textOverflow === 'ellipsis' ? ellipsis.find(([query]) => el.matches(query!)) : undefined;
+      // 紧凑月历10.5px字体的现有标签宽44px；同样设下限，其余摘要至少48px。
+      const minReadableWidth = el.matches('.tchip') ? 40 : 48;
+      const allowed = axis === 'x' && el.clientWidth >= minReadableWidth && css.textOverflow === 'ellipsis' ? ellipsis.find(([query]) => el.matches(query!)) : undefined;
       const disposition = overflow === 'auto' || overflow === 'scroll' ? 'scrollable' : allowed ? 'ellipsis' : 'unexpected';
       findings.push({ selector: selector(el), text: el.textContent.trim().replace(/\s+/g, ' ').slice(0, 140), axis, client, scroll, overflow, disposition,
-        ...(allowed ? { reason: allowed[1] } : disposition === 'scrollable' ? { reason: '可滚动区域，内容可到达' } : {}) });
+        ...(allowed ? { reason: allowed[1] } : disposition === 'scrollable' ? { reason: '可滚动区域（未验证逐项可达或首屏可见）' } : {}) });
     }
   }
   return findings;

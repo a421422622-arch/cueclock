@@ -2,7 +2,7 @@ import type { BrowserWindow } from 'electron';
 import dgram from 'node:dgram';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { assertLogPerformance, frameStats } from './logPerformance.ts';
+import { waitForLogDelivery, activeFrameWindow, assertLogPerformance, frameStats } from './logPerformance.ts';
 
 type Request = <T>(method: string, params?: unknown) => Promise<T>;
 
@@ -31,9 +31,9 @@ export async function smokeLogPerformance(win: BrowserWindow, request: Request, 
         if(!document.querySelector('.savestate.dirty') || !document.querySelector('.estop').textContent.includes('自动已暂停')) throw Error('帧率测量没有草稿和暂停压力');
         const alarm=document.querySelector('.alertpill'); if(!alarm)throw Error('缺少告警压力');
         [...alarm.childNodes].find(n=>n.nodeType===Node.TEXT_NODE).textContent='99999';
-        const p=window.__cueclockLogPerf={intervals:[],received:0,lastLog:'',start:performance.now(),last:null};
+        const p=window.__cueclockLogPerf={spans:[],received:0,lastLog:'',start:performance.now(),last:null};
         p.off=window.cueclock.onEvent(m=>{if(m.event==='log' && m.data.ascii?.startsWith(${JSON.stringify(tag)})){p.received++;p.lastLog=m.data.ascii;}});
-        const frame=t=>{if(p.last!==null)p.intervals.push(t-p.last);p.last=t;p.raf=requestAnimationFrame(frame);};p.raf=requestAnimationFrame(frame);
+        const frame=t=>{if(p.last!==null)p.spans.push({startMs:p.last-p.start,endMs:t-p.start});p.last=t;p.raf=requestAnimationFrame(frame);};p.raf=requestAnimationFrame(frame);
       })()`);
       const requests: Promise<unknown>[] = [], errors: string[] = [];
       let sent = 0;
@@ -51,16 +51,26 @@ export async function smokeLogPerformance(win: BrowserWindow, request: Request, 
       try { await sleep(3000); } finally { clearInterval(timer); sendDue(); }
       const trafficMs = performance.now() - start;
       await Promise.all(requests);
-      await sleep(400); // 等待200ms日志合并批次和最后一个UDP回环包。
-      const measured = await js<{ intervals: number[]; received: number; frameMs: number; renderedLast: boolean; visible: string }>(`(() => {
+      const settleStart = performance.now();
+      let settleError: string | null = null;
+      try {
+        await waitForLogDelivery(async () => {
+          const state = await js<{ received: number; lastInDOM: boolean }>(`({received:window.__cueclockLogPerf.received,lastInDOM:[...document.querySelectorAll('.logbody .ln .c')].some(e=>e.textContent===${JSON.stringify(tag + sent)})})`);
+          return state.received === sent && udpReceived === sent && state.lastInDOM;
+        });
+      } catch (e) { settleError = (e as Error).message; }
+      const settleWaitMs = performance.now() - settleStart;
+
+      const measured = await js<{ spans: { startMs: number; endMs: number }[]; received: number; probeMs: number; renderedLast: boolean; visible: string }>(`(() => {
         const p=window.__cueclockLogPerf;cancelAnimationFrame(p.raf);p.off();
-        const result={intervals:p.intervals,received:p.received,frameMs:performance.now()-p.start,visible:document.visibilityState,
-          renderedLast:!!p.lastLog && [...document.querySelectorAll('.logbody .ln .c')].some(e=>e.textContent===p.lastLog)};
+        const result={spans:p.spans,received:p.received,probeMs:performance.now()-p.start,visible:document.visibilityState,
+          renderedLast:[...document.querySelectorAll('.logbody .ln .c')].some(e=>e.textContent===${JSON.stringify(tag + sent)})};
         delete window.__cueclockLogPerf;return result;
       })()`);
-      const sample = { width, view, ...measured, trafficMs, sent, udpReceived, errors };
-      samples.push({ ...sample, frames: frameStats(sample.intervals), logsPerSec: sent / (trafficMs / 1000) });
+      const sample = { width, view, ...measured, ...activeFrameWindow(measured.spans, trafficMs), frameMs: trafficMs, trafficMs, sent, udpReceived, errors, settleWaitMs, settleError };
+      samples.push({ ...sample, frames: { ...frameStats(sample.intervals), maxMs: sample.maxGapMs }, logsPerSec: sent / (trafficMs / 1000) });
       assertLogPerformance(sample);
+      if (settleError) throw new Error(settleError);
       if (errors.length) throw new Error(`日志压力请求失败：${errors.join(', ')}`);
       if (outputDir) writeFileSync(path.join(outputDir, `${width}-${view}.png`), (await win.webContents.capturePage()).toPNG());
     }

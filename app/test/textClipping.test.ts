@@ -41,3 +41,12 @@ test('压力夹具包含绑定设备回读的开关和滑块，并保留未绑�
   }
   assert(!tiles.find((t) => t.kind === 'button')!.feedback);
 });
+
+test('四列压力面板同时覆盖单列/双列滑块、长标题开关与带回读角标的普通按钮', () => {
+  const pad = clippingFixture().pads![0]!;
+  assert.equal(pad.columns, 4);
+  const sliders = pad.tiles.filter((t) => t.kind === 'slider');
+  assert(sliders.some((t) => t.size === 1));assert(sliders.some((t) => t.size === 2));
+  assert(pad.tiles.some((t) => t.kind === 'toggle' && t.label.length >= 25));
+  assert(pad.tiles.some((t) => t.kind === 'button' && !!t.feedback && t.label.length >= 25));
+});

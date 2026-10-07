@@ -17,6 +17,7 @@ import { autostart } from './autostart.ts';
 import type { AutostartState } from './autostart.ts';
 import { assessEngine } from '../../engine/src/version.ts';
 import { clippingFixture } from './smokeFixture.ts';
+import { writeThenExit } from './smokeOutput.ts';
 import { smokeLogPerformance } from './smokeLogPerformance.ts';
 import { smokeRuntimeConfiguration } from './smokeRuntimeConfiguration.ts';
 import { smokeClipping } from './smokeClipping.ts';
@@ -439,8 +440,7 @@ async function smokeUi(): Promise<void> {
   const out = argValue('--screenshot');
   if (out) writeFileSync(out, (await win!.webContents.capturePage()).toPNG());
   // 大矩阵报告超过管道缓冲区：等stdout写完再exit，防止验收脚本读到截断JSON。
-  await new Promise<void>((resolve, reject) => process.stdout.write('SMOKE_UI ' + JSON.stringify({ ready, ...(info as object), layout, clipping, runtimeConfiguration, logPerformance, menu: cfg?.menu ?? [], configuration, settings }) + '\n', (error) => error ? reject(error) : resolve()));
-  app.exit(passed ? 0 : 1);
+  await writeThenExit('SMOKE_UI ' + JSON.stringify({ ready, ...(info as object), layout, clipping, runtimeConfiguration, logPerformance, menu: cfg?.menu ?? [], configuration, settings }), passed ? 0 : 1, process.stdout, (code) => app.exit(code));
 }
 
 function daemonPid(): number | null {
@@ -523,8 +523,7 @@ async function smokeApp(): Promise<void> {
   supervisor.dispose();
   await client!.request('shutdown').catch(() => {});
   r.engineStopped = await until(() => !alive(pid1), 5000);
-  console.log('SMOKE_APP ' + JSON.stringify(r));
-  app.exit(0);
+  await writeThenExit('SMOKE_APP ' + JSON.stringify(r), 0, process.stdout, (code) => app.exit(code));
 }
 
 // ───────────── 启动 ─────────────
@@ -584,7 +583,7 @@ if (!ANY_SMOKE && !app.requestSingleInstanceLock()) {
     createWindow(SMOKE_UI || SMOKE_APP ? false : !(startHidden && trayCtl && prefs.keepInTray));
     if (SMOKE_UI) {
       try { await smokeUi(); }
-      catch (e) { console.error('SMOKE_UI ' + JSON.stringify({ ready: false, error: (e as Error).message })); app.exit(1); }
+      catch (e) { await writeThenExit('SMOKE_UI ' + JSON.stringify({ ready: false, error: (e as Error).message }), 1, process.stderr, (code) => app.exit(code)); }
     }
     if (SMOKE_APP) await smokeApp();
   });

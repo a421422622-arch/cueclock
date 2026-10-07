@@ -18,10 +18,12 @@ export function clippingFixture(): Project {
     timelines: [{ id: 'mode', name: '工作日开馆闭馆与设备联动模式', groupId: 'group', cues: [
       { id: 'cue', name: '开馆前设备预热与灯光场景初始化', time: '09:00:00', enabled: false, actions: [action, { id: 'command', type: 'command', commandId: 'tcp' }, { id: 'scene-ref', type: 'scene', sceneId: 'scene' }] },
     ] }],
-    pads: [{ id: 'pad', name: '东侧展厅现场联动操作面板', columns: 3, tiles: [
+    pads: [{ id: 'pad', name: '东侧展厅现场联动操作面板', columns: 4, tiles: [
       { id: 'button', kind: 'button', label: '开馆联动预热与媒体启动', confirm: true, takeoverSec: 900, actions: [{ id: 'ref', type: 'scene', sceneId: 'scene' }] },
-      { id: 'toggle', kind: 'toggle', label: '投影与灯光设备开关', feedback: { deviceId: 'device', field: '设备运行状态', on: ['ON'] }, actions: [action], offActions: [{ ...action, id: 'off', payload: 'OFF' }] },
-      { id: 'slider', kind: 'slider', label: '东侧展厅灯光亮度调节', feedback: { deviceId: 'device', field: '设备运行状态' }, min: 0, max: 100, step: 1, unit: '%', mapping: { min: 0, max: 255 }, actions: [{ ...action, payload: 'DIM {{value}}', reply: null }] },
+      { id: 'toggle', kind: 'toggle', label: '东侧展厅投影与灯光全部设备联合开关及实际运行状态确认', feedback: { deviceId: 'device', field: '设备运行状态', on: ['ON'] }, actions: [action], offActions: [{ ...action, id: 'off', payload: 'OFF' }] },
+      { id: 'slider', kind: 'slider', size: 2, label: '东侧展厅灯光亮度调节', feedback: { deviceId: 'device', field: '设备运行状态' }, min: 0, max: 100, step: 1, unit: '%', mapping: { min: 0, max: 255 }, actions: [{ ...action, payload: 'DIM {{value}}', reply: null }] },
+      { id: 'feedback-button', kind: 'button', label: '东侧展厅所有投影设备预热与媒体播放联动启动并确认现场状态', confirm: true, feedback: { deviceId: 'device', field: '设备运行状态' }, actions: [action] },
+      { id: 'narrow-slider', kind: 'slider', size: 1, label: '单列灯光亮度', min: 0, max: 100, step: 1, unit: '%', feedback: { deviceId: 'device', field: '设备运行状态' }, actions: [{ ...action, payload: 'DIM {{value}}', reply: null }] },
     ] }],
     triggers: [], settings: { recovery: { enabled: false }, localAddress: '127.0.0.1' },
   };
