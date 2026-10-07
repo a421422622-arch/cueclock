@@ -647,3 +647,14 @@ button:active:not(:disabled) { transform: translateY(.5px); }
 /* —— 时间轴工具栏：模式名在上面的标签和主轨道里已有，不再重复；放不下时换行（不裁掉任何控件） —— */
 .mode-context .mode-current, .mode-context > .hint { display: none; }
 .mode-context { gap: 6px; }
+
+/* —— 面板按钮标题：按按钮宽度自动缩字号，行与行均衡（避免「…媒体启 / 动」孤字），长标题不再把按钮撑得过高 —— */
+.padtile { container-type: inline-size; }
+.padtile .pl { text-wrap: balance; }
+@container (max-width: 260px) { .padtile .pl { font-size: 16px; } }
+@container (max-width: 210px) { .padtile .pl { font-size: 14.5px; line-height: 1.35; } .padtile .pb { font-size: 11.5px; } }
+/* 滑块回读不可用：和开关一样用虚线框；滑块圆点停在哪里都不代表设备真实值，所以弱化（仍可拖动发送） */
+.padtile.slider.unknown { border-style: dashed; }
+.padtile.slider.unknown input[type=range] { opacity: .45; }
+.padtile.slider.unknown input[type=range]:hover, .padtile.slider.unknown input[type=range]:active { opacity: 1; }
+

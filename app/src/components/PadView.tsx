@@ -215,7 +215,7 @@ function SliderTile({ padId, tile, value, live, editing, selected, disabled, fla
   };
   return (
     <div
-      className={`padtile slider ${selected ? 'selected' : ''} ${flash ?? ''} ${disabled ? 'off' : ''}`}
+      className={`padtile slider ${selected ? 'selected' : ''} ${flash ?? ''} ${disabled ? 'off' : ''} ${live?.source === 'unknown' && drag === null ? 'unknown' : ''}`}
       style={{ ['--c' as string]: c, ['--t' as string]: textOn(c), gridColumn: tile.size === 2 ? 'span 2' : undefined }}
       onClick={editing ? onSelect : undefined}
     >
