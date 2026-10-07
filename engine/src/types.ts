@@ -1,4 +1,5 @@
 // CueClock 引擎数据模型。项目文件就是这个结构的 JSON。
+import type { ChecksumSpec } from './checksum.ts';
 
 export type PayloadFormat = 'ascii' | 'hex';
 export type Terminator = 'none' | 'cr' | 'lf' | 'crlf';
@@ -35,6 +36,8 @@ export interface Device {
   /** 在线检测（可选）。不设置 = 不主动检测 */
   health?: DeviceHealthConfig;
   feedback?: DeviceFeedbackConfig;
+  /** PJLink 密码（设备没设密码就留空）。明文存在配置文件里——这是投影机的网络控制口令，不是账号密码；别在这里填重要密码 */
+  password?: string;
   /** 界面中目标小时间轴的颜色（#RRGGBB），不影响发送。 */
   color?: string;
   ip: string;
@@ -58,9 +61,20 @@ export interface ReplyCheck extends MatchSpec {
   retries: number; // 失败后重发次数
 }
 
+/**
+ * 传输协议。udp（默认，旧项目没有这个字段）；tcp：每次发送新建一个连接，发完（等完回包）就关；
+ * pjlink：TCP + PJLink 握手认证（投影机/显示器行业标准，默认端口 4352，ASCII，以 CR 结尾）。
+ * 动作类型名仍叫 `udp`（历史原因），实际由 protocol 决定怎么发。只做出站连接，不新增任何入站监听。
+ */
+export type SendProtocol = 'udp' | 'tcp' | 'pjlink';
+export const PJLINK_PORT = 4352;
+
 export interface UdpAction {
   id: string;
   type: 'udp';
+  protocol?: SendProtocol;
+  /** 在内容后追加校验字节（Sum8 / XOR8 / CRC16…），见 checksum.ts */
+  checksum?: ChecksumSpec;
   /** 引擎展开场景时生成，供执行进度关联。 */
   sceneStep?: { refId: string; sceneId: string; name: string; index: number; names: string[] };
   enabled?: boolean;
@@ -119,6 +133,8 @@ export interface Command {
   targets: string[];
   port?: number;
   sendFrom?: string;
+  protocol?: SendProtocol;
+  checksum?: ChecksumSpec;
   format: PayloadFormat;
   payload: string;
   terminator?: Terminator;

@@ -1,6 +1,8 @@
 import dgram from 'node:dgram';
 import { chooseLocal, listInterfaces } from './network.ts';
 import type { NicInfo } from './network.ts';
+import { tcpExchange } from './tcp.ts';
+import type { TcpOpts } from './tcp.ts';
 
 export type ReplyStatus = 'confirmed' | 'mismatch' | 'timeout' | 'skipped';
 
@@ -32,6 +34,8 @@ export interface Transport {
     data: Buffer,
     opts: SendOpts & { timeoutMs: number; accept: (reply: Buffer) => boolean },
   ): Promise<ReplyResult>;
+  /** TCP / PJLink：新建连接 → 发送 →（等回包）→ 关闭。没有实现就说明这个传输层不支持 TCP */
+  sendTcp?(ip: string, port: number, data: Buffer, opts: TcpOpts): Promise<ReplyResult>;
   close(): Promise<void>;
 }
 
@@ -237,6 +241,10 @@ export class UdpTransport implements Transport {
     });
   }
 
+  sendTcp(ip: string, port: number, data: Buffer, opts: TcpOpts): Promise<ReplyResult> {
+    return tcpExchange(ip, port, data, opts);
+  }
+
   async close(): Promise<void> {
     this.closed = true;
     if (this.timer) clearInterval(this.timer);
@@ -253,6 +261,10 @@ export class DryTransport implements Transport {
     this.sent.push({ ip, port, data });
   }
   async sendAndWaitReply(ip: string, port: number, data: Buffer, _opts?: unknown): Promise<ReplyResult> {
+    this.sent.push({ ip, port, data });
+    return { status: 'skipped' };
+  }
+  async sendTcp(ip: string, port: number, data: Buffer, _opts?: unknown): Promise<ReplyResult> {
     this.sent.push({ ip, port, data });
     return { status: 'skipped' };
   }

@@ -1,4 +1,7 @@
-import type { Action, CommandAction, Project, MatchKind, ReplyCheck, Terminator, UdpAction } from '@engine/types.ts';
+import type { Action, CommandAction, Project, MatchKind, ReplyCheck, SendProtocol, Terminator, UdpAction } from '@engine/types.ts';
+import { CHECKSUM_ALGOS } from '@engine/checksum.ts';
+import type { ChecksumAlgo, ChecksumSpec } from '@engine/checksum.ts';
+import { PJLINK_TEMPLATES, pjlinkPatch } from '../lib/pjlink.ts';
 import { paramValues, placeholdersOf, resolveActions, resolveCommandAction, substitute } from '@engine/commands.ts';
 import { expandActions } from '@engine/expand.ts';
 import { substituteSliderAction } from '@engine/padvalue.ts';
@@ -105,6 +108,8 @@ export interface SendValue {
   targets: string[];
   port?: number;
   sendFrom?: string;
+  protocol?: SendProtocol;
+  checksum?: ChecksumSpec;
   format: 'ascii' | 'hex';
   payload: string;
   terminator?: Terminator;
@@ -142,13 +147,15 @@ export function SendEditor({
   const label = (t: string) => (t.startsWith('tag:') ? `标签 ${t.slice(4)}` : (project.devices.find((d) => d.id === t)?.name ?? `？${t}`));
   const known = (t: string) => (t.startsWith('tag:') ? tags.includes(t.slice(4)) : project.devices.some((d) => d.id === t));
   const targetDevices = project.devices.filter((d) => v.targets.includes(d.id) || (d.tag && v.targets.includes(`tag:${d.tag}`)));
-  const noPort = v.port === undefined ? targetDevices.filter((d) => d.port === undefined) : [];
+  const protocol = v.protocol ?? 'udp';
+  const pjlink = protocol === 'pjlink';
+  const noPort = v.port === undefined && !pjlink ? targetDevices.filter((d) => d.port === undefined) : [];
   const defaults = [...new Set(targetDevices.map((d) => d.port).filter((p): p is number => p !== undefined))];
 
   const shown = previewValues ? substitute(v.payload, previewValues) : v.payload;
   const dynamic = triggerTemplate && /\$(?:\$|\d)/.test(shown);
-  const term = v.terminator ?? targetDevices[0]?.terminator ?? 'none';
-  const pv = previewPayload(v.format, shown, term);
+  const term = v.terminator ?? targetDevices[0]?.terminator ?? (pjlink ? 'cr' : 'none');
+  const pv = previewPayload(v.format, shown, term, v.checksum);
   const reply = v.reply;
   const setReply = (r: Partial<ReplyCheck>) => onChange({ reply: { ...(v.reply as ReplyCheck), ...r } });
 
@@ -184,10 +191,34 @@ export function SendEditor({
         </div>
       </Field>
       <Field
+        label="协议"
+        hint={pjlink ? 'PJLink：投影机/显示器行业标准（TCP）。默认端口 4352、自动以 CR 结尾；设备设了密码就在「设备」里填 PJLink 密码。' : protocol === 'tcp' ? 'TCP：每次发送新建连接，发完（或等完回包）就关闭；端口必填。没有回包校验时只表示“交给了对方”，设备是否执行未知。' : undefined}
+      >
+        <Seg<SendProtocol>
+          value={protocol}
+          options={[{ value: 'udp', label: 'UDP' }, { value: 'tcp', label: 'TCP' }, { value: 'pjlink', label: 'PJLink' }]}
+          onChange={(p) => onChange(p === 'pjlink' ? { protocol: p, format: 'ascii', checksum: undefined, port: undefined } : { protocol: p === 'udp' ? undefined : p })} // 切到 PJLink 清掉端口（新指令默认带 5000，会盖住 PJLink 的 4352）
+        />
+        {pjlink && (
+          <select
+            value=""
+            onChange={(e) => {
+              const tpl = PJLINK_TEMPLATES.find((t) => t.id === e.target.value);
+              if (tpl) onChange(pjlinkPatch(tpl));
+            }}
+          >
+            <option value="">套用常用命令…</option>
+            {PJLINK_TEMPLATES.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+          </select>
+        )}
+      </Field>
+      <Field
         label="端口"
         hint={
           noPort.length > 0 ? (
             <span className="err">设备「{noPort.map((d) => d.name).join('、')}」没有默认端口，这里必须填</span>
+          ) : pjlink && v.port === undefined ? (
+            '留空 = PJLink 默认端口 4352'
           ) : v.port === undefined && defaults.length > 0 ? (
             `留空 = 用设备默认端口（${defaults.join('、')}）`
           ) : undefined
@@ -207,10 +238,10 @@ export function SendEditor({
         </Field>
       )}
       <Field label="格式">
-        <Seg value={v.format} options={[{ value: 'ascii', label: 'ASCII' }, { value: 'hex', label: 'HEX' }]} tone={{ ascii: 'a', hex: 'h' }} onChange={(format) => onChange({ format })} />
+        <Seg value={v.format} options={pjlink ? [{ value: 'ascii', label: 'ASCII' }] : [{ value: 'ascii', label: 'ASCII' }, { value: 'hex', label: 'HEX' }]} tone={{ ascii: 'a', hex: 'h' }} onChange={(format) => onChange({ format })} />
         {v.format === 'ascii' && (
           <select value={v.terminator ?? ''} onChange={(e) => onChange({ terminator: (e.target.value || undefined) as Terminator | undefined })}>
-            <option value="">结束符：设备默认</option>
+            <option value="">{pjlink ? '结束符：自动（CR）' : '结束符：设备默认'}</option>
             {(Object.keys(TERM_LABEL) as Terminator[]).map((t) => (
               <option key={t} value={t}>结束符：{TERM_LABEL[t]}</option>
             ))}
@@ -223,6 +254,17 @@ export function SendEditor({
       >
         <input className={`mono ${pv.ok || dynamic ? '' : 'bad'}`} value={v.payload} placeholder={v.format === 'hex' ? 'A5 01 FF' : 'SCENE 12   （支持 \\r \\n \\xFF）'} onChange={(e) => onChange({ payload: e.target.value })} />
       </Field>
+      {!pjlink && (
+        <Field label="校验和" hint={v.checksum ? `追加 ${CHECKSUM_ALGOS.find((a) => a.value === v.checksum!.algo)?.bytes ?? '?'} 字节（在结束符之前）${v.checksum.skip ? `，不含开头 ${v.checksum.skip} 字节` : ''}。${CHECKSUM_ALGOS.find((a) => a.value === v.checksum!.algo)?.note ?? ''}` : '协议要求在内容末尾带校验字节时选择，软件自动算出并追加'}>
+          <span className="row">
+            <select value={v.checksum?.algo ?? ''} onChange={(e) => onChange({ checksum: e.target.value ? { algo: e.target.value as ChecksumAlgo, ...(v.checksum?.skip ? { skip: v.checksum.skip } : {}) } : undefined })}>
+              <option value="">不追加</option>
+              {CHECKSUM_ALGOS.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
+            </select>
+            {v.checksum && <>跳过开头 <NumInput value={v.checksum.skip ?? 0} width={44} onChange={(x) => onChange({ checksum: { ...v.checksum!, skip: x || undefined } })} /> 字节</>}
+          </span>
+        </Field>
+      )}
       {testable && (
         <Field label="测试" hint={runtimeOnly(v.payload) ? '内容里有运行时才有的值（$1 捕获或 {{value}} / {{hex}}），不能当场测试' : '真的会发出：目标、端口、内容按上面的设置，偏移不参与'}>
           <span className="testbar inline">
@@ -304,7 +346,7 @@ function CommandBody({ a, onChange, triggerTemplate = false, sliderSample }: { a
   const { missing } = paramValues(cmd, a.args);
   const resolved = resolveCommandAction(cmd, sliderSample === undefined ? a : (substituteSliderAction(a, sliderSample) as CommandAction));
   const dynamic = triggerTemplate && Object.values(a.args ?? {}).some((v) => /\$(?:\$|\d)/.test(v));
-  const pv = resolved.action ? previewPayload(resolved.action.format, resolved.action.payload, resolved.action.terminator ?? 'none') : null;
+  const pv = resolved.action ? previewPayload(resolved.action.format, resolved.action.payload, resolved.action.terminator ?? (resolved.action.protocol === 'pjlink' ? 'cr' : 'none'), resolved.action.checksum) : null;
   const setArg = (name: string, value: string) => {
     const args = { ...(a.args ?? {}) };
     if (value === '') delete args[name];

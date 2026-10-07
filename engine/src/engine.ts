@@ -22,7 +22,17 @@ import { readFeedback } from './operations.ts';
 import { formatClock, formatTime } from './time.ts';
 import type { NetworkSettings } from './network.ts';
 import { staggerMs, systemPing } from './health.ts';
+import { PJLINK_PORT } from './types.ts';
+import type { SendProtocol } from './types.ts';
+import type { ReplyResult } from './udp.ts';
 import type { PingResult } from './health.ts';
+
+/** 传输协议在日志里的标记（UDP 不标，保持原样）。 */
+const protocolTag = (p: SendProtocol | undefined): string => (p === 'tcp' ? ' · TCP' : p === 'pjlink' ? ' · PJLink' : '');
+/** 端口：动作里填的 > 设备默认端口 > PJLink 固定端口 4352。 */
+const portFor = (a: { port?: number; protocol?: SendProtocol }, d: { port?: number }): number | undefined => a.port ?? d.port ?? (a.protocol === 'pjlink' ? PJLINK_PORT : undefined);
+/** 结束符：动作里填的 > 设备默认 > PJLink 要求以 CR 结尾 > 无。 */
+const terminatorFor = (a: { terminator?: 'none' | 'cr' | 'lf' | 'crlf'; protocol?: SendProtocol }, d: { terminator?: 'none' | 'cr' | 'lf' | 'crlf' }) => a.terminator ?? d.terminator ?? (a.protocol === 'pjlink' ? 'cr' : 'none');
 
 export type LogResult =
   | 'pending'
@@ -401,25 +411,37 @@ export class Engine extends EventEmitter {
     const r = resolveCommandAction(cmd, { id: '__probe', type: 'command', commandId: cmd.id, args: h.probe?.args });
     if (!r.action) throw new Error(r.error);
     const a = r.action;
-    const port = a.port ?? device.port;
+    const port = portFor(a, device);
     if (port === undefined) throw new Error('探测指令没有端口，设备也没有默认端口');
     if (!a.reply) throw new Error(`探测指令「${cmd.name}」必须开启回包校验`);
     if (!this.transport) throw new Error('引擎未运行');
-    const reply = a.reply;
     const order = this.dispatchOrder;
-    const res = await this.transport.sendAndWaitReply(device.ip, port, buildPayload(a.format, a.payload, a.terminator ?? device.terminator ?? 'none'), {
-      from: a.sendFrom,
-      timeoutMs: reply.timeoutMs,
-      accept: (b) => { try { return matchBuffer(b, reply).matched; } catch { return false; } },
-    });
+    const label = a.protocol === 'pjlink' ? 'PJLink' : a.protocol === 'tcp' ? 'TCP' : 'UDP';
+    let res: ReplyResult;
+    try {
+      res = await this.replyExchange(device, a, buildPayload(a.format, a.payload, terminatorFor(a, device), a.checksum), port, a.reply);
+    } catch (e) {
+      return { ok: false, method: 'udp', detail: `${label} 探测失败：${(e as Error).message}` };
+    }
     const ok = res.status === 'confirmed';
     if (ok) this.noteFeedback(device, res.reply, order);
-    return { ok, method: 'udp', rttMs: res.rttMs, detail: ok ? `UDP 探测收到回包${res.rttMs !== undefined ? `（${res.rttMs}ms）` : ''}` : res.status === 'mismatch' ? 'UDP 探测收到的回包不符合期望' : 'UDP 探测超时，没有回包' };
+    return { ok, method: 'udp', rttMs: res.rttMs, detail: ok ? `${label} 探测收到回包${res.rttMs !== undefined ? `（${res.rttMs}ms）` : ''}` : res.status === 'mismatch' ? `${label} 探测收到的回包不符合期望` : `${label} 探测超时，没有回包` };
+  }
+
+  /** 发一次并等回包：UDP 走常驻套接字，TCP / PJLink 新建连接。回包校验（回包要符合什么）由 reply 决定。 */
+  private replyExchange(device: Device, action: { protocol?: SendProtocol; sendFrom?: string }, buf: Buffer, port: number, reply: NonNullable<UdpAction['reply']>): Promise<ReplyResult> {
+    const accept = (b: Buffer) => { try { return matchBuffer(b, reply).matched; } catch { return false; } };
+    const transport = this.transport!;
+    if (action.protocol === 'tcp' || action.protocol === 'pjlink') {
+      if (!transport.sendTcp) return Promise.reject(new Error('当前传输层不支持 TCP'));
+      return transport.sendTcp(device.ip, port, buf, { from: action.sendFrom, waitReply: true, timeoutMs: reply.timeoutMs, accept, ...(action.protocol === 'pjlink' ? { pjlink: { password: device.password } } : {}) });
+    }
+    return transport.sendAndWaitReply(device.ip, port, buf, { from: action.sendFrom, timeoutMs: reply.timeoutMs, accept });
   }
 
   private healthSig(d: Device): string {
     const cmd = d.health?.mode === 'udp' ? this.project.commands?.find((c) => c.id === d.health!.probe?.commandId) : undefined;
-    return JSON.stringify([d.ip, d.port, d.enabled, d.health, cmd && [cmd.payload, cmd.port, cmd.reply, cmd.format, cmd.terminator, cmd.params]]);
+    return JSON.stringify([d.ip, d.port, d.password, d.enabled, d.health, cmd && [cmd.payload, cmd.port, cmd.reply, cmd.format, cmd.terminator, cmd.params, cmd.protocol, cmd.checksum]]);
   }
 
   /** 让后台检测循环与当前项目一致：没变的设备不动（不重置节奏），变了/删了的重启或停止，新增的启动。 */
@@ -969,7 +991,8 @@ export class Engine extends EventEmitter {
     action: UdpAction,
     ctx: RunCtx & { startedAt: number; lagMs?: number },
   ): Promise<LogResult> {
-    const port = action.port ?? device.port;
+    const port = portFor(action, device);
+    const tag = protocolTag(action.protocol);
     const remote = `${device.ip}:${port ?? '?'}`;
     const base = { deviceId: device.id, dir: 'TX' as const, remote, source: action.commandName && !ctx.source.includes(action.commandName) ? `${ctx.source}【${action.commandName}】` : ctx.source, scheduledAt: ctx.scheduledAt, lagMs: ctx.lagMs };
     if (device.enabled === false) {
@@ -982,7 +1005,7 @@ export class Engine extends EventEmitter {
     }
     let buf: Buffer;
     try {
-      buf = buildPayload(action.format, action.payload, action.terminator ?? device.terminator ?? 'none');
+      buf = buildPayload(action.format, action.payload, terminatorFor(action, device), action.checksum);
     } catch (e) {
       this.sendFailed(device, base, (e as Error).message, false);
       return 'error';
@@ -1010,8 +1033,13 @@ export class Engine extends EventEmitter {
     if (!dry) record('pending');
     if (!action.reply) {
       try {
-        await transport.send(device.ip, port, buf, { from: action.sendFrom });
-        this.log({ ...base, ...shown, t: ctx.startedAt, result: dry ? 'skipped' : 'sent', detail: dry ? '模拟，未发送' : device.name });
+        if (action.protocol === 'tcp' || action.protocol === 'pjlink') {
+          if (!transport.sendTcp) throw new Error('当前传输层不支持 TCP');
+          await transport.sendTcp(device.ip, port, buf, { from: action.sendFrom, waitReply: false, ...(action.protocol === 'pjlink' ? { pjlink: { password: device.password } } : {}) });
+        } else {
+          await transport.send(device.ip, port, buf, { from: action.sendFrom });
+        }
+        this.log({ ...base, ...shown, t: ctx.startedAt, result: dry ? 'skipped' : 'sent', detail: dry ? '模拟，未发送' : `${device.name}${tag}` });
         record(dry ? 'skipped' : 'sent');
         return dry ? 'skipped' : 'sent';
       } catch (e) {
@@ -1034,17 +1062,7 @@ export class Engine extends EventEmitter {
         return 'skipped';
       }
       try {
-        const res = await transport.sendAndWaitReply(device.ip, port, buf, {
-          from: action.sendFrom,
-          timeoutMs: reply.timeoutMs,
-          accept: (b) => {
-            try {
-              return matchBuffer(b, reply).matched;
-            } catch {
-              return false;
-            }
-          },
-        });
+        const res = await this.replyExchange(device, action, buf, port, reply);
         const tail = res.reply ? ` · 回包 ${describeAscii(res.reply)}` : '';
         const rtt = res.rttMs === undefined ? '' : ` · ${res.rttMs}ms`;
         this.log({
@@ -1052,7 +1070,7 @@ export class Engine extends EventEmitter {
           ...shown,
           t: i === 0 ? ctx.startedAt : undefined,
           result: res.status === 'skipped' ? 'skipped' : res.status,
-          detail: `${device.name} · 第 ${i + 1}/${attempts} 次${rtt}${tail}${res.status === 'skipped' ? ' · 模拟，未发送' : ''}`,
+          detail: `${device.name}${tag} · 第 ${i + 1}/${attempts} 次${rtt}${tail}${res.status === 'skipped' ? ' · 模拟，未发送' : ''}`,
         });
         last = res.status === 'skipped' ? 'skipped' : res.status;
         record(last);
@@ -1124,7 +1142,7 @@ export class Engine extends EventEmitter {
     if (!r.action) throw new Error(r.error);
     // 代入参数后的最终内容要当场检查：HEX 位数、转义错误等，别等到后台发送时才悄悄记一条日志
     try {
-      buildPayload(r.action.format, r.action.payload, r.action.terminator);
+      buildPayload(r.action.format, r.action.payload, r.action.terminator, r.action.checksum);
     } catch (err) {
       throw new Error(`发送内容无效：${(err as Error).message}`);
     }
@@ -1144,7 +1162,7 @@ export class Engine extends EventEmitter {
     const r = resolveCommandAction(cmd, { id: '__cmd', type: 'command', commandId: cmd.id, args });
     if (!r.action) throw new Error(r.error);
     try {
-      buildPayload(r.action.format, r.action.payload, r.action.terminator);
+      buildPayload(r.action.format, r.action.payload, r.action.terminator, r.action.checksum);
     } catch (err) {
       throw new Error(`发送内容无效：${(err as Error).message}`);
     }
@@ -1184,7 +1202,7 @@ export class Engine extends EventEmitter {
     for (const a of r.actions) {
       if (a.type !== 'udp') continue;
       try {
-        buildPayload(a.format, a.payload, a.terminator);
+        buildPayload(a.format, a.payload, a.terminator, a.checksum);
       } catch (err) {
         throw new Error(`发送内容无效：${(err as Error).message}`);
       }

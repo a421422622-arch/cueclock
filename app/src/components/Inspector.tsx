@@ -318,6 +318,9 @@ function DeviceInspector({ id }: { id: string }) {
         <Field label="标签" hint="动作里可以直接选「标签」作为目标，一次发给同标签的所有设备">
           <input value={d.tag ?? ''} placeholder="如：灯光、投影" onChange={(e) => patch((x) => (x.tag = e.target.value || undefined))} />
         </Field>
+        <Field label="PJLink 密码" hint="只用于「协议 = PJLink」的指令；设备没设密码就留空。明文保存在配置文件里——这是投影机的网络控制口令，别填重要密码。">
+          <input type="password" autoComplete="off" value={d.password ?? ''} placeholder="（可选）" onChange={(e) => patch((x) => (x.password = e.target.value || undefined))} />
+        </Field>
         <Field label="启用"><Check checked={d.enabled !== false} onChange={(v) => patch((x) => (x.enabled = v))} label="参与发送（关闭后动作跳过此设备）" /></Field>
       </div>
       <HealthSection device={d} patch={patch} />

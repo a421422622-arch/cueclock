@@ -73,5 +73,12 @@ export class RecordingTransport implements Transport {
     this.sent.push({ ip, port, text: data.toString('latin1') });
     return this.replies.shift() ?? { status: 'timeout' };
   }
+  /** TCP / PJLink 的发送记录（含是否等回包、PJLink 密码），回包同样可编排（tcpReplies） */
+  tcpSent: { ip: string; port: number; text: string; waitReply: boolean; pjlinkPassword?: string | null }[] = [];
+  tcpReplies: ReplyResult[] = [];
+  async sendTcp(ip: string, port: number, data: Buffer, opts: { waitReply: boolean; pjlink?: { password?: string } }): Promise<ReplyResult> {
+    this.tcpSent.push({ ip, port, text: data.toString('latin1'), waitReply: opts.waitReply, pjlinkPassword: opts.pjlink ? (opts.pjlink.password ?? '') : null });
+    return opts.waitReply ? (this.tcpReplies.shift() ?? { status: 'timeout' }) : { status: 'confirmed' };
+  }
   async close(): Promise<void> {}
 }

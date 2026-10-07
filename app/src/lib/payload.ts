@@ -1,6 +1,9 @@
 // 界面里的发送内容预览（浏览器侧轻量实现，不依赖 Node 的 Buffer）。
 // 真正发送前，引擎会用自己的实现再校验一遍，两边规则保持一致。
 
+import { checksumBytes } from '../../../engine/src/checksum.ts';
+import type { ChecksumSpec } from '../../../engine/src/checksum.ts';
+
 export type Terminator = 'none' | 'cr' | 'lf' | 'crlf';
 
 export interface Preview {
@@ -51,9 +54,11 @@ function hexBytes(text: string): number[] {
   return out;
 }
 
-export function previewPayload(format: 'ascii' | 'hex', text: string, terminator: Terminator = 'none'): Preview {
+export function previewPayload(format: 'ascii' | 'hex', text: string, terminator: Terminator = 'none', checksum?: ChecksumSpec | null): Preview {
   try {
-    const body = format === 'hex' ? hexBytes(text) : asciiBytes(text);
+    const parsed = format === 'hex' ? hexBytes(text) : asciiBytes(text);
+    if (parsed.length === 0) return { ok: false, bytes: [], error: '内容为空' };
+    const body = checksum ? [...parsed, ...checksumBytes(Uint8Array.from(parsed), checksum)] : parsed;
     const bytes = format === 'ascii' ? [...body, ...TERM[terminator]] : body;
     if (bytes.length === 0) return { ok: false, bytes, error: '内容为空' };
     return { ok: true, bytes };

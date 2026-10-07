@@ -36,9 +36,9 @@ export const requiredParams = (cmd: Pick<Command, 'params'>): string[] => (cmd.p
 export const runtimeOnly = (payload: string): boolean => /\$(?:\$|\d)|\{\{\s*(?:value|hex)\s*\}\}/.test(payload);
 
 /** 把自定义 UDP 动作临时包成一条指令，用同一个「立即发送」入口测试。偏移不参与（测试就是现在发）。 */
-export function adHocCommand(v: Pick<Command, 'targets' | 'port' | 'sendFrom' | 'format' | 'payload' | 'terminator' | 'repeat' | 'repeatGapMs' | 'reply' | 'chase'>, name = '自定义 UDP'): Command {
+export function adHocCommand(v: Pick<Command, 'targets' | 'port' | 'sendFrom' | 'protocol' | 'checksum' | 'format' | 'payload' | 'terminator' | 'repeat' | 'repeatGapMs' | 'reply' | 'chase'>, name = '自定义 UDP'): Command {
   return {
-    id: '__adhoc', name, targets: v.targets, port: v.port, sendFrom: v.sendFrom, format: v.format, payload: v.payload,
+    id: '__adhoc', name, targets: v.targets, port: v.port, sendFrom: v.sendFrom, protocol: v.protocol, checksum: v.checksum, format: v.format, payload: v.payload,
     terminator: v.terminator, repeat: v.repeat, repeatGapMs: v.repeatGapMs, reply: v.reply, chase: v.chase,
   };
 }

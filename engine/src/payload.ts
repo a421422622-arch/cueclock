@@ -1,4 +1,6 @@
 import type { PayloadFormat, Terminator } from './types.ts';
+import { checksumBytes } from './checksum.ts';
+import type { ChecksumSpec } from './checksum.ts';
 
 export class PayloadError extends Error {}
 
@@ -77,9 +79,11 @@ export function parsePayload(format: PayloadFormat, text: string): Buffer {
   return format === 'hex' ? parseHex(text) : parseAscii(text);
 }
 
-/** 构造要发送的字节。结束符只对 ASCII 生效。 */
-export function buildPayload(format: PayloadFormat, text: string, terminator: Terminator = 'none'): Buffer {
-  const body = parsePayload(format, text);
+/** 构造要发送的字节：内容 → 追加校验字节（可选）→ 结束符（只对 ASCII 生效）。 */
+export function buildPayload(format: PayloadFormat, text: string, terminator: Terminator = 'none', checksum?: ChecksumSpec | null): Buffer {
+  const parsed = parsePayload(format, text);
+  if (parsed.length === 0) throw new PayloadError('发送内容为空');
+  const body = checksum ? Buffer.concat([parsed, checksumBytes(parsed, checksum)]) : parsed;
   const out = format === 'ascii' ? Buffer.concat([body, TERMINATORS[terminator]]) : body;
   if (out.length === 0) throw new PayloadError('发送内容为空');
   return out;

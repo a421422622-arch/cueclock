@@ -1,4 +1,5 @@
-import type { Action, Command, PadTile, Project, Scene } from './types.ts';
+import type { Action, Command, PadTile, Project, Scene, SendProtocol } from './types.ts';
+import { isChecksumAlgo } from './checksum.ts';
 import { sliderOutput, sliderRange, sliderTexts, substituteSliderAction, usesSliderValue } from './padvalue.ts';
 import { isDateKey } from './calendar.ts';
 import { buildPayload, parsePayload } from './payload.ts';
@@ -68,6 +69,13 @@ export function validateProject(p: Project): Issue[] {
   }
 
   for (const d of p.devices) {
+    if (d.password !== undefined) {
+      if (typeof d.password !== 'string' || !/^[\x20-\x7e]*$/.test(d.password)) err(`devices/${d.id}`, 'PJLink 密码只能是可见 ASCII 字符');
+      else if (d.password.length > 32) warn(`devices/${d.id}`, 'PJLink 密码一般不超过 32 个字符，请核对设备说明');
+    }
+  }
+
+  for (const d of p.devices) {
     const h = d.health;
     if (!h) continue;
     const path = `devices/${d.id}`;
@@ -94,7 +102,7 @@ export function validateProject(p: Project): Issue[] {
   }
 
   /** 目标能解析到设备，且每个设备都有可用端口（指令/动作里的端口优先，其次设备默认端口）。 */
-  const checkTargets = (path: string, targets: string[], port: number | undefined) => {
+  const checkTargets = (path: string, targets: string[], port: number | undefined, protocol?: SendProtocol) => {
     if (targets.length === 0) err(path, '没有选择目标设备');
     if (port !== undefined && !validPort(port)) err(path, `端口 ${port} 非法`);
     for (const t of targets) {
@@ -107,7 +115,7 @@ export function validateProject(p: Project): Issue[] {
         err(path, `找不到设备 "${t}"`);
         continue;
       }
-      if (port === undefined) {
+      if (port === undefined && protocol !== 'pjlink') { // PJLink 有固定默认端口 4352
         const list = t.startsWith('tag:') ? p.devices.filter((d) => d.tag === t.slice(4)) : p.devices.filter((d) => d.id === t);
         for (const d of list) if (d.port === undefined) err(path, `设备「${d.name}」没有默认端口，请在指令里填端口，或给设备设置默认端口`);
       }
@@ -115,10 +123,24 @@ export function validateProject(p: Project): Issue[] {
   };
 
   /** 一条会真正发送的 UDP 内容（指令展开后的，或自定义的）。 */
-  const checkSend = (path: string, a: Pick<Command, 'targets' | 'port' | 'format' | 'payload' | 'terminator' | 'repeat' | 'reply'> & { offsetMs?: number }) => {
-    checkTargets(path, a.targets, a.port);
+  const checkSend = (path: string, a: Pick<Command, 'targets' | 'port' | 'format' | 'payload' | 'terminator' | 'repeat' | 'reply' | 'protocol' | 'checksum'> & { offsetMs?: number }) => {
+    const protocol = a.protocol ?? 'udp';
+    if (protocol !== 'udp' && protocol !== 'tcp' && protocol !== 'pjlink') {
+      err(path, `传输协议 "${String(a.protocol)}" 不支持（只有 udp / tcp / pjlink）`);
+      return;
+    }
+    checkTargets(path, a.targets, a.port, protocol);
+    if (a.checksum !== undefined) {
+      if (!isChecksumAlgo(a.checksum.algo)) err(path, `校验算法 "${String(a.checksum.algo)}" 不支持`);
+      else if (a.checksum.skip !== undefined && !(Number.isInteger(a.checksum.skip) && a.checksum.skip >= 0)) err(path, '校验和「跳过字节数」必须是 ≥ 0 的整数');
+    }
+    if (protocol === 'pjlink') {
+      if (a.format !== 'ascii') err(path, 'PJLink 是 ASCII 协议，内容格式必须选 ASCII');
+      else if (!/^%[12]/.test(a.payload)) warn(path, 'PJLink 命令应以 %1 或 %2 开头，如 %1POWR 1');
+      if (a.checksum) err(path, 'PJLink 不使用校验和');
+    }
     try {
-      buildPayload(a.format, a.payload, a.terminator);
+      buildPayload(a.format, a.payload, a.terminator, a.checksum);
     } catch (e) {
       err(path, `发送内容无效：${(e as Error).message}`);
     }
