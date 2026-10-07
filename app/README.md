@@ -18,6 +18,9 @@ npm start                          # build 后启动桌面应用
 npm run typecheck
 npm test                           # 界面共享逻辑和桌面生命周期的单元测试
 npm run verify:isolated             # 完整基线：测试、类型、构建和三项隔离smoke
+node scripts/release.mjs build      # 正式部署：构建并复制成 ~/CueClock-run/releases/<版本>-<时间>/，独立自检
+node scripts/release.mjs switch <目录>  # 切换正式运行（备份数据、写登录守护、只改界面时保留引擎），见 deliverables/Mac部署与守护验收.md
+node scripts/release.mjs status     # 查看正式引擎与登录项
 node scripts/make-icons.mjs       # 重新生成托盘/应用图标（assets/，已生成，一般不用跑）
 
 # 不开 Electron，在浏览器里调试界面（需要一个正在运行的引擎）：

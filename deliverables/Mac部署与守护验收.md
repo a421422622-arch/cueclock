@@ -54,3 +54,16 @@
 - **未验证**：正式程序/数据路径的切换，当前用户登录项实际注销登录，断电、长期运行、实体设备与Windows；Documents故障根因。
 
 记录在 `.codex-work/20261007-部署守护验证/`，包括脚本、结果JSON、日志与清理记录。本次只确认可用部署位置与测试行为，没有自动启用正式守护。
+
+## 2026-10-07 晚：正式切换已完成（Claude）
+
+用户确认「都做」后，按上面的方案切换了正式运行，用 `app/scripts/release.mjs` 完成，过程见 `交接文档.md` 第 33 节。
+
+- 正式程序：`~/CueClock-run/releases/<版本>-<时间>/`（Electron 运行时 + `app/{dist,assets,package.json}` + `release.json`）。数据仍在 `~/Library/Application Support/CueClock/`。
+- 登录项 `com.cueclock.app`：开机启动（`--hidden`），异常退出由 launchd 拉起（`SuccessfulExit:false`，节流 10 秒），正常退出不拉；界面监督引擎。
+- 切换前后核对：项目文件逐字节相同，暂停 / 接管保留，47800 上只有一个引擎。
+- 在正式登录项上实测：强杀引擎 → 约 2.5 秒恢复；强杀界面 → launchd 0.5 秒内拉起，新界面接管原引擎；再次强杀引擎 → 新界面照样拉起。
+- **以后升级**：`cd app && node scripts/release.mjs build`，再 `node scripts/release.mjs switch <新目录>`。只改界面时引擎不重启。
+- **回滚**：`launchctl bootout gui/$(id -u)/com.cueclock.app`，把 `~/CueClock-run/backups/<时间>-切换前/` 里的 plist（首次切换前没有 plist，就是删除登录项）和数据放回去，再用旧版本目录 `bootstrap`。新旧程序不能同时指向一个状态目录。
+- **仍未验证**：注销后重新登录、开机、断电、长期运行、Windows。
+
