@@ -2,6 +2,8 @@
 import type { ChecksumSpec } from './checksum.ts';
 
 export type PayloadFormat = 'ascii' | 'hex';
+/** 发送内容的格式：ascii / hex，或 osc（内容写成「地址 参数…」，引擎生成 OSC 1.0 字节，见 osc.ts；只支持 UDP） */
+export type SendFormat = PayloadFormat | 'osc';
 export type Terminator = 'none' | 'cr' | 'lf' | 'crlf';
 export type MatchKind = 'exact' | 'prefix' | 'contains' | 'regex';
 export type DayKind = 'workday' | 'makeupWorkday' | 'weekend' | 'holiday';
@@ -86,7 +88,7 @@ export interface UdpAction {
   sendFrom?: string;
   /** 由指令展开而来时，记下指令名（日志/预览显示用） */
   commandName?: string;
-  format: PayloadFormat;
+  format: SendFormat;
   payload: string;
   terminator?: Terminator; // 缺省取设备的结束符
   offsetMs?: number; // 相对事件点
@@ -135,7 +137,7 @@ export interface Command {
   sendFrom?: string;
   protocol?: SendProtocol;
   checksum?: ChecksumSpec;
-  format: PayloadFormat;
+  format: SendFormat;
   payload: string;
   terminator?: Terminator;
   params?: CommandParam[];

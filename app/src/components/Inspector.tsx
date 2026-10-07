@@ -409,7 +409,7 @@ function CommandInspector({ id }: { id: string }) {
   const refs = allActions(project).filter((a) => a.type === 'command' && a.commandId === id).length;
 
   // 预览时没有默认值的参数用占位值代入，免得预览里全是空
-  const previewValues = Object.fromEntries(params.map((p) => [p.name, p.default ?? (cmd.format === 'hex' ? '00' : '·')]));
+  const previewValues = Object.fromEntries(params.map((p) => [p.name, p.default ?? (cmd.format === 'hex' ? '00' : cmd.format === 'osc' ? '0' : '·')]));
   const [testArgs, setTestArgs] = useState<Record<string, string>>({});
   const tester = useCommandTest();
   const missing = requiredParams(cmd).filter((n) => !(testArgs[n] ?? '').length);

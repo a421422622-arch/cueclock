@@ -129,6 +129,14 @@ export function validateProject(p: Project): Issue[] {
       err(path, `传输协议 "${String(a.protocol)}" 不支持（只有 udp / tcp / pjlink）`);
       return;
     }
+    if (a.format !== 'ascii' && a.format !== 'hex' && a.format !== 'osc') {
+      err(path, `内容格式 "${String(a.format)}" 不支持（只有 ascii / hex / osc）`);
+      return;
+    }
+    if (a.format === 'osc') {
+      if (protocol !== 'udp') err(path, 'OSC 目前只支持 UDP（TCP 上的 OSC 需要另外的分帧，暂不支持）');
+      if (a.checksum) err(path, 'OSC 不使用校验和');
+    }
     checkTargets(path, a.targets, a.port, protocol);
     if (a.checksum !== undefined) {
       if (!isChecksumAlgo(a.checksum.algo)) err(path, `校验算法 "${String(a.checksum.algo)}" 不支持`);
@@ -172,7 +180,7 @@ export function validateProject(p: Project): Issue[] {
     // 用默认值（没有默认值的先填空）试着构造一次，提前发现 HEX 位数、转义错误
     const { values } = paramValues(c, undefined);
     const probe: Record<string, string> = {};
-    for (const prm of c.params ?? []) probe[prm.name] = values[prm.name] ?? (c.format === 'hex' ? '00' : 'x');
+    for (const prm of c.params ?? []) probe[prm.name] = values[prm.name] ?? (c.format === 'hex' ? '00' : c.format === 'osc' ? '0' : 'x');
     const r = resolveCommandAction(c, { id: '_', type: 'command', commandId: c.id, args: probe });
     if (r.action) checkSend(path, r.action);
   }

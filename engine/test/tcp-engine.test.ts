@@ -124,3 +124,28 @@ test('校验：协议、校验和、PJLink 约束', () => {
   const badPw = mk({ commands: [cmd()] }); badPw.devices[0]!.password = '密码';
   assert.match(errs(badPw), /可见 ASCII/);
 });
+
+test('OSC：生成 OSC 字节经 UDP 发出；参数里的 {{名}} 先代入再编码；校验拦住 TCP / 校验和 / 非法内容', async (t) => {
+  const tr = new RecordingTransport();
+  const p = mk(); p.devices[0]!.port = 7000;
+  const e = new Engine(p, { clock: new VirtualClock(base), transport: tr });
+  await e.start(); t.after(() => e.stop());
+  const c = cmd({ protocol: undefined, format: 'osc', payload: '/layer1/opacity f:{{v}}', params: [{ name: 'v', default: '0.5' }] });
+  await e.testCommandNow(c);
+  await e.testCommandNow(c, { v: '1' });
+  assert.equal(Buffer.from(tr.sent[0]!.text, 'latin1').toString('hex'), Buffer.from('/layer1/opacity\0').toString('hex') + '2c660000' + '3f000000');
+  assert.equal(Buffer.from(tr.sent[1]!.text, 'latin1').toString('hex'), Buffer.from('/layer1/opacity\0').toString('hex') + '2c660000' + '3f800000');
+  assert.equal(tr.sent[0]!.port, 7000);
+  const ok = (extra: Partial<Command>) => mk({ commands: [cmd({ protocol: undefined, format: 'osc', payload: '/a 1', port: 9000, ...extra })] });
+  assert.equal(errs(ok({})), '');
+  assert.match(errs(ok({ protocol: 'tcp' })), /OSC 目前只支持 UDP/);
+  assert.match(errs(ok({ checksum: { algo: 'sum8' } })), /OSC 不使用校验和/);
+  assert.match(errs(ok({ payload: 'oops' })), /OSC 地址必须以 \/ 开头/);
+  assert.match(errs(ok({ payload: '/a 99999999999' })), /超出 int32/);
+  assert.match(errs(ok({ format: 'xml' as never })), /内容格式.*不支持/);
+});
+
+test('OSC 指令库校验：没有默认值的参数用 0 试代入，所以 f:{{v}} 不会被误报“不是数字”', () => {
+  const p = mk({ commands: [cmd({ protocol: undefined, format: 'osc', payload: '/a f:{{v}}', params: [{ name: 'v' }], port: 9000 })] });
+  assert.equal(errs(p), '');
+});

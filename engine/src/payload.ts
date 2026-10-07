@@ -1,4 +1,5 @@
-import type { PayloadFormat, Terminator } from './types.ts';
+import type { SendFormat, Terminator } from './types.ts';
+import { OscError, oscBytes } from './osc.ts';
 import { checksumBytes } from './checksum.ts';
 import type { ChecksumSpec } from './checksum.ts';
 
@@ -75,16 +76,24 @@ export function describeAscii(buf: Buffer): string {
   return out;
 }
 
-export function parsePayload(format: PayloadFormat, text: string): Buffer {
+export function parsePayload(format: SendFormat, text: string): Buffer {
+  if (format === 'osc') {
+    try {
+      return Buffer.from(oscBytes(text));
+    } catch (e) {
+      if (e instanceof OscError) throw new PayloadError(e.message);
+      throw e;
+    }
+  }
   return format === 'hex' ? parseHex(text) : parseAscii(text);
 }
 
 /** 构造要发送的字节：内容 → 追加校验字节（可选）→ 结束符（只对 ASCII 生效）。 */
-export function buildPayload(format: PayloadFormat, text: string, terminator: Terminator = 'none', checksum?: ChecksumSpec | null): Buffer {
+export function buildPayload(format: SendFormat, text: string, terminator: Terminator = 'none', checksum?: ChecksumSpec | null): Buffer {
   const parsed = parsePayload(format, text);
   if (parsed.length === 0) throw new PayloadError('发送内容为空');
   const body = checksum ? Buffer.concat([parsed, checksumBytes(parsed, checksum)]) : parsed;
-  const out = format === 'ascii' ? Buffer.concat([body, TERMINATORS[terminator]]) : body;
+  const out = format === 'ascii' ? Buffer.concat([body, TERMINATORS[terminator]]) : body; // 结束符只对 ASCII 生效（HEX / OSC 不加）
   if (out.length === 0) throw new PayloadError('发送内容为空');
   return out;
 }

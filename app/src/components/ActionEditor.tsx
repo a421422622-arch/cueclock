@@ -1,7 +1,8 @@
-import type { Action, CommandAction, Project, MatchKind, ReplyCheck, SendProtocol, Terminator, UdpAction } from '@engine/types.ts';
+import type { Action, CommandAction, Project, MatchKind, ReplyCheck, SendFormat, SendProtocol, Terminator, UdpAction } from '@engine/types.ts';
 import { CHECKSUM_ALGOS } from '@engine/checksum.ts';
 import type { ChecksumAlgo, ChecksumSpec } from '@engine/checksum.ts';
 import { PJLINK_TEMPLATES, pjlinkPatch } from '../lib/pjlink.ts';
+import { describeOsc } from '@engine/osc.ts';
 import { paramValues, placeholdersOf, resolveActions, resolveCommandAction, substitute } from '@engine/commands.ts';
 import { expandActions } from '@engine/expand.ts';
 import { substituteSliderAction } from '@engine/padvalue.ts';
@@ -110,7 +111,7 @@ export interface SendValue {
   sendFrom?: string;
   protocol?: SendProtocol;
   checksum?: ChecksumSpec;
-  format: 'ascii' | 'hex';
+  format: SendFormat;
   payload: string;
   terminator?: Terminator;
   offsetMs?: number;
@@ -197,7 +198,7 @@ export function SendEditor({
         <Seg<SendProtocol>
           value={protocol}
           options={[{ value: 'udp', label: 'UDP' }, { value: 'tcp', label: 'TCP' }, { value: 'pjlink', label: 'PJLink' }]}
-          onChange={(p) => onChange(p === 'pjlink' ? { protocol: p, format: 'ascii', checksum: undefined, port: undefined } : { protocol: p === 'udp' ? undefined : p })} // 切到 PJLink 清掉端口（新指令默认带 5000，会盖住 PJLink 的 4352）
+          onChange={(p) => onChange(p === 'pjlink' ? { protocol: p, format: 'ascii', checksum: undefined, port: undefined } : { protocol: p === 'udp' ? undefined : p, ...(p !== 'udp' && v.format === 'osc' ? { format: 'ascii' as const } : {}) })} // 切到 PJLink 清掉端口（新指令默认带 5000，会盖住 PJLink 的 4352）
         />
         {pjlink && (
           <select
@@ -238,7 +239,12 @@ export function SendEditor({
         </Field>
       )}
       <Field label="格式">
-        <Seg value={v.format} options={pjlink ? [{ value: 'ascii', label: 'ASCII' }] : [{ value: 'ascii', label: 'ASCII' }, { value: 'hex', label: 'HEX' }]} tone={{ ascii: 'a', hex: 'h' }} onChange={(format) => onChange({ format })} />
+        <Seg<SendFormat>
+          value={v.format}
+          options={pjlink ? [{ value: 'ascii', label: 'ASCII' }] : protocol === 'tcp' ? [{ value: 'ascii', label: 'ASCII' }, { value: 'hex', label: 'HEX' }] : [{ value: 'ascii', label: 'ASCII' }, { value: 'hex', label: 'HEX' }, { value: 'osc', label: 'OSC' }]}
+          tone={{ ascii: 'a', hex: 'h' }}
+          onChange={(format) => onChange(format === 'osc' ? { format, protocol: undefined, checksum: undefined, terminator: undefined } : { format })}
+        />
         {v.format === 'ascii' && (
           <select value={v.terminator ?? ''} onChange={(e) => onChange({ terminator: (e.target.value || undefined) as Terminator | undefined })}>
             <option value="">{pjlink ? '结束符：自动（CR）' : '结束符：设备默认'}</option>
@@ -250,11 +256,16 @@ export function SendEditor({
       </Field>
       <Field
         label="内容"
-        hint={dynamic ? "触发时按捕获值生成字节，预览以实际收到的内容为准" : pv.ok ? <span className="okc">✓ {pv.bytes.length} 字节　{toHex(pv.bytes)}</span> : <span className="err">{pv.error}</span>}
+        hint={dynamic ? "触发时按捕获值生成字节，预览以实际收到的内容为准" : pv.ok ? <span className="okc">✓ {pv.bytes.length} 字节　{toHex(pv.bytes)}{v.format === 'osc' ? <><br />{describeOsc(shown)}</> : null}</span> : <span className="err">{pv.error}</span>}
       >
-        <input className={`mono ${pv.ok || dynamic ? '' : 'bad'}`} value={v.payload} placeholder={v.format === 'hex' ? 'A5 01 FF' : 'SCENE 12   （支持 \\r \\n \\xFF）'} onChange={(e) => onChange({ payload: e.target.value })} />
+        <input className={`mono ${pv.ok || dynamic ? '' : 'bad'}`} value={v.payload} placeholder={v.format === 'hex' ? 'A5 01 FF' : v.format === 'osc' ? '/cue/1/start   或   /layer1/opacity 0.5' : 'SCENE 12   （支持 \\r \\n \\xFF）'} onChange={(e) => onChange({ payload: e.target.value })} />
       </Field>
-      {!pjlink && (
+      {v.format === 'osc' && (
+        <div className="hint pad" style={{ gridColumn: '1 / -1' }}>
+          OSC 内容写法：<code>地址 参数 参数…</code>。整数 → int32，小数 → float，其他 → 字符串（带空格用双引号）；<code>i: f: s: b:</code> 指定类型（b: 后跟十六进制），<code>T F N</code> 为真 / 假 / 空。例：<code>/note i:60 f:0.8 s:"hi there"</code>。参数里可写 <code>{'{{参数名}}'}</code>；要保证是小数请写 <code>f:{'{{参数名}}'}</code>。
+        </div>
+      )}
+      {!pjlink && v.format !== 'osc' && (
         <Field label="校验和" hint={v.checksum ? `追加 ${CHECKSUM_ALGOS.find((a) => a.value === v.checksum!.algo)?.bytes ?? '?'} 字节（在结束符之前）${v.checksum.skip ? `，不含开头 ${v.checksum.skip} 字节` : ''}。${CHECKSUM_ALGOS.find((a) => a.value === v.checksum!.algo)?.note ?? ''}` : '协议要求在内容末尾带校验字节时选择，软件自动算出并追加'}>
           <span className="row">
             <select value={v.checksum?.algo ?? ''} onChange={(e) => onChange({ checksum: e.target.value ? { algo: e.target.value as ChecksumAlgo, ...(v.checksum?.skip ? { skip: v.checksum.skip } : {}) } : undefined })}>

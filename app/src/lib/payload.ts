@@ -2,6 +2,7 @@
 // 真正发送前，引擎会用自己的实现再校验一遍，两边规则保持一致。
 
 import { checksumBytes } from '../../../engine/src/checksum.ts';
+import { OscError, oscBytes } from '../../../engine/src/osc.ts';
 import type { ChecksumSpec } from '../../../engine/src/checksum.ts';
 
 export type Terminator = 'none' | 'cr' | 'lf' | 'crlf';
@@ -54,8 +55,9 @@ function hexBytes(text: string): number[] {
   return out;
 }
 
-export function previewPayload(format: 'ascii' | 'hex', text: string, terminator: Terminator = 'none', checksum?: ChecksumSpec | null): Preview {
+export function previewPayload(format: 'ascii' | 'hex' | 'osc', text: string, terminator: Terminator = 'none', checksum?: ChecksumSpec | null): Preview {
   try {
+    if (format === 'osc') return { ok: true, bytes: Array.from(oscBytes(text)) };
     const parsed = format === 'hex' ? hexBytes(text) : asciiBytes(text);
     if (parsed.length === 0) return { ok: false, bytes: [], error: '内容为空' };
     const body = checksum ? [...parsed, ...checksumBytes(Uint8Array.from(parsed), checksum)] : parsed;

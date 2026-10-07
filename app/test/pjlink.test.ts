@@ -36,3 +36,11 @@ test('预览带校验和：字节与引擎一致（Modbus 示例 01 03 00 00 00 
   assert.equal(toHex(previewPayload('hex', 'AA 01').bytes), 'AA 01');
   assert.equal(previewPayload('hex', '', 'none', { algo: 'sum8' }).ok, false); // 空内容不会因为有校验字节而“合法”
 });
+
+test('预览 OSC：字节与引擎一致；非法内容给出中文原因而不是崩溃', async () => {
+  const { previewPayload: pv } = await import('../src/lib/payload.ts');
+  assert.equal(toHex(pv('osc', '/a 1').bytes), '2F 61 00 00 2C 69 00 00 00 00 00 01');
+  const bad = pv('osc', 'oops');
+  assert.equal(bad.ok, false);
+  assert.match(bad.error ?? '', /以 \/ 开头/);
+});
