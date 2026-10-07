@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readRuntimeConfig, snapshotCurrent, appliedSnapshotMatches } from '../src/lib/runtimeConfig.ts';
+import { readRuntimeConfig, snapshotCurrent, appliedSnapshotMatches, sameConfiguration } from '../src/lib/runtimeConfig.ts';
 import type { RuntimeConfigSnapshot } from '../src/lib/runtimeConfig.ts';
 import type { Project } from '../../engine/src/types.ts';
 
@@ -39,3 +39,12 @@ test('应用后核对配置内容，不把仅前端镜像或不同版本当成�
   const reordered = { ...snapshot, project: { triggers: [], timelines: [], groups: [], devices: [], name: '运行中的配置' } };
   assert(appliedSnapshotMatches(reordered, project, 2, 'engine-a'));
 });
+
+test('引擎重启后草稿能否接续：内容相同（键顺序不同）算同一份；内容变了、或起点未知都不算', () => {
+  const restarted = JSON.parse(JSON.stringify({ triggers: [], timelines: [], groups: [], devices: [], name: '运行中的配置' })) as Project;
+  assert.equal(sameConfiguration(restarted, project), true);
+  assert.equal(sameConfiguration({ ...project, name: '别处改过' }, project), false);
+  assert.equal(sameConfiguration(project, null), false);
+  assert.equal(sameConfiguration(undefined, project), false);
+});
+

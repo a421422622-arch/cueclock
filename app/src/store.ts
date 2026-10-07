@@ -5,7 +5,7 @@ import type { Issue } from '@engine/validate.ts';
 import { appBridge, transport, RpcFailure } from './transport.ts';
 import type { EngineUpdate } from '../../engine/src/version.ts';
 import { EditHistory } from './lib/history.ts';
-import { readRuntimeConfig, snapshotCurrent, appliedSnapshotMatches } from './lib/runtimeConfig.ts';
+import { readRuntimeConfig, snapshotCurrent, appliedSnapshotMatches, sameConfiguration } from './lib/runtimeConfig.ts';
 import type { RuntimeConfigSnapshot } from './lib/runtimeConfig.ts';
 import { normalizeEngineStatus } from './lib/status.ts';
 
@@ -191,6 +191,7 @@ export function restoreDraft(): void {
   const d = state.draftOffer;
   if (!d) return;
   if (state.project) history.record(snapshot());
+  draftBase = state.runtimeSnapshot?.project ?? state.runningProject; // 起点未知，按「恢复时的引擎配置」计
   editVersion++;
   set({ project: d.project, configurationView: 'draft', sel: null, draftOffer: null, saveState: 'dirty', ...historyState() });
   scheduleSave(0);
@@ -206,6 +207,11 @@ export function discardDraft(): void {
 let editVersion = 0; // 每次本地编辑 +1
 let savedVersion = 0; // 已成功保存的版本
 let projectSession = 0; // 防止项目切换后旧保存响应改写新项目状态
+/**
+ * 草稿基于哪一份引擎配置开始编辑。引擎重启后修订号会从 0 重新计数、实例也变了，
+ * 但内容可能完全没变——这时不算冲突，把草稿接到新修订号上即可（否则只能丢弃草稿）。
+ */
+let draftBase: Project | null = null;
 
 export const isLocked = (): boolean => state.lock.enabled && !state.lock.unlocked;
 
@@ -222,8 +228,7 @@ function applyStatus(st: DaemonStatus): void {
   const now = st.engine?.now;
   set({ status: { ...st, engine: normalizeEngineStatus(st.engine) }, ...(now ? { clockOffset: now - Date.now() } : {}) });
   if (state.loaded && (st.daemon.rev !== state.runtimeSnapshot?.rev || changedInstance || st.daemon.projectFile !== state.runtimeSnapshot?.file) && !inflight && !state.runtimeReading) {
-    if (editVersion !== savedVersion) set({ saveState: 'conflict' });
-    void refreshRuntimeConfig();
+    void refreshRuntimeConfig(); // 有草稿时由回读结果判断是否真的冲突
   }
 }
 
@@ -236,8 +241,12 @@ export async function refreshRuntimeConfig(): Promise<RuntimeConfigSnapshot | nu
     if (session !== projectSession || id !== runtimeReadId) return null;
     const clean = editVersion === savedVersion;
     if (clean) history.clear();
+    // 有草稿：引擎内容与草稿的起点一致（只是重启 / 修订号变了）→ 接到新修订号继续；内容真变了 → 冲突
+    const rebase = !clean && sameConfiguration(r.snapshot.project, draftBase);
     set({ runtimeSnapshot: r.snapshot, runningProject: r.snapshot.project, runtimeReading: false,
-      ...(clean ? { project: r.snapshot.project, rev: r.snapshot.rev, ...historyState() } : {}) });
+      ...(clean ? { project: r.snapshot.project, rev: r.snapshot.rev, ...historyState() } : {}),
+      ...(rebase ? { rev: r.snapshot.rev, ...(state.saveState === 'conflict' ? { saveState: 'dirty' as const } : {}) } : {}),
+      ...(!clean && !rebase ? { saveState: 'conflict' as const } : {}) });
     applyStatus(r.status);
     return r.snapshot;
   } catch (e) {
@@ -269,6 +278,7 @@ async function loadAll(): Promise<void> {
   const changedFile = state.status?.daemon.projectFile !== st.daemon.projectFile;
   if (changedFile || JSON.stringify(state.project) !== JSON.stringify(project)) history.clear();
   editVersion = savedVersion = 0;
+  draftBase = null;
   set({ runtimeSnapshot: runtime.snapshot, runtimeReading: false, runtimeReadError: null, project, runningProject: project, applyPreview: null, rev, loaded: true, saveState: 'saved', issues: [], logs, draftOffer: null, ...historyState(),
     ...(changedFile ? { configurationView: 'runtime', sel: null, modeId: null, followActive: true } : {}) });
   applyStatus(st);
@@ -288,7 +298,7 @@ async function resync(): Promise<void> {
   }
   const st = await transport.request<DaemonStatus>('status');
   applyStatus(st);
-  if (st.daemon.rev !== state.rev) set({ saveState: 'conflict' });
+  if (st.daemon.rev !== state.rev || st.daemon.instanceId !== state.runtimeSnapshot?.instanceId) void refreshRuntimeConfig(); // 回读后判断是接续还是冲突
   else scheduleSave(0);
 }
 
@@ -377,6 +387,7 @@ export async function applyConfiguration(): Promise<void> {
     const r = await transport.request<{ rev: number; warnings: Issue[] }>('applyProject', { project: preview.project, baseRev: preview.rev, instanceId: preview.instanceId });
     if (session !== projectSession) return;
     savedVersion = preview.version;
+    draftBase = preview.project; // 应用期间又改了的部分，起点就是刚应用的这一份
     const clean = editVersion === savedVersion;
     if (clean) clearDraft(); else writeDraft();
     set({ rev: r.rev, issues: clean ? r.warnings : state.issues, saveState: clean ? 'saved' : 'dirty', applyPreview: null, configurationView: 'runtime', padEdit: false });
@@ -403,16 +414,18 @@ export function edit(fn: (draft: Project) => void): void {
   fn(next);
   if (JSON.stringify(next) === JSON.stringify(state.project)) return;
   history.record(snapshot());
+  if (editVersion === savedVersion) draftBase = state.runtimeSnapshot?.project ?? state.runningProject;
   editVersion++;
   set({ project: next, saveState: state.saveState === 'conflict' ? 'conflict' : 'dirty', ...historyState() });
-  if (state.saveState !== 'conflict') scheduleSave();
+  scheduleSave(); // 冲突时也要写本机草稿，否则冲突期间的修改关窗就丢了
 }
 
 function restoreEdit(next: EditSnapshot | null): void {
   if (!next) return;
+  if (editVersion === savedVersion) draftBase = state.runtimeSnapshot?.project ?? state.runningProject;
   editVersion++;
   set({ ...next, followActive: false, saveState: state.saveState === 'conflict' ? 'conflict' : 'dirty', ...historyState() });
-  if (state.saveState !== 'conflict') scheduleSave();
+  scheduleSave();
 }
 /** 渲染异常时保存尚未交给引擎的草稿，重新加载不会丢失本地编辑。 */
 export function protectDraft(): void { if (editVersion !== savedVersion) writeDraft(); }
@@ -431,6 +444,18 @@ export function handleEditShortcut(e: KeyboardEvent): void {
   e.preventDefault();
   if (e.key.toLowerCase() === 'y' || e.shiftKey) redo();
   else undo();
+}
+
+/**
+ * 真冲突时的另一条路：以本机草稿为准。把草稿接到引擎当前修订号上，然后打开「检查并应用」——
+ * 变更清单是相对引擎**当前**配置计算的，所以别处做的、会被覆盖掉的修改都会列出来，确认后才生效。
+ */
+export async function keepDraftOverEngine(): Promise<void> {
+  const latest = await refreshRuntimeConfig();
+  if (!latest) { toast('无法读取引擎当前配置，稍后再试'); return; }
+  draftBase = latest.project;
+  set({ rev: latest.rev, saveState: 'dirty', configurationView: 'draft' });
+  await prepareApply();
 }
 
 export async function reloadFromEngine(): Promise<void> {

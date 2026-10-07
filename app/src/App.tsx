@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { discardDraft, handleEditShortcut, init, lockNow, openSettings, openUnlock, reloadFromEngine, restoreDraft, setView, toast, useStore } from './store.ts';
+import { discardDraft, handleEditShortcut, init, keepDraftOverEngine, lockNow, openSettings, openUnlock, reloadFromEngine, restoreDraft, setView, toast, useStore } from './store.ts';
 import { ApplyDialog } from './components/ApplyDialog.tsx';
 import { Overview } from './components/Overview.tsx';
 import { RuntimeConfiguration } from './components/RuntimeConfiguration.tsx';
@@ -96,7 +96,9 @@ export function App() {
       {conn === 'disconnected' && <div className="banner bad">与引擎的连接已断开，正在自动重连。引擎在后台独立运行，日程不受影响。</div>}
       {saveState === 'conflict' && (
         <div className="banner warn">
-          项目已被其他客户端修改，你的本地修改暂未保存。<button onClick={() => void reloadFromEngine()}>放弃本地修改并重新加载</button>
+          引擎配置已在别处改变（另一个窗口应用、从备份恢复或打开了其他配置），和你的本机草稿冲突。草稿仍保存在本机。
+          <button onClick={() => void keepDraftOverEngine()}>以我的草稿为准（先看差异）</button>
+          <button onClick={() => void reloadFromEngine()}>放弃本地修改并重新加载</button>
         </div>
       )}
       {draftOffer && (

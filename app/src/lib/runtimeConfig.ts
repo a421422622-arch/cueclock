@@ -29,6 +29,11 @@ function canonical(value: unknown): string {
   return JSON.stringify(value, (_key, v) => v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.keys(v).sort().map((k) => [k, v[k]])) : v);
 }
 
+/** 两份配置内容是否一致（忽略对象键顺序）。用于判断引擎重启后修订号变了、但内容其实没变。 */
+export function sameConfiguration(a: Project | null | undefined, b: Project | null | undefined): boolean {
+  return !!a && !!b && canonical(a) === canonical(b);
+}
+
 export function appliedSnapshotMatches(snapshot: RuntimeConfigSnapshot, project: Project, rev: number, instanceId?: string): boolean {
   return snapshot.rev === rev && snapshot.instanceId === instanceId && canonical(snapshot.project) === canonical(project);
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { displayedProject, viewingRuntime, edit, engineNow, lockNow, openUnlock, prepareApply, reloadFromEngine, rpc, showLogTab, toast, useStore } from '../store.ts';
+import { displayedProject, viewingRuntime, edit, engineNow, keepDraftOverEngine, lockNow, openUnlock, prepareApply, reloadFromEngine, rpc, showLogTab, toast, useStore } from '../store.ts';
 import { mergeAlerts, unseenCount } from '../lib/alerts.ts';
 import type { SaveState } from '../store.ts';
 import { ProjectMenu } from './ProjectMenu.tsx';
@@ -10,7 +10,7 @@ const SAVE_TEXT: Record<SaveState, string> = {
   dirty: '本机草稿 · 尚未应用',
   saving: '应用中…',
   error: '草稿保存失败',
-  conflict: '冲突：项目已被其他客户端修改',
+  conflict: '冲突：引擎配置已在别处改变',
 };
 
 const p2 = (n: number) => String(n).padStart(2, '0');
@@ -84,7 +84,8 @@ export function TopBar() {
       <ProjectMenu file={status?.daemon.projectFile ?? null} />
       <input className="projname" readOnly={readonly} aria-label={readonly ? "运行配置名称（只读）" : "草稿配置名称"} value={project.name} onChange={(e) => edit((p) => (p.name = e.target.value))} title={status?.daemon.projectFile} />
       <span className={`savestate ${saveState}`} title={SAVE_TEXT[saveState]}>{SAVE_TEXT[saveState]}</span>
-      {saveState !== 'saved' && <button className="primary apply-open" disabled={saveState === 'saving' || conn !== 'connected'} onClick={() => void prepareApply()}>检查并应用</button>}
+      {saveState !== 'saved' && saveState !== 'conflict' && <button className="primary apply-open" disabled={saveState === 'saving' || conn !== 'connected'} onClick={() => void prepareApply()}>检查并应用</button>}
+      {saveState === 'conflict' && <button className="primary apply-open" disabled={conn !== 'connected'} title="以本机草稿为准：先列出相对引擎当前配置的全部差异（含别处的修改会被覆盖的部分），确认后才应用" onClick={() => void keepDraftOverEngine()}>以我的草稿为准…</button>}
       {saveState === 'conflict' && <button onClick={() => void reloadFromEngine()}>放弃本地修改并重新加载</button>}
       <span className="grow" />
       <Clock />
