@@ -3,7 +3,7 @@ import type { Project } from './types.ts';
 /** 服务端用当前运行配置生成变更清单；界面和引擎都可复用，无 Node 依赖。 */
 /** 事件、动作、面板控件这类带 id 的列表：按项列出增删改，不把整段 JSON 塞进变更清单。 */
 const NESTED = new Set(['cues', 'actions', 'tiles', 'params']);
-type Named = { id?: string; name?: string; label?: string; time?: string; type?: string; payload?: string; key?: string };
+type Named = { enabled?: boolean; id?: string; name?: string; label?: string; time?: string; type?: string; payload?: string; key?: string };
 const nameOf = (x: Named) => x.name ?? x.label ?? x.key ?? (x.type === 'udp' && x.payload ? `发送 ${x.payload.slice(0, 24)}` : x.type ? `${x.type} 动作` : x.id ?? '未命名');
 function listChanges(before: Named[], after: Named[]): string {
   const old = new Map(before.map((x, i) => [x.id ?? x.key ?? String(i), x]));
@@ -12,7 +12,10 @@ function listChanges(before: Named[], after: Named[]): string {
   for (const [id, x] of next) {
     const o = old.get(id);
     if (!o) parts.push(`新增「${nameOf(x)}」${x.time ? `（${x.time}）` : ''}`);
-    else if (JSON.stringify(o) !== JSON.stringify(x)) parts.push(`修改「${nameOf(x)}」${o.time !== x.time && o.time && x.time ? `（时间 ${o.time} → ${x.time}）` : ''}`);
+    else if (JSON.stringify(o) !== JSON.stringify(x)) {
+      const notes = [o.time !== x.time && o.time && x.time ? `时间 ${o.time} → ${x.time}` : '', (o.enabled !== false) !== (x.enabled !== false) ? (x.enabled !== false ? '启用' : '禁用') : ''].filter(Boolean);
+      parts.push(`修改「${nameOf(x)}」${notes.length ? `（${notes.join('，')}）` : ''}`);
+    }
   }
   for (const [id, x] of old) if (!next.has(id)) parts.push(`删除「${nameOf(x)}」`);
   if (!parts.length) parts.push('调整顺序');

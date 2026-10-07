@@ -136,3 +136,9 @@ export function cloneMode(source: Timeline, id: string, newId: (prefix: string) 
   }
   return next;
 }
+
+/** 「启用本模式全部事件」会启用的事件：现在禁用、且已经有至少一个动作的（空事件是半成品，保持禁用）。 */
+export function cuesToEnable(cues: { id: string; enabled?: boolean; actions: unknown[] }[]): string[] {
+  return cues.filter((c) => c.enabled === false && c.actions.length > 0).map((c) => c.id);
+}
+

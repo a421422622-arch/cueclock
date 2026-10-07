@@ -147,3 +147,14 @@ test('胶囊自适应宽度：相邻事件很近时先变窄再分行；最窄�
   // 同一毫秒的多个：互相之间没有间距可挤 → 分行，宽度保持默认
   assert.deepEqual(layoutChips([{ atMs: H }, { atMs: H }], 100, 140, 6, 60).map((m) => [m.row, m.w]), [[0, 140], [1, 140]]);
 });
+
+test('批量启用：只启用「已禁用且有动作」的事件；空事件和已启用的不动', async () => {
+  const { cuesToEnable } = await import('../src/lib/timeline.ts');
+  assert.deepEqual(cuesToEnable([
+    { id: 'a', enabled: false, actions: [1] },
+    { id: 'b', enabled: false, actions: [] },
+    { id: 'c', actions: [1] },
+    { id: 'd', enabled: true, actions: [1, 2] },
+    { id: 'e', enabled: false, actions: [1, 2] },
+  ]), ['a', 'e']);
+});

@@ -160,3 +160,10 @@ test('变更清单：模式里的事件按项列出增删改和时间变化，�
   assert.equal(row, '修改模式「工作日」：事件与动作：修改「开馆」（时间 09:00 → 09:30）、新增「夜场」（21:00）、删除「午间」');
   assert(!rows.some((r) => r.includes('[{')), '不应出现原始 JSON');
 });
+
+test('变更清单：事件启用 / 禁用单独写明', async () => {
+  const { configurationChanges } = await import('../src/configuration.ts');
+  const before = project([{ id: 'tl', name: '工作日', cues: [{ id: 'a', name: '开馆', time: '09:00', enabled: false, actions: [udp('x', 'ON')] }] }]);
+  const after = structuredClone(before); after.timelines[0]!.cues[0]!.enabled = true;
+  assert.equal(configurationChanges(before, after).find((r) => r.startsWith('修改模式'))!, '修改模式「工作日」：事件与动作：修改「开馆」（启用）');
+});

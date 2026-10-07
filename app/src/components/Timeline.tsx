@@ -2,11 +2,11 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, MouseEvent } from 'react';
 import type { Cue, DayKind, Project, Timeline as TimelineModel } from '@engine/types.ts';
 import { formatTime, parseTime } from '@engine/time.ts';
-import { displayedProject, viewingRuntime, edit, engineNow, followMode, redo, select, setMode, syncActiveMode, undo, useStore } from '../store.ts';
+import { displayedProject, viewingRuntime, edit, engineNow, toast, followMode, redo, select, setMode, syncActiveMode, undo, useStore } from '../store.ts';
 import type { Selection } from '../store.ts';
 import { genId, ruleText } from '../lib/labels.ts';
 import { deviceColor, GROUP_COLORS, modeColor } from '../lib/colors.ts';
-import { cloneMode, layoutChips, targetTracks } from '../lib/timeline.ts';
+import { cloneMode, cuesToEnable, layoutChips, targetTracks } from '../lib/timeline.ts';
 import type { TargetMark, TargetTrack } from '../lib/timeline.ts';
 import { Check, ColorField, Field } from './fields.tsx';
 import { Icon } from './Icon.tsx';
@@ -128,6 +128,15 @@ export function Timeline() {
     return out;
   }, [view, pxh, step]);
 
+  const pendingEnable = !readonly && tl ? cuesToEnable(tl.cues).length : 0;
+  const enableAll = () => {
+    if (!tl) return;
+    const ids = new Set(cuesToEnable(tl.cues));
+    if (!ids.size) return;
+    edit((p) => { for (const c of p.timelines.find((t) => t.id === tl.id)?.cues ?? []) if (ids.has(c.id)) c.enabled = true; });
+    toast(`已启用 ${ids.size} 个事件（可撤销）；检查并应用后生效`);
+  };
+
   const addCue = (e: MouseEvent<HTMLDivElement>, target?: string) => {
     if (readonly || !tl || (e.target as HTMLElement).closest('.cue, .cue-more')) return;
     const rect = e.currentTarget.getBoundingClientRect();
@@ -212,6 +221,7 @@ export function Timeline() {
         <span className="mode-current"><i style={{ background: color }} /><b>{tl?.name ?? '开始安排日程'}</b></span>
         <span className="hint">{tl ? ruleText(tl.rule) : '工作日、周末、节假日按日期自动切换'}</span>
         {tl && <span className={`mode-status ${info?.active && !info.runtimeDisabled ? 'active' : ''}`}>{info?.runtimeDisabled ? '临时禁用' : info?.active ? '实际运行' : '查看 / 编辑'}</span>}
+        {pendingEnable > 0 && <button className="enable-all" onClick={enableAll} title="把本模式里已经有动作、但还没勾「参与调度」的事件一次性启用；没有动作的空事件保持禁用。可以撤销。"><Icon name="check" size={13} />启用 {pendingEnable} 个事件</button>}
         {group && <button className="ico" onClick={() => select({ kind: 'group', id: group.id })} title="编辑模式组">{group.name} · {group.mode === 'exclusive' ? '互斥' : '并行'}</button>}
       </div>
       <span className="grow" />
