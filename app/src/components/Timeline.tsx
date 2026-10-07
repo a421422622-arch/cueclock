@@ -176,7 +176,7 @@ export function Timeline() {
             className={`mode-tab ${tl?.id === mode.id ? 'on' : ''}`} style={{ '--tab-color': modeColor(project, mode.id) } as CSSProperties}
             title={`${g?.name ?? '未分组'} · ${mode.cues.length} 个事件点`}
             onClick={() => setMode(mode.id)}>
-            <span className="mode-tab-title"><i />{mode.name}<span className={`mode-status ${active ? 'active' : ''}`}>{mode.enabled === false ? '已禁用' : active ? '今日生效' : '待命'}</span></span>
+            <span className="mode-tab-title"><i /><span className="mode-tab-name" title={mode.name}>{mode.name}</span><span className={`mode-status ${active ? 'active' : ''}`}>{mode.enabled === false ? '已禁用' : active ? '今日生效' : '待命'}</span></span>
             <span className="mode-tab-meta">{g?.name ?? '未分组'} · {mode.cues.length} 个事件</span>
           </button>;
         })}

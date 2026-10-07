@@ -430,3 +430,11 @@ button.link { background: none; border: 0; }
 .top .grow { flex: 1 1 0; min-width: 0; }
 /* 已禁用 / 待配置的胶囊：保持可读 */
 .cue.off { opacity: .8; }
+
+/* 长名称回归：只收缩名称，模式生效状态完整显示；目标选择器不以长选项撑宽动作卡片。 */
+.mode-tab-title { min-width: 0; overflow: visible; }
+.mode-tab-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mode-tab-title > .mode-status { flex: none; }
+.fv > .chips { min-width: 0; max-width: 100%; }
+.chips > .chipadd { min-width: 0; max-width: 100%; }
+.chips > .chip { max-width: 100%; overflow-wrap: anywhere; }

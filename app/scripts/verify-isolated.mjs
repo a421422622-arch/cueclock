@@ -75,7 +75,7 @@ try {
     const file = path.join(folder, 'project.json'); await writeFile(file, JSON.stringify(project));
     const record = { state, port }; daemons.push(record);
     const args = [path.join(root, 'app/dist/electron/main.cjs'), `--${mode}`, '--daemon-port', String(port), '--state-dir', state, '--project', file];
-    if (mode === 'smoke-ui') args.push('--screenshot', path.join(evidence, 'smoke-ui.png'));
+    if (mode === 'smoke-ui') args.push('--screenshot', path.join(evidence, 'smoke-ui.png'), '--clipping-dir', path.join(evidence, 'clipping'));
     const output = await execute(mode, binary, args, root, { CUECLOCK_HOME: state, CUECLOCK_AUTOSTART_HOME: path.join(folder, 'login-home') }, 60000);
     if (mode === 'smoke-test') {
       if (!output.includes('SMOKE_OK engine.running=true')) throw new Error('引擎冒烟结果未确认');
@@ -83,7 +83,7 @@ try {
       const prefix = mode === 'smoke-ui' ? 'SMOKE_UI ' : 'SMOKE_APP ';
       const line = output.split('\n').find((s) => s.startsWith(prefix));
       const result = line && JSON.parse(line.slice(prefix.length));
-      if (!result || mode === 'smoke-ui' && (!result.ready || !result.overview || Object.values(result.layout ?? {}).some((x) => !x || x.overflow !== false || x.overlap !== false)) || mode === 'smoke-app' && (!result.restarted || !result.engineStopped || !result.viewMenu?.includes('恢复默认界面布局'))) throw new Error(`${mode} 行为检查未通过`);
+      if (!result || mode === 'smoke-ui' && (!result.ready || !result.overview || result.clipping?.passed !== true || !result.clipping?.negativeControl?.rejected || !result.clipping?.negativeControl?.verticalRejected || result.clipping?.checks?.length !== 44 || Object.values(result.layout ?? {}).some((x) => !x || x.overflow !== false || x.overlap !== false)) || mode === 'smoke-app' && (!result.restarted || !result.engineStopped || !result.viewMenu?.includes('恢复默认界面布局'))) throw new Error(`${mode} 行为检查未通过`);
     }
     await cleanup(record);
   }

@@ -16,6 +16,8 @@ import { createTray } from './tray.ts';
 import { autostart } from './autostart.ts';
 import type { AutostartState } from './autostart.ts';
 import { assessEngine } from '../../engine/src/version.ts';
+import { clippingFixture } from './smokeFixture.ts';
+import { smokeClipping } from './smokeClipping.ts';
 import { assertIsolatedSmoke } from './smokeSafety.ts';
 import { isBlockedByVersion } from './rpcGuard.ts';
 import type { EngineUpdate } from '../../engine/src/version.ts';
@@ -384,7 +386,7 @@ async function smokeUi(): Promise<void> {
     return { innerWidth: window.innerWidth, zoom: window.cueclock.getZoomFactor(), items: items.length,
       overflow: t.scrollWidth > t.clientWidth + 1 || items.some((c) => rect(c).right > tr.right + 1 || rect(c).left < tr.left - 1),
       overlap: items.some((a, i) => items.slice(i + 1).some((b) => rect(a).right > rect(b).left + 1 && rect(a).left < rect(b).right - 1 && rect(a).top < rect(b).bottom && rect(b).top < rect(a).bottom)) }; })()`;
-  await js(`(() => { document.querySelector('.estop')?.click(); const n = document.querySelector('.projname'); if (n) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(n, n.value + '（草稿）'); n.dispatchEvent(new Event('input', { bubbles: true })); } })()`).catch(() => undefined);
+  await js(`(() => { if (!document.querySelector('.estop')?.textContent.includes('自动已暂停')) document.querySelector('.estop')?.click(); const n = document.querySelector('.projname'); if (n) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(n, n.value + '（草稿）'); n.dispatchEvent(new Event('input', { bubbles: true })); } })()`).catch(() => undefined);
   await new Promise((r) => setTimeout(r, 700));
   const layout: Record<string, unknown> = {};
   for (const [name, w, h] of [['w1440', 1440, 900], ['w1100', 1100, 700], ['w1440again', 1440, 900]] as const) {
@@ -392,6 +394,7 @@ async function smokeUi(): Promise<void> {
     await new Promise((r) => setTimeout(r, 900));
     layout[name] = await js(measureTop).catch((e) => ({ error: String(e) }));
   }
+  const clipping = await smokeClipping(win!, argValue('--clipping-dir'), argv.includes('--smoke-break-css'));
   const layoutShot = argValue('--layout-screenshot');
   if (layoutShot) writeFileSync(layoutShot, (await win!.webContents.capturePage()).toPNG());
   // 从左侧统一入口检查两个页面，软件设置不再依赖右侧按钮。
@@ -420,11 +423,11 @@ async function smokeUi(): Promise<void> {
   })()`).catch((e) => ({ error: String(e) }));
   const cfg = configuration as { title?: string; tabs?: string[]; selected?: string; menu?: string[]; rightSettings?: boolean } | null;
   const software = settings as { sections?: string[]; error?: string } | null;
-  const passed = ready && cfg?.title === '配置管理' && cfg.tabs?.join(',') === '配置文件,软件设置'
+  const passed = ready && clipping.passed && Object.values(layout).every((x) => (x as { overflow: boolean; overlap: boolean }).overflow === false && (x as { overlap: boolean }).overlap === false) && cfg?.title === '配置管理' && cfg.tabs?.join(',') === '配置文件,软件设置'
     && cfg.selected === '配置文件' && cfg.rightSettings === false && !!software?.sections?.includes('本机网络') && !software.error;
   const out = argValue('--screenshot');
   if (out) writeFileSync(out, (await win!.webContents.capturePage()).toPNG());
-  console.log('SMOKE_UI ' + JSON.stringify({ ready, ...(info as object), layout, menu: cfg?.menu ?? [], configuration, settings }));
+  console.log('SMOKE_UI ' + JSON.stringify({ ready, ...(info as object), layout, clipping, menu: cfg?.menu ?? [], configuration, settings }));
   app.exit(passed ? 0 : 1);
 }
 
@@ -543,6 +546,14 @@ if (!ANY_SMOKE && !app.requestSingleInstanceLock()) {
       return;
     }
 
+    if (SMOKE_UI) {
+      // 独立状态目录内的新文件，绝不覆盖调用者给的配置。
+      const file = path.join(stateDir, 'clipping-fixture.cueclock.json');
+      writeFileSync(file, JSON.stringify(clippingFixture(), null, 2));
+      await client!.request('pause');
+      await client!.request('openProject', { file });
+      await refreshFromEngine();
+    }
     await refreshAutostart();
     try {
       trayCtl = createTray(assets, isMac, actions);
@@ -559,7 +570,10 @@ if (!ANY_SMOKE && !app.requestSingleInstanceLock()) {
     }
     // 没有托盘就不能隐藏启动，否则用户找不到界面
     createWindow(SMOKE_UI || SMOKE_APP ? false : !(startHidden && trayCtl && prefs.keepInTray));
-    if (SMOKE_UI) await smokeUi();
+    if (SMOKE_UI) {
+      try { await smokeUi(); }
+      catch (e) { console.error('SMOKE_UI ' + JSON.stringify({ ready: false, error: (e as Error).message })); app.exit(1); }
+    }
     if (SMOKE_APP) await smokeApp();
   });
 }
