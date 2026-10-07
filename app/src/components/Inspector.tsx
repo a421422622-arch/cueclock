@@ -64,7 +64,7 @@ export function Inspector() {
   return (
     <section className="insp">
       <h3>{title}</h3>
-      {readonly && <div className="inspector-source">引擎配置，只读 <button onClick={beginDraft}>编辑草稿</button></div>}
+      {readonly && <div className="inspector-source"><Icon name="lock" size={13} /><span>正在查看引擎配置，只读</span><button onClick={beginDraft}>编辑草稿</button></div>}
       <div className="ibody" inert={locked}><fieldset className="inspector-fields" disabled={readonly}>{body}</fieldset></div>
     </section>
   );

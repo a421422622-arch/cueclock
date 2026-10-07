@@ -252,7 +252,7 @@ export function beginDraft(): boolean {
   return true;
 }
 export async function viewRuntime(): Promise<void> {
-  set({ configurationView: 'runtime', padEdit: false, sel: null });
+  set({ configurationView: 'runtime', padEdit: false }); // 保留选中：检查器对不存在的对象自动显示空白
   await refreshRuntimeConfig();
 }
 
@@ -379,7 +379,7 @@ export async function applyConfiguration(): Promise<void> {
     savedVersion = preview.version;
     const clean = editVersion === savedVersion;
     if (clean) clearDraft(); else writeDraft();
-    set({ rev: r.rev, issues: clean ? r.warnings : state.issues, saveState: clean ? 'saved' : 'dirty', applyPreview: null, configurationView: 'runtime', padEdit: false, sel: null });
+    set({ rev: r.rev, issues: clean ? r.warnings : state.issues, saveState: clean ? 'saved' : 'dirty', applyPreview: null, configurationView: 'runtime', padEdit: false });
     const actual = await refreshRuntimeConfig();
     if (session !== projectSession) return;
     if (!actual) toast('配置已应用，但引擎回读未核对；请刷新运行配置');

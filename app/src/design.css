@@ -91,10 +91,10 @@ select { padding-right: 4px; }
 
 /* ───────── 视图导航（顶部页签） ───────── */
 .viewtabs { gap: 2px; padding: 0 10px; background: var(--s1); border-bottom: 1px solid var(--line); }
-.viewtabs span { display: inline-flex; align-items: center; gap: 7px; padding: 0 14px; height: 40px; font-size: 12.5px; font-weight: 500; color: var(--muted); border-bottom: 2px solid transparent; transition: color .12s, border-color .12s; }
-.viewtabs span:hover:not(.on) { color: var(--ink2); }
-.viewtabs span.on { color: var(--ink); border-bottom-color: var(--accent); }
-.viewtabs span.on .icon { color: var(--accent); }
+.viewtabs > span { display: inline-flex; align-items: center; gap: 7px; padding: 0 14px; height: 40px; font-size: 12.5px; font-weight: 500; color: var(--muted); border-bottom: 2px solid transparent; transition: color .12s, border-color .12s; }
+.viewtabs > span:hover:not(.on) { color: var(--ink2); }
+.viewtabs > span.on { color: var(--ink); border-bottom-color: var(--accent); }
+.viewtabs > span.on .icon { color: var(--accent); }
 
 /* ───────── 左栏：分类页签 + 列表行 ───────── */
 .side .tabs { gap: 2px; padding: 8px 8px 0; border-bottom: 1px solid var(--line); }
@@ -439,17 +439,52 @@ button.link { background: none; border: 0; }
 .chips > .chipadd { min-width: 0; max-width: 100%; }
 .chips > .chip { max-width: 100%; overflow-wrap: anywhere; }
 
-/* 配置来源：长名称完整换行，运行与草稿始终可辨。 */
-.configuration-view { display: flex; align-items: center; gap: 12px; padding: 8px 16px; flex-shrink: 0; border-bottom: 1px solid var(--line); background: var(--s1); }
-.configuration-switch { display: flex; flex-shrink: 0; gap: 4px; }
-.configuration-switch button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
-.configuration-source { display: flex; flex: 1; min-width: 0; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; overflow-wrap: anywhere; }
-.configuration-source strong { white-space: nowrap; }
-.configuration-source small { color: var(--muted); }
-.runtime-confirmed { color: var(--ok); }
-.inspector-source { padding: 8px 16px; color: var(--muted); font-size: 12px; }
+/* ───────── 配置来源：并入视图页签栏右侧（不再单独占一行），细节在悬停提示 ───────── */
+.viewtabs { container-type: inline-size; align-items: stretch; }
+.viewtabs > span em { font-style: normal; }
+.viewtabs > .grow { flex: 1 1 0; min-width: 8px; }
+.configuration-view { display: flex; align-items: center; gap: 8px; flex: none; padding: 0 2px; }
+.configuration-switch.seg { display: inline-flex; padding: 2px; gap: 2px; border-radius: var(--r-md); background: var(--s2); border: 1px solid var(--line); }
+.configuration-switch button { height: 26px; padding: 0 10px; gap: 5px; font-size: 12px; border: 0; background: none; color: var(--muted); border-radius: calc(var(--r-md) - 2px); }
+.configuration-switch button:hover:not([aria-pressed="true"]) { color: var(--ink2); background: var(--s3); }
+.configuration-switch button[aria-pressed="true"] { background: var(--s4); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / .3); }
+.configuration-view.draft .configuration-switch button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.configuration-state { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; white-space: nowrap; color: var(--muted); }
+.configuration-state > i { width: 7px; height: 7px; border-radius: 50%; background: var(--subtle); flex: none; }
+.configuration-state.ok { color: var(--ok); } .configuration-state.ok > i { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent); }
+.configuration-state.warn { color: var(--amber); } .configuration-state.warn > i { background: var(--amber); }
+.configuration-state.bad { color: var(--err); } .configuration-state.bad > i { background: var(--err); }
+.configuration-state.draft { color: var(--accent); } .configuration-state.draft > i { background: var(--accent); }
+.configuration-refresh { width: 28px; height: 28px; padding: 0; justify-content: center; }
+/* 草稿模式：中间区域顶部一条强调色线，和「正在运行」一眼可分 */
+.center.draft-mode .viewtabs { box-shadow: inset 0 2px 0 var(--accent); }
+/* 中间区域变窄：先收起未选中页签的文字，再收起状态文字（悬停仍有完整说明） */
+@container (max-width: 860px) { .viewtabs > span:not(.on) em { display: none; } .viewtabs > span:not(.on) { padding: 0 11px; } }
+@container (max-width: 600px) { .configuration-state > span { display: none; } .viewtabs > span em { display: none; } }
+
+.inspector-source { display: flex; align-items: center; gap: 7px; margin: 10px 14px 0; padding: 6px 6px 6px 10px; border-radius: var(--r-md); background: var(--s2); border: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.inspector-source > span { flex: 1; min-width: 0; }
+.inspector-source button { height: 24px; padding: 0 9px; font-size: 11.5px; }
 .inspector-fields, fieldset.daybtns { min-width: 0; border: 0; margin: 0; padding: 0; }
 .inspector-fields:disabled input, .inspector-fields:disabled select, .inspector-fields:disabled textarea { color: var(--ink); opacity: 1; }
-.configuration-view.runtime ~ .body .cue { cursor: pointer; }
-
 .inspector-fields:disabled .seg { pointer-events: none; }
+.center:not(.draft-mode) .cue { cursor: pointer; }
+
+/* ───────── 顶栏细节 ───────── */
+.top > .logo, .top > .projmenu { flex: none; }
+.nic { display: flex; flex-direction: column; justify-content: center; }
+.nic > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nic-l1 { display: flex; align-items: center; gap: 6px; color: var(--ink2); }
+@media (max-width: 1400px) { .nic-l2 { display: none; } }
+
+/* 禁用的主按钮不再是「半透明橙色」（看起来像能点） */
+button.primary:disabled { background: var(--s3); border-color: var(--line); color: var(--subtle); opacity: 1; box-shadow: none; }
+
+/* 左栏标签不折行 */
+.dev .tag { flex: none; white-space: nowrap; }
+.dev .n { min-width: 0; }
+
+/* 日志：结果列前移；系统消息（无地址和内容）说明占满剩余宽度 */
+.ln { grid-template-columns: 96px 30px 76px minmax(90px, 150px) minmax(120px, 1.1fr) minmax(120px, 1.6fr); }
+.ln.bare > .det { grid-column: 4 / -1; }
+.ln .sys { color: var(--subtle); }

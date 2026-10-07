@@ -6,7 +6,7 @@ import { ProjectMenu } from './ProjectMenu.tsx';
 import { Icon } from './Icon.tsx';
 
 const SAVE_TEXT: Record<SaveState, string> = {
-  saved: '草稿已应用',
+  saved: '与引擎一致',
   dirty: '本机草稿 · 尚未应用',
   saving: '应用中…',
   error: '草稿保存失败',
@@ -100,11 +100,10 @@ export function TopBar() {
         ? <button onClick={() => void lockNow()} title="立即锁定编辑（查看和急停不受影响）"><Icon name="unlock" size={14} />锁定</button>
         : <button className="lockpill" onClick={openUnlock} title="编辑已锁定，点击输入密码解锁"><Icon name="lock" size={14} />已锁定 · 解锁</button>)}
       <div className="nic">
-        <span className={`dot ${tone}`} />{engineText}
-        <br />
-        {engine
+        <span className="nic-l1"><span className={`dot ${tone}`} />{engineText}</span>
+        <span className="nic-l2">{engine
           ? `网卡 ${engine.network.localAddresses?.join('、') || '自动'}${engine.network.missing.length ? `（缺 ${engine.network.missing.length}）` : ''} · ${engine.listeners.length > 0 ? `监听 UDP ${engine.listeners.join(' / ')}` : '未监听触发端口'}`
-          : status?.network?.settings.localAddresses?.length ? `网卡 ${status.network.settings.localAddresses.join('、')}` : ''}
+          : status?.network?.settings.localAddresses?.length ? `网卡 ${status.network.settings.localAddresses.join('、')}` : ''}</span>
       </div>
     </header>
   );

@@ -28,6 +28,7 @@ export function App() {
   const saveState = useStore((s) => s.saveState);
   const startError = useStore((s) => s.status?.daemon.startError);
   const view = useStore((s) => s.view);
+  const configurationView = useStore((s) => s.configurationView);
   const notice = useStore((s) => s.status?.daemon.notice);
   const settingsOpen = useStore((s) => s.settingsOpen);
   const lock = useStore((s) => s.lock);
@@ -86,7 +87,6 @@ export function App() {
     <div className="app">
       <TopBar />
       <EngineVersionBanner />
-      <RuntimeConfiguration />
       {lock.enabled && !lock.unlocked && (
         <div className="banner warn">
           🔒 编辑已锁定，当前只读：可以查看日程、日志，也可以暂停自动日程、操作面板和接管设备；修改配置需要先解锁。
@@ -116,12 +116,14 @@ export function App() {
       )}
       <div className={`body ${logCollapsed ? 'log-collapsed' : ''}`} style={layoutVars(layout)}>
         <Sidebar />
-        <div className="center">
+        <div className={`center ${configurationView === 'draft' ? 'draft-mode' : ''}`}>
           <div className="viewtabs">
-            <span className={view === 'overview' ? 'on' : ''} onClick={() => setView('overview')}><Icon name="activity" size={15} />运行总览</span>
-            <span className={view === 'timeline' ? 'on' : ''} onClick={() => setView('timeline')}><Icon name="timeline" size={15} />模式与时间轴</span>
-            <span className={view === 'calendar' ? 'on' : ''} onClick={() => setView('calendar')}><Icon name="calendar" size={15} />日历与预览</span>
-            <span className={view === 'pad' ? 'on' : ''} onClick={() => setView('pad')}><Icon name="pad" size={15} />操作面板</span>
+            <span className={view === 'overview' ? 'on' : ''} title="运行总览" onClick={() => setView('overview')}><Icon name="activity" size={15} /><em>运行总览</em></span>
+            <span className={view === 'timeline' ? 'on' : ''} title="模式与时间轴" onClick={() => setView('timeline')}><Icon name="timeline" size={15} /><em>模式与时间轴</em></span>
+            <span className={view === 'calendar' ? 'on' : ''} title="日历与预览" onClick={() => setView('calendar')}><Icon name="calendar" size={15} /><em>日历与预览</em></span>
+            <span className={view === 'pad' ? 'on' : ''} title="操作面板" onClick={() => setView('pad')}><Icon name="pad" size={15} /><em>操作面板</em></span>
+            <b className="grow" />
+            <RuntimeConfiguration />
           </div>
           {view === 'overview' ? <Overview /> : view === 'timeline' ? <Timeline /> : view === 'calendar' ? <CalendarView /> : <PadView />}
         </div>

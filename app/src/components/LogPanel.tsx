@@ -93,12 +93,15 @@ function LogRow({ l, view }: { l: LogEntry; view: 'ascii' | 'hex' }) {
   const content = l.ascii === undefined ? '' : view === 'hex' ? l.hex : l.ascii;
   const [open, setOpen] = useState(false); // 点一下展开整行（内容与说明很长时默认被截断）
   return (
-    <div className={`ln ${open ? 'open' : ''}`} onClick={() => { if (!window.getSelection()?.toString()) setOpen(!open); }}>
+    // 系统消息没有地址和内容：让说明占满这两列，不留大片空白
+    <div className={`ln ${open ? 'open' : ''} ${!l.remote && !content ? 'bare' : ''}`} onClick={() => { if (!window.getSelection()?.toString()) setOpen(!open); }}>
       <span className="ts">{formatClock(l.t)}</span>
       <span className={l.dir === 'TX' ? 'tx' : l.dir === 'RX' ? 'rx' : 'sys'}>{l.dir}</span>
-      <span className="ip">{l.remote ?? ''}</span>
-      <span className="c" title={`${l.ascii ?? ''}\n${l.hex ?? ''}`}>{content}</span>
       <span className={`res ${l.alert ? (l.alert.level === 'error' ? 'bad' : l.alert.level === 'warn' ? 'warn' : tone) : tone}`}>{l.alert ? '⚠ ' : ''}{RESULT_LABEL[l.result] ?? l.result}</span>
+      {(l.remote || content) && <>
+        <span className="ip">{l.remote ?? ''}</span>
+        <span className="c" title={`${l.ascii ?? ''}\n${l.hex ?? ''}`}>{content}</span>
+      </>}
       <span className="det" title={`${l.source ?? ""} ${l.detail ?? ""}`.trim()}>
         {l.source && <b>{l.source}</b>} {l.detail}
         {l.lagMs !== undefined && <i className="lag"> +{l.lagMs}ms</i>}

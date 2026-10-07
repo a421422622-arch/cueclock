@@ -67,7 +67,7 @@ export async function smokeRuntimeConfiguration(win: BrowserWindow, faults: { re
     assert(!await js(`!!document.querySelector('.runtime-confirmed')`), '回读失败被误标已核对');
   } finally { faults.readFailure(false); }
   assert((await rpc<typeof original>('getProject')).project.name === '应用成功但回读故障', '故障场景中应用本身未成功');
-  await click('.configuration-view > button', '刷新运行配置');
+  await click('.configuration-refresh');
   await wait(`document.querySelector('[data-runtime-state]').textContent.includes('已回读核对')`);
   faults.disconnect();
   await wait(`document.querySelector('[data-runtime-state]').textContent.includes('连接断开')`);

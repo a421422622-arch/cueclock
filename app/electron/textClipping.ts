@@ -25,8 +25,12 @@ export function inspectTopBar() {
   const bounds = top.getBoundingClientRect();
   const items = [...top.children].filter((e) => !e.classList.contains('grow') && e.getBoundingClientRect().width > 0);
   const rect = (e: Element) => e.getBoundingClientRect();
+  const spill = items.filter((e) => getComputedStyle(e).overflowX === 'visible' && e.scrollWidth > e.clientWidth + 2)
+    .map((e) => `${e.tagName.toLowerCase()}.${[...e.classList].join('.')} ${e.clientWidth}/${e.scrollWidth}`);
   return {
-    overflow: top.scrollWidth > top.clientWidth + 2 || items.some((e) => rect(e).right > bounds.right + 2 || rect(e).left < bounds.left - 2),
+    // 第三项：子块被压窄但 overflow 为 visible 时，文字会溢出到相邻块下面（曾出现 Logo 被压成「CueClocl」）
+    overflow: top.scrollWidth > top.clientWidth + 2 || items.some((e) => rect(e).right > bounds.right + 2 || rect(e).left < bounds.left - 2) || spill.length > 0,
+    spill,
     overlap: items.some((a, i) => items.slice(i + 1).some((b) => rect(a).right > rect(b).left + 2 && rect(a).left < rect(b).right - 2 && rect(a).top < rect(b).bottom && rect(b).top < rect(a).bottom)),
   };
 }
