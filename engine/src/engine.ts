@@ -1134,6 +1134,46 @@ export class Engine extends EventEmitter {
     return expandActions([r.action]).length;
   }
 
+  /**
+   * 「测试」按钮用：立即执行一条指令（可以是尚未保存的草稿），**等发送完成**，按设备返回结果。
+   * 带回包校验的指令最多等 capMs（默认 8 秒，小于界面请求超时），到点先返回 pending=true，发送继续在后台进行，结果见日志。
+   * 参数缺失、内容无效当场抛错，不发包。目标设备在运行配置里不存在时返回 device 为空的 error。
+   */
+  async testCommandNow(cmd: Command, args?: Record<string, string>, capMs = 8000): Promise<{ actions: number; results: { device: string; status: LogResult }[]; pending: boolean }> {
+    if (!this.running) throw new Error('引擎未运行');
+    const r = resolveCommandAction(cmd, { id: '__cmd', type: 'command', commandId: cmd.id, args });
+    if (!r.action) throw new Error(r.error);
+    try {
+      buildPayload(r.action.format, r.action.payload, r.action.terminator);
+    } catch (err) {
+      throw new Error(`发送内容无效：${(err as Error).message}`);
+    }
+    const action = r.action;
+    const source = `手动·指令「${cmd.name}」`;
+    this.log({ dir: 'SYS', result: 'info', source, detail: '手动测试' });
+    const names = this.resolveDevices(action.targets).map((d) => d.name);
+    const expanded = expandActions([action]);
+    const results: { device: string; status: LogResult }[] = [];
+    const signal = this.runCtl?.signal;
+    const run = (async () => {
+      const base = this.clock.now();
+      for (const x of expanded) {
+        await this.clock.sleepUntil(base + x.relMs, signal);
+        if (signal?.aborted) return;
+        const rs = await this.runAction(x.action, { source, manual: true, signal, scheduledAt: base + x.relMs });
+        rs.forEach((status, i) => results.push({ device: names.length === rs.length ? names[i]! : '', status }));
+      }
+    })();
+    const cap = new AbortController();
+    const finished = await Promise.race([
+      run.then(() => true),
+      this.clock.sleepUntil(this.clock.now() + capMs, cap.signal).then(() => false, () => false),
+    ]);
+    cap.abort();
+    if (!finished) run.catch(() => {});
+    return { actions: expanded.length, results: [...results], pending: !finished };
+  }
+
   /** 立即执行一个场景（可以是尚未保存的草稿）。返回展开后的执行点个数。 */
   runSceneNow(scene: Scene): number {
     if (!this.running) throw new Error('引擎未运行');

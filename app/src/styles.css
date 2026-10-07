@@ -426,6 +426,13 @@ select.warnb { border-color: var(--warn); }
 .padtile.lit { background: var(--c); color: var(--t); border-color: var(--c); box-shadow: 0 0 22px color-mix(in srgb, var(--c) 55%, transparent); }
 .padtile.ok { box-shadow: 0 0 0 3px #34c75988; } .padtile.bad { box-shadow: 0 0 0 3px #ff453a99; }
 .padtile.selected { outline: 3px solid #fff; outline-offset: 2px; }
+.testbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 0 10px; }
+.testbar.inline { padding: 0; }
+.testbar .testarg { display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--muted); }
+.testbar .testarg input { width: 90px; }
+.testres { display: flex; flex-direction: column; gap: 1px; flex-basis: 100%; }
+.rowtest { margin-left: auto; font-size: 11px; padding: 1px 6px; opacity: .55; }
+.dev:hover .rowtest, .dev.sel .rowtest { opacity: 1; }
 .padtile.slider { cursor: default; gap: 2px; justify-content: space-between; padding: 10px 14px; }
 .padtile.slider:hover:not(.off) { background: color-mix(in srgb, var(--c) 14%, var(--s2)); }
 .padtile.slider.off { opacity: .45; }

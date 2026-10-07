@@ -7,6 +7,8 @@ import { genId } from '../lib/labels.ts';
 import { previewPayload, toHex } from '../lib/payload.ts';
 import { getState, select, useStore } from '../store.ts';
 import { Check, Field, NumInput, Seg } from './fields.tsx';
+import { TestResult, useCommandTest } from './TestSend.tsx';
+import { adHocCommand, runtimeOnly } from '../lib/commandTest.ts';
 
 const KIND_OPTIONS: { value: MatchKind; label: string }[] = [
   { value: 'exact', label: '完全匹配' },
@@ -58,7 +60,7 @@ export function ActionList({ actions, onChange, defaultTarget, focusedAction, tr
             </div>
           </div>
           <div className="ab">
-            {a.type === 'udp' && <SendEditor v={a} showOffset triggerTemplate={triggerTemplate} previewValues={sliderSample === undefined ? undefined : sampleValues(sliderSample)} onChange={(patch) => update(i, { ...a, ...patch })} />}
+            {a.type === 'udp' && <SendEditor v={a} showOffset testable triggerTemplate={triggerTemplate} previewValues={sliderSample === undefined ? undefined : sampleValues(sliderSample)} onChange={(patch) => update(i, { ...a, ...patch })} />}
             {a.type === 'command' && <CommandBody a={a} triggerTemplate={triggerTemplate} sliderSample={sliderSample} onChange={(n) => update(i, n)} />}
             {a.type === 'delay' && (
               <Field label="时长" hint="后面的动作整体顺延这么久">
@@ -120,6 +122,7 @@ export function SendEditor({
   showOffset,
   previewValues,
   triggerTemplate = false,
+  testable = false,
 }: {
   v: SendValue;
   onChange: (patch: Partial<SendValue>) => void;
@@ -127,8 +130,11 @@ export function SendEditor({
   /** 内容里有 {{参数}} 时，预览用这些值代入 */
   previewValues?: Record<string, string>;
   triggerTemplate?: boolean;
+  /** 显示「测试发送」：把当前内容立即发一次（自定义 UDP 动作用；指令库的指令有自己的测试栏） */
+  testable?: boolean;
 }) {
   const project = useStore((s) => s.project)!;
+  const tester = useCommandTest();
   // 注意：选择器必须返回稳定的引用。这里不能写 `?? []`——每次都是新数组，会让 React 误判状态一直在变，陷入无限渲染
   const localsRaw = useStore((s) => s.status?.network?.settings.localAddresses);
   const locals = localsRaw ?? NO_ADDRS;
@@ -217,6 +223,14 @@ export function SendEditor({
       >
         <input className={`mono ${pv.ok || dynamic ? '' : 'bad'}`} value={v.payload} placeholder={v.format === 'hex' ? 'A5 01 FF' : 'SCENE 12   （支持 \\r \\n \\xFF）'} onChange={(e) => onChange({ payload: e.target.value })} />
       </Field>
+      {testable && (
+        <Field label="测试" hint={runtimeOnly(v.payload) ? '内容里有运行时才有的值（$1 捕获或 {{value}} / {{hex}}），不能当场测试' : '真的会发出：目标、端口、内容按上面的设置，偏移不参与'}>
+          <span className="testbar inline">
+            <button className="primary" disabled={tester.busy || v.targets.length === 0 || runtimeOnly(v.payload)} title={v.targets.length === 0 ? '先选目标' : undefined} onClick={() => void tester.run(adHocCommand(v))}>▶ 测试发送</button>
+            <TestResult state={tester} />
+          </span>
+        </Field>
+      )}
       <Field label="时间">
         <span className="row">
           {showOffset && (

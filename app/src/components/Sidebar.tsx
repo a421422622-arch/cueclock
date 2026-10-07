@@ -1,10 +1,27 @@
 import { useState } from 'react';
-import { edit, openBatchHealth, select, useStore } from '../store.ts';
+import type { Command } from '@engine/types.ts';
+import { edit, openBatchHealth, rpc, select, toast, useStore } from '../store.ts';
+import { RpcFailure } from '../transport.ts';
+import { describeStatus, requiredParams, summarize } from '../lib/commandTest.ts';
+import type { TestOutcome } from '../lib/commandTest.ts';
 import { genId } from '../lib/labels.ts';
 import { sceneRefCount } from '../lib/usage.ts';
 import { describeDeviceState } from '../lib/deviceState.ts';
 import { engineNow } from '../store.ts';
 import { deviceColor, GROUP_COLORS } from '../lib/colors.ts';
+
+/** 列表里的快速测试：有必填参数就转到右侧填写；否则直接发，结果用提示条说明。 */
+async function quickTest(c: Command): Promise<void> {
+  select({ kind: 'command', id: c.id });
+  if (requiredParams(c).length > 0) { toast(`「${c.name}」有必填参数，请在右侧填写后点「测试发送」`); return; }
+  try {
+    const o = await rpc<TestOutcome>('runCommand', { command: c, wait: true });
+    const s = summarize(o);
+    toast(`测试「${c.name}」：${s.text}${o.results.length === 1 ? `（${describeStatus(o.results[0]!.status).text}）` : ''}`);
+  } catch (e) {
+    toast(`测试「${c.name}」失败：${e instanceof RpcFailure ? e.message : String(e)}`);
+  }
+}
 
 export function Sidebar() {
   const [tab, setTab] = useState<'dev' | 'cmd' | 'scene' | 'trig'>('dev');
@@ -74,7 +91,8 @@ export function Sidebar() {
             )}
             {(project.commands ?? []).map((c) => (
               <div key={c.id} className={`dev ${sel?.kind === 'command' && sel.id === c.id ? 'sel' : ''}`} onClick={() => select({ kind: 'command', id: c.id })}>
-                <div className="n">{c.name}{(c.params ?? []).length > 0 && <span className="tag r">{(c.params ?? []).length} 参数</span>}</div>
+                <div className="n">{c.name}{(c.params ?? []).length > 0 && <span className="tag r">{(c.params ?? []).length} 参数</span>}
+                  <button className="ico rowtest" title="立即发送一次这条指令（真的会发出）" onClick={(e) => { e.stopPropagation(); void quickTest(c); }}>▶ 测试</button></div>
                 <div className="a mono"><span>{c.payload.length > 26 ? c.payload.slice(0, 26) + '…' : c.payload}</span><span className={`tag ${c.format === 'hex' ? 'hex' : 'asc'}`}>{c.format.toUpperCase()}</span></div>
                 <div className="a"><span className="dim">{c.targets.map((t) => (t.startsWith('tag:') ? `标签 ${t.slice(4)}` : (project.devices.find((d) => d.id === t)?.name ?? '？'))).join('、') || '（无目标）'}{c.port ? ` :${c.port}` : ''}</span></div>
               </div>

@@ -676,6 +676,8 @@ export class Daemon {
         if (bad.length > 0) throw new RpcError('bad-request', bad.map((i) => i.message).join('；'), bad);
         const args = p.args === undefined ? undefined : (obj(p.args, 'args') as Record<string, string>);
         try {
+          // wait：「测试」按钮用——等发送完成，按设备返回结果；不带 wait 保持原行为（只返回执行点个数）
+          if (p.wait === true) return await this.needEngine().testCommandNow(cmd, args);
           return { actions: this.needEngine().runCommandNow(cmd, args) };
         } catch (e) {
           if (e instanceof RpcError) throw e;

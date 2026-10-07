@@ -14,6 +14,8 @@ import { isDateKey } from '@engine/calendar.ts';
 import { edit, engineNow, openBatchHealth, rpc, select, toast, useStore } from '../store.ts';
 import { DAY_KIND_LABEL, genId, ruleText } from '../lib/labels.ts';
 import { ActionList, SendEditor } from './ActionEditor.tsx';
+import { TestResult, useCommandTest } from './TestSend.tsx';
+import { requiredParams } from '../lib/commandTest.ts';
 import { Check, ColorField, Field, NumInput, Seg, ValidatedInput } from './fields.tsx';
 import { RpcFailure } from '../transport.ts';
 import { cloneMode, cueDevices } from '../lib/timeline.ts';
@@ -406,19 +408,10 @@ function CommandInspector({ id }: { id: string }) {
   // 预览时没有默认值的参数用占位值代入，免得预览里全是空
   const previewValues = Object.fromEntries(params.map((p) => [p.name, p.default ?? (cmd.format === 'hex' ? '00' : '·')]));
   const [testArgs, setTestArgs] = useState<Record<string, string>>({});
-  const [res, setRes] = useState<{ text: string; bad: boolean } | null>(null);
+  const tester = useCommandTest();
+  const missing = requiredParams(cmd).filter((n) => !(testArgs[n] ?? '').length);
 
   const setParam = (i: number, p: Partial<CommandParam>) => patch((c) => { c.params = (c.params ?? []).map((x, j) => (j === i ? { ...x, ...p } : x)); });
-
-  const test = async () => {
-    setRes({ text: '发送中…', bad: false });
-    try {
-      const r = await rpc<{ actions: number }>('runCommand', { command: cmd, args: testArgs });
-      setRes({ text: `已启动（${r.actions} 个执行点），进度见运行总览，结果见日志`, bad: false });
-    } catch (e) {
-      setRes({ text: e instanceof RpcFailure ? e.message : String(e), bad: true });
-    }
-  };
 
   return (
     <>
@@ -426,6 +419,15 @@ function CommandInspector({ id }: { id: string }) {
       <div className="form">
         <Field label="名称"><input value={cmd.name} onChange={(e) => patch((c) => (c.name = e.target.value))} /></Field>
         <Field label="说明"><input value={cmd.note ?? ''} placeholder="（可选）" onChange={(e) => patch((c) => (c.note = e.target.value || undefined))} /></Field>
+      </div>
+      <div className="testbar">
+        {params.map((p) => (
+          <label key={p.name} className="testarg">{p.label || p.name}
+            <input className="mono" value={testArgs[p.name] ?? ''} placeholder={p.default ?? '必填'} onChange={(e) => setTestArgs({ ...testArgs, [p.name]: e.target.value })} />
+          </label>
+        ))}
+        <button className="primary" disabled={tester.busy || missing.length > 0} title={missing.length ? `先填写参数：${missing.join('、')}` : '真的会发出，用的是当前正在编辑的内容（即使还没应用）'} onClick={() => void tester.run(cmd, testArgs)}>▶ 测试发送</button>
+        <TestResult state={tester} />
       </div>
       <div className="sech">发送内容</div>
       <div className="act"><div className="ab"><SendEditor v={cmd} previewValues={previewValues} onChange={(pt) => patch((c) => Object.assign(c, pt))} /></div></div>
@@ -448,21 +450,6 @@ function CommandInspector({ id }: { id: string }) {
       )}
       {unused.length > 0 && <div className="hint">参数 {unused.map((p) => p.name).join('、')} 没有在内容里使用。</div>}
       <button className="addact" onClick={() => patch((c) => (c.params = [...(c.params ?? []), { name: `参数${(c.params ?? []).length + 1}` }]))}>＋ 添加参数</button>
-
-      <div className="sech" style={{ marginTop: 14 }}>测试</div>
-      <div className="form">
-        {params.map((p) => (
-          <Field key={p.name} label={p.label || p.name}>
-            <input className="mono" value={testArgs[p.name] ?? ''} placeholder={p.default ?? '必填'} onChange={(e) => setTestArgs({ ...testArgs, [p.name]: e.target.value })} />
-          </Field>
-        ))}
-        {params.length === 0 && <div className="hint" style={{ gridColumn: '1 / -1' }}>这条指令没有参数，直接点发送。</div>}
-      </div>
-      <div className="row" style={{ gap: 8 }}>
-        <button className="primary" onClick={test}>▶ 立即发送这条指令</button>
-        {res && <span className={`hint ${res.bad ? 'err' : 'okc'}`}>{res.text}</span>}
-      </div>
-      <div className="hint" style={{ marginTop: 4 }}>用的是当前正在编辑的内容（即使还没保存），目标和端口按上面的设置。</div>
 
       <div className="foot">
         <button onClick={() => {
