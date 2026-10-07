@@ -73,7 +73,9 @@ export type AlertCode =
   | 'resumed'
   | 'scheduler-error'
   | 'internal-error'
-  | 'engine-start-failed';
+  | 'engine-start-failed'
+  | 'apply-cancelled-runs'
+  | 'apply-deferred';
 
 export interface AlertInfo {
   code: AlertCode;
@@ -150,9 +152,17 @@ export interface DeviceHealthInfo {
 
 export interface SceneRunStatus { id: string; name: string; source: string; startedAt: number; finishedAt?: number; state: 'running' | 'completed' | 'failed' | 'cancelled' | 'incomplete'; steps: { name: string; state: string }[] }
 
+/**
+ * 正在执行、尚未结束的动作链：顺序/定时场景，以及触发器、面板、手动执行、断电恢复里还在等延时的动作。
+ * 应用新配置（热更新）会取消它们，所以应用前要能列出来，也能「等它们结束再应用」。
+ * 时间轴事件本身的定时动作不在其中——热更新会按新配置重排，不会丢。
+ */
+export interface InFlightRun { id: string; kind: 'scene' | 'actions'; name: string; source: string; remaining: number; nextAt: number | null; manual: boolean }
+
 export interface EngineStatus {
   devices: DeviceHealthInfo[];
   sceneRuns: SceneRunStatus[];
+  inFlight: InFlightRun[];
   /** 面板按钮亮灯状态 */
   pads: Record<string, boolean | number>;
   running: boolean;
@@ -223,6 +233,8 @@ export class Engine extends EventEmitter {
   private feedback = new Map<string, Omit<FeedbackState, 'stale'> & { order: number }>();
   private dispatchOrder = 0;
   private sceneRuns = new Map<string, SceneRunStatus>();
+  /** runActionList 正在执行的动作链（键是 invocation）；结束或取消时移除 */
+  private activeLists = new Map<string, { name: string; total: number; done: number; nextAt: number | null; manual: boolean }>();
   private sceneKeys = new Map<string, string>();
   private sceneControls = new Map<string, { ctl: AbortController; manual: boolean }>();
   private runNumber = 0;
@@ -513,7 +525,7 @@ export class Engine extends EventEmitter {
   pause(): void {
     if (this.pausedFlag) return;
     this.pausedFlag = true;
-    for (const [id, c] of this.sceneControls) if (!c.manual) this.cancelScene(id);
+    for (const [id, c] of this.sceneControls) if (!c.manual) this.cancelScene(id, '自动日程已暂停');
     const msg = '自动日程与 UDP 触发已暂停：期间到点的事件将被跳过';
     if (this.running) this.alert('paused', 'warn', undefined, msg);
     else this.log({ dir: 'SYS', result: 'info', detail: msg });
@@ -612,7 +624,7 @@ export class Engine extends EventEmitter {
     this.running = false;
     this.startedAt = null;
     for (const id of this.sceneRuns.keys()) this.cancelScene(id);
-    this.runCtl?.abort(); // 取消还在等待中的动作（触发器里的延时、恢复、手动执行）
+    this.runCtl?.abort('stop'); // 取消还在等待中的动作（触发器里的延时、恢复、手动执行）
     this.runCtl = null;
     for (const l of this.healthLoops.values()) l.ctl.abort();
     this.healthLoops.clear();
@@ -629,8 +641,8 @@ export class Engine extends EventEmitter {
   async reload(project: Project): Promise<void> {
     this.assertValid(project);
     // 应用新配置时取消旧配置中仍在等待的动作链，防止混用新旧目标或内容。
-    for (const id of this.sceneRuns.keys()) this.cancelScene(id);
-    this.runCtl?.abort();
+    for (const id of this.sceneRuns.keys()) this.cancelScene(id, '已应用新配置');
+    this.runCtl?.abort('reload');
     if (this.running) this.runCtl = new AbortController();
     for (const d of this.project.devices) {
       const next = project.devices.find((x) => x.id === d.id);
@@ -773,16 +785,40 @@ export class Engine extends EventEmitter {
     const resolved = resolveActions(this.project, actions);
     const invocation = `list-${++this.runNumber}`;
     for (const err of resolved.errors) this.log({ dir: 'SYS', result: 'error', source, detail: err });
-    for (const x of expandActions(resolved.actions)) {
-      await this.clock.sleepUntil(base + x.relMs, signal);
-      if (signal.aborted) return; // 引擎已停止/切换项目：后面的动作不再执行
-      if (this.pausedFlag && !manual) {
-        this.log({ dir: 'SYS', result: 'skipped', source, scheduledAt: base + x.relMs, detail: '自动日程与 UDP 触发已暂停' });
-        continue;
+    const steps = expandActions(resolved.actions);
+    const entry = { name: source, total: steps.length, done: 0, nextAt: null as number | null, manual };
+    this.activeLists.set(invocation, entry);
+    try {
+      for (const x of steps) {
+        entry.nextAt = base + x.relMs;
+        await this.clock.sleepUntil(base + x.relMs, signal);
+        if (signal.aborted) { // 引擎已停止 / 应用了新配置：后面的动作不再执行，但要留下记录（应用配置导致的记为告警）
+          const detail = `${signal.reason === 'reload' ? '已应用新配置' : '引擎已停止'}：此动作链剩余 ${entry.total - entry.done} 个动作已取消，不再发出`;
+          if (signal.reason === 'reload') this.alert('apply-cancelled-runs', 'warn', source, detail, { result: 'skipped', source, scheduledAt: base + x.relMs });
+          else this.log({ dir: 'SYS', result: 'skipped', source, scheduledAt: base + x.relMs, detail });
+          return;
+        }
+        entry.done++;
+        if (this.pausedFlag && !manual) {
+          this.log({ dir: 'SYS', result: 'skipped', source, scheduledAt: base + x.relMs, detail: '自动日程与 UDP 触发已暂停' });
+          continue;
+        }
+        this.spawn(this.runAction(x.action, { source, manual, signal, invocation, scheduledAt: base + x.relMs,
+          ...(recoveryBase === undefined ? {} : { recoveryAt: recoveryBase + x.relMs }) }), '执行动作');
       }
-      this.spawn(this.runAction(x.action, { source, manual, signal, invocation, scheduledAt: base + x.relMs,
-        ...(recoveryBase === undefined ? {} : { recoveryAt: recoveryBase + x.relMs }) }), '执行动作');
-    }
+    } finally { this.activeLists.delete(invocation); }
+  }
+
+  /** 此刻正在执行、应用新配置时会被取消的动作链（见 InFlightRun）。 */
+  inFlight(): InFlightRun[] {
+    const live = ['pending', 'running', 'waiting'];
+    const scenes = [...this.sceneRuns.values()].filter((r) => r.state === 'running').map((r) => ({
+      id: r.id, kind: 'scene' as const, name: r.name, source: r.source, remaining: r.steps.filter((x) => live.includes(x.state)).length, nextAt: null, manual: this.sceneControls.get(r.id)?.manual ?? false,
+    })).filter((r) => r.remaining > 0);
+    const lists = [...this.activeLists].filter(([, l]) => l.done < l.total).map(([id, l]) => ({
+      id, kind: 'actions' as const, name: l.name, source: l.name, remaining: l.total - l.done, nextAt: l.nextAt, manual: l.manual,
+    }));
+    return [...scenes, ...lists];
   }
 
   private createSceneRun(name: string, names: string[], ctx: RunCtx): SceneRunStatus {
@@ -824,13 +860,16 @@ export class Engine extends EventEmitter {
     this.log({ dir: 'SYS', result: run.state === 'failed' ? 'error' : 'info', source: run.source, detail: `场景「${run.name}」${run.state === 'completed' ? '动作处理完成（设备状态以回读为准）' : run.state === 'incomplete' ? '启动前步骤未观察，需检查设备状态' : '有失败或跳过的动作'}` });
   }
 
-  cancelScene(id: string): void {
+  cancelScene(id: string, why?: string): void {
     const run = this.sceneRuns.get(id);
     if (!run || run.state !== 'running') return;
     this.sceneControls.get(id)?.ctl.abort();
     run.state = 'cancelled'; run.finishedAt = this.clock.now();
-    for (const step of run.steps) if (['pending', 'running', 'waiting'].includes(step.state)) step.state = 'cancelled';
-    this.log({ dir: 'SYS', result: 'info', source: run.source, detail: `场景「${run.name}」已停止后续步骤；已经发出的指令不能撤回` });
+    let left = 0;
+    for (const step of run.steps) if (['pending', 'running', 'waiting'].includes(step.state)) { step.state = 'cancelled'; left++; }
+    const detail = `${why ? `${why}：` : ''}场景「${run.name}」已停止后续步骤${left ? `（取消 ${left} 步）` : ''}；已经发出的指令不能撤回`;
+    if (why === '已应用新配置' && left > 0) this.alert('apply-cancelled-runs', 'warn', run.source, detail, { result: 'info', source: run.source });
+    else this.log({ dir: 'SYS', result: 'info', source: run.source, detail });
   }
 
   private async runSequence(scene: Scene, ctx: RunCtx): Promise<void> {
@@ -1256,6 +1295,7 @@ export class Engine extends EventEmitter {
     return {
       devices,
       sceneRuns: [...this.sceneRuns.values()].slice(-20).reverse(),
+      inFlight: this.inFlight(),
       pads: Object.fromEntries(this.padState),
       running: this.running,
       paused: this.pausedFlag,

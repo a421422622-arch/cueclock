@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { displayedProject, viewingRuntime, edit, engineNow, keepDraftOverEngine, lockNow, openUnlock, prepareApply, reloadFromEngine, rpc, showLogTab, toast, useStore } from '../store.ts';
+import { displayedProject, viewingRuntime, edit, engineNow, keepDraftOverEngine, resumeSchedule, lockNow, openUnlock, prepareApply, reloadFromEngine, rpc, showLogTab, toast, useStore } from '../store.ts';
 import { mergeAlerts, unseenCount } from '../lib/alerts.ts';
 import type { SaveState } from '../store.ts';
 import { ProjectMenu } from './ProjectMenu.tsx';
 import { Icon } from './Icon.tsx';
 
+const DEFERRED_TEXT = '等动作结束后自动应用';
 const SAVE_TEXT: Record<SaveState, string> = {
   saved: '与引擎一致',
   dirty: '本机草稿 · 尚未应用',
@@ -58,6 +59,7 @@ export function TopBar() {
   const conn = useStore((s) => s.conn);
   const status = useStore((s) => s.status);
   const saveState = useStore((s) => s.saveState);
+  const deferred = useStore((s) => !!s.deferredApply);
   const lock = useStore((s) => s.lock);
   const logs = useStore((s) => s.logs);
   const history = useStore((s) => s.alertHistory);
@@ -68,7 +70,8 @@ export function TopBar() {
 
   const togglePause = async () => {
     try {
-      await rpc(paused ? 'resume' : 'pause');
+      if (paused) await resumeSchedule();
+      else await rpc('pause');
     } catch (e) {
       toast(`操作失败：${(e as Error).message}`);
     }
@@ -83,8 +86,8 @@ export function TopBar() {
       <div className="logo"><span className="logo-mark" aria-hidden="true" /><span>Cue<b>Clock</b></span></div>
       <ProjectMenu file={status?.daemon.projectFile ?? null} />
       <input className="projname" readOnly={readonly} aria-label={readonly ? "运行配置名称（只读）" : "草稿配置名称"} value={project.name} onChange={(e) => edit((p) => (p.name = e.target.value))} title={status?.daemon.projectFile} />
-      <span className={`savestate ${saveState}`} title={SAVE_TEXT[saveState]}>{SAVE_TEXT[saveState]}</span>
-      {saveState !== 'saved' && saveState !== 'conflict' && <button className="primary apply-open" disabled={saveState === 'saving' || conn !== 'connected'} onClick={() => void prepareApply()}>检查并应用</button>}
+      <span className={`savestate ${deferred ? 'saving' : saveState}`} title={deferred ? DEFERRED_TEXT : SAVE_TEXT[saveState]}>{deferred ? DEFERRED_TEXT : SAVE_TEXT[saveState]}</span>
+      {saveState !== 'saved' && saveState !== 'conflict' && !deferred && <button className="primary apply-open" disabled={saveState === 'saving' || conn !== 'connected'} onClick={() => void prepareApply()}>检查并应用</button>}
       {saveState === 'conflict' && <button className="primary apply-open" disabled={conn !== 'connected'} title="以本机草稿为准：先列出相对引擎当前配置的全部差异（含别处的修改会被覆盖的部分），确认后才应用" onClick={() => void keepDraftOverEngine()}>以我的草稿为准…</button>}
       {saveState === 'conflict' && <button onClick={() => void reloadFromEngine()}>放弃本地修改并重新加载</button>}
       <span className="grow" />

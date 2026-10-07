@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 import type { Project } from '@engine/types.ts';
-import type { EngineStatus, LogEntry } from '@engine/engine.ts';
+import type { EngineStatus, InFlightRun, LogEntry } from '@engine/engine.ts';
 import type { Issue } from '@engine/validate.ts';
 import { appBridge, transport, RpcFailure } from './transport.ts';
 import type { EngineUpdate } from '../../engine/src/version.ts';
@@ -8,10 +8,18 @@ import { EditHistory } from './lib/history.ts';
 import { readRuntimeConfig, snapshotCurrent, appliedSnapshotMatches, sameConfiguration } from './lib/runtimeConfig.ts';
 import type { RuntimeConfigSnapshot } from './lib/runtimeConfig.ts';
 import { normalizeEngineStatus } from './lib/status.ts';
+import { diffToday } from './lib/todayDiff.ts';
+import { pauseSummary } from './lib/pauseSummary.ts';
+import type { PauseSummary } from './lib/pauseSummary.ts';
+import type { TodayDiff } from './lib/todayDiff.ts';
+import type { DayView } from '@engine/simulate.ts';
+import { localMidnight } from '@engine/calendar.ts';
 
 export interface DaemonStatus {
   protocol: number;
-  daemon: { instanceId?: string; pid: number; projectFile: string; rev: number; startError: string | null; notice: string | null };
+  daemon: { instanceId?: string; pid: number; projectFile: string; rev: number; startError: string | null; notice: string | null;
+    /** 引擎里挂着、等正在执行的动作链结束后才应用的配置（0.6.0 起） */
+    pendingApply?: { since: number; deadline: number; baseRev: number } | null };
   engine: EngineStatus | null;
   lock?: { enabled: boolean };
   network?: { settings: { localAddresses?: string[]; localPort?: number; listenAll?: boolean }; source: string; missing: string[]; available: boolean };
@@ -48,7 +56,13 @@ export interface AppState {
   rev: number;
   saveState: SaveState;
   issues: Issue[];
-  applyPreview: { project: Project; instanceId: string; rev: number; version: number; changes: string[]; issues: Issue[] } | null;
+  applyPreview: { project: Project; instanceId: string; rev: number; version: number; changes: string[]; issues: Issue[]; inFlight: InFlightRun[];
+    /** 今天剩余日程的变化；算不出来（断线 / 引擎未运行）为 null */
+    today: TodayDiff | null } | null;
+  /** 已交给引擎、等动作链结束后自动应用的草稿版本；seen = 已在引擎状态里看到它在等待 */
+  deferredApply: { version: number; project: Project; deadline: number; seen: boolean } | null;
+  /** 刚恢复自动日程：暂停期间跳过了什么（恢复不补发） */
+  resumeSummary: PauseSummary | null;
   logs: LogEntry[];
   sel: Selection;
   modeId: string | null;
@@ -60,7 +74,6 @@ export interface AppState {
   configurationPage: ConfigurationPage;
   /** 操作面板：当前面板 id；是否处于编辑模式 */
   padId: string | null;
-  padEdit: boolean;
   /** 编辑锁：enabled=引擎里设了密码；unlocked=本连接已解锁。锁定时只读（查看、急停仍可用） */
   lock: { enabled: boolean; unlocked: boolean };
   unlockOpen: boolean;
@@ -106,6 +119,8 @@ let state: AppState = {
   saveState: 'saved',
   issues: [],
   applyPreview: null,
+  deferredApply: null,
+  resumeSummary: null,
   logs: [],
   sel: null,
   modeId: null,
@@ -116,7 +131,6 @@ let state: AppState = {
   settingsOpen: false,
   configurationPage: 'files',
   padId: null,
-  padEdit: false,
   lock: { enabled: false, unlocked: true },
   unlockOpen: false,
   backupOpen: false,
@@ -225,8 +239,16 @@ function applyStatus(st: DaemonStatus): void {
   // 引擎状态里带着「是否设了密码」；密码被移除时本连接自然变成已解锁
   if (st.lock && st.lock.enabled !== state.lock.enabled) set({ lock: { enabled: st.lock.enabled, unlocked: st.lock.enabled ? state.lock.unlocked : true } });
   const changedInstance = !!state.status?.daemon.instanceId && !!st.daemon.instanceId && state.status.daemon.instanceId !== st.daemon.instanceId;
+  if (changedInstance && state.deferredApply) { set({ deferredApply: null }); toast('引擎已重启，延后应用随之取消；草稿仍保留'); }
   const now = st.engine?.now;
   set({ status: { ...st, engine: normalizeEngineStatus(st.engine) }, ...(now ? { clockOffset: now - Date.now() } : {}) });
+  const deferred = state.deferredApply;
+  if (deferred && st.daemon.pendingApply && !deferred.seen) set({ deferredApply: { ...deferred, seen: true } });
+  else if (deferred?.seen && !st.daemon.pendingApply && st.daemon.rev === state.rev && !changedInstance) {
+    // 引擎放弃了等待（超时 / 手动取消 / 被替换），配置没变：草稿还在本机，提示用户
+    set({ deferredApply: null });
+    toast('延后应用已放弃，新配置没有应用（原因见日志）；草稿仍保留');
+  }
   if (state.loaded && (st.daemon.rev !== state.runtimeSnapshot?.rev || changedInstance || st.daemon.projectFile !== state.runtimeSnapshot?.file) && !inflight && !state.runtimeReading) {
     void refreshRuntimeConfig(); // 有草稿时由回读结果判断是否真的冲突
   }
@@ -239,6 +261,9 @@ export async function refreshRuntimeConfig(): Promise<RuntimeConfigSnapshot | nu
   try {
     const r = await readRuntimeConfig<DaemonStatus>(transport.request);
     if (session !== projectSession || id !== runtimeReadId) return null;
+    const deferred = state.deferredApply;
+    const deferredDone = !!deferred && sameConfiguration(r.snapshot.project, deferred.project);
+    if (deferredDone) { savedVersion = deferred.version; draftBase = deferred.project; } // 引擎自动应用了我们挂起的那一份
     const clean = editVersion === savedVersion;
     if (clean) history.clear();
     // 有草稿：引擎内容与草稿的起点一致（只是重启 / 修订号变了）→ 接到新修订号继续；内容真变了 → 冲突
@@ -246,7 +271,9 @@ export async function refreshRuntimeConfig(): Promise<RuntimeConfigSnapshot | nu
     set({ runtimeSnapshot: r.snapshot, runningProject: r.snapshot.project, runtimeReading: false,
       ...(clean ? { project: r.snapshot.project, rev: r.snapshot.rev, ...historyState() } : {}),
       ...(rebase ? { rev: r.snapshot.rev, ...(state.saveState === 'conflict' ? { saveState: 'dirty' as const } : {}) } : {}),
-      ...(!clean && !rebase ? { saveState: 'conflict' as const } : {}) });
+      ...(!clean && !rebase ? { saveState: 'conflict' as const } : {}),
+      ...(deferredDone ? { deferredApply: null, saveState: clean ? 'saved' as const : 'dirty' as const, ...(clean ? { configurationView: 'runtime' as const } : {}) } : {}) });
+    if (deferredDone) { if (clean) clearDraft(); else writeDraft(); toast(`动作链已结束，引擎已自动应用新配置 r${r.snapshot.rev} 并回读核对`); }
     applyStatus(r.status);
     return r.snapshot;
   } catch (e) {
@@ -257,11 +284,11 @@ export async function refreshRuntimeConfig(): Promise<RuntimeConfigSnapshot | nu
 
 export function beginDraft(): boolean {
   if (!editable()) { toast('请先解锁或更新引擎后编辑'); return false; }
-  set({ configurationView: 'draft', ...(state.view === 'pad' ? { padEdit: true } : {}) });
+  set({ configurationView: 'draft' }); // 操作面板：草稿 = 编辑布局，运行 = 操作
   return true;
 }
 export async function viewRuntime(): Promise<void> {
-  set({ configurationView: 'runtime', padEdit: false }); // 保留选中：检查器对不存在的对象自动显示空白
+  set({ configurationView: 'runtime' }); // 保留选中：检查器对不存在的对象自动显示空白
   await refreshRuntimeConfig();
 }
 
@@ -364,33 +391,58 @@ async function checkDraft(): Promise<void> {
 }
 
 export const closeApplyPreview = () => { if (!inflight) set({ applyPreview: null }); };
+export async function cancelDeferredApply(): Promise<void> {
+  try { await transport.request('cancelPendingApply'); } catch (e) { toast(`取消失败：${(e as Error).message}`); return; }
+  set({ deferredApply: null });
+  toast('已取消延后应用；草稿仍保留，可以重新检查并应用');
+}
+
+/** 用引擎的模拟分别算运行配置和草稿今天的计划，比较此刻之后的部分。 */
+async function todayChanges(project: Project): Promise<TodayDiff | null> {
+  const date = state.status?.engine?.date;
+  if (!date) return null;
+  try {
+    const [[before], [after]] = await Promise.all([
+      transport.request<DayView[]>('simulate', { from: date, days: 1 }),
+      transport.request<DayView[]>('simulate', { project, from: date, days: 1 }),
+    ]);
+    return before && after ? diffToday(before, after, engineNow() - localMidnight(date)) : null;
+  } catch { return null; }
+}
 
 export async function prepareApply(): Promise<void> {
   if (isLocked()) { denyLocked(); return; }
   if (!state.project || state.conn !== 'connected') { toast('请先连接引擎'); return; }
   const project = structuredClone(state.project), version = editVersion, session = projectSession;
   try {
-    const r = await transport.request<{ instanceId: string; rev: number; changes: string[]; issues: Issue[] }>('previewProject', { project, baseRev: state.rev });
-    if (session === projectSession) set({ applyPreview: { ...r, project, version }, issues: r.issues });
+    const r = await transport.request<{ instanceId: string; rev: number; changes: string[]; issues: Issue[]; inFlight?: InFlightRun[] }>('previewProject', { project, baseRev: state.rev });
+    const today = await todayChanges(project);
+    if (session === projectSession) set({ applyPreview: { ...r, inFlight: r.inFlight ?? [], today, project, version }, issues: r.issues });
   } catch (e) {
     if (e instanceof RpcFailure && e.code === 'conflict') set({ saveState: 'conflict' });
     toast(`预览失败：${(e as Error).message}`);
   }
 }
 
-export async function applyConfiguration(): Promise<void> {
+/** whenIdle：有动作链正在执行时交给引擎挂起，等它们结束再应用（不取消任何动作）。 */
+export async function applyConfiguration(whenIdle = false): Promise<void> {
   if (inflight || !state.applyPreview) return;
   if (isLocked()) { denyLocked(); return; }
   const preview = state.applyPreview, session = projectSession;
   inflight = true; set({ saveState: 'saving' });
   try {
-    const r = await transport.request<{ rev: number; warnings: Issue[] }>('applyProject', { project: preview.project, baseRev: preview.rev, instanceId: preview.instanceId });
+    const r = await transport.request<{ rev: number; warnings: Issue[]; deferred?: boolean; deadline?: number; waitingFor?: number }>('applyProject', { project: preview.project, baseRev: preview.rev, instanceId: preview.instanceId, whenIdle });
     if (session !== projectSession) return;
+    if (r.deferred) {
+      set({ saveState: 'dirty', applyPreview: null, deferredApply: { version: preview.version, project: preview.project, deadline: r.deadline ?? 0, seen: !!state.status?.daemon.pendingApply } });
+      toast(`已交给引擎：${r.waitingFor ?? ''} 个动作链结束后自动应用`);
+      return;
+    }
     savedVersion = preview.version;
     draftBase = preview.project; // 应用期间又改了的部分，起点就是刚应用的这一份
     const clean = editVersion === savedVersion;
     if (clean) clearDraft(); else writeDraft();
-    set({ rev: r.rev, issues: clean ? r.warnings : state.issues, saveState: clean ? 'saved' : 'dirty', applyPreview: null, configurationView: 'runtime', padEdit: false });
+    set({ rev: r.rev, issues: clean ? r.warnings : state.issues, saveState: clean ? 'saved' : 'dirty', applyPreview: null, configurationView: 'runtime' });
     const actual = await refreshRuntimeConfig();
     if (session !== projectSession) return;
     if (!actual) toast('配置已应用，但引擎回读未核对；请刷新运行配置');
@@ -480,6 +532,15 @@ export function setView(view: View): void {
   set({ view });
 }
 
+/** 恢复自动日程，并告诉操作员暂停期间跳过了哪些（不会补发）。 */
+export async function resumeSchedule(): Promise<void> {
+  await transport.request('resume');
+  const summary = pauseSummary(state.logs, engineNow());
+  if (summary.skippedTotal || summary.ignoredPackets) set({ resumeSummary: summary });
+  else toast('已恢复自动日程；暂停期间没有跳过任何事件');
+}
+export const closeResumeSummary = () => set({ resumeSummary: null });
+
 export function showLogTab(tab: AppState['logTab']): void {
   set({ logTab: tab, ...(state.logCollapsed ? { logCollapsed: false } : {}) });
 }
@@ -524,11 +585,10 @@ export const removeLockPassword = (password: string) => lockCall('removePassword
 export const openUnlock = () => set({ unlockOpen: true });
 export const closeUnlock = () => set({ unlockOpen: false });
 export const setPadId = (id: string | null) => set({ padId: id });
-export const setPadEdit = (v: boolean) => { if (v && !beginDraft()) return; set({ padEdit: v }); };
-/** 从问题列表等处直接跳到某个面板按钮：切到面板视图并进入编辑模式选中它 */
+/** 从问题列表等处直接跳到某个面板按钮：切到面板视图、进入编辑草稿并选中它 */
 export function showPadTile(padId: string, tileId?: string): void {
   if (!beginDraft()) return;
-  set({ view: 'pad', padId, padEdit: true, sel: tileId ? { kind: 'padTile', padId, tileId } : { kind: 'pad', id: padId } });
+  set({ view: 'pad', padId, sel: tileId ? { kind: 'padTile', padId, tileId } : { kind: 'pad', id: padId } });
 }
 export const openBatchHealth = (init: import('../../engine/src/types.ts').DeviceHealthConfig | null = null) => set({ batchHealthOpen: true, batchHealthInit: init });
 export const closeBatchHealth = () => set({ batchHealthOpen: false });

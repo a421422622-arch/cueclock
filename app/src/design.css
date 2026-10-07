@@ -488,3 +488,30 @@ button.primary:disabled { background: var(--s3); border-color: var(--line); colo
 .ln { grid-template-columns: 96px 30px 76px minmax(90px, 150px) minmax(120px, 1.1fr) minmax(120px, 1.6fr); }
 .ln.bare > .det { grid-column: 4 / -1; }
 .ln .sys { color: var(--subtle); }
+
+/* ───────── 检查并应用：正在执行的动作 / 今天剩余日程 ───────── */
+.apply-inflight { margin: 0 0 14px; padding: 10px 12px; border-radius: var(--r-md); border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent); background: color-mix(in srgb, var(--amber) 8%, var(--s2)); }
+.apply-inflight .sech { margin-top: 0; color: var(--amber); }
+.apply-inflight ul { margin: 6px 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.apply-inflight li { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.apply-inflight li span { color: var(--muted); }
+.apply-inflight .hint { margin: 4px 0 0; }
+.today-changes { margin: 4px 0 14px; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.today-changes li { display: grid; grid-template-columns: 150px minmax(0, 1fr) auto; gap: 10px; align-items: baseline; padding: 3px 8px; border-radius: 5px; background: var(--s2); }
+.today-changes li.mode { grid-template-columns: 150px minmax(0, 1fr); }
+.today-changes .k { font-weight: 600; color: var(--ink2); }
+.today-changes .n { overflow-wrap: anywhere; }
+.today-changes .t { color: var(--muted); white-space: nowrap; }
+.today-changes li.added .k { color: var(--ok); }
+.today-changes li.removed .k, .today-changes li.gone-past .k, .today-changes li.already-fired .k { color: var(--amber); }
+.today-changes li.moved .k, .today-changes li.changed .k, .today-changes li.mode .k { color: var(--cyan); }
+button.danger-outline { border-color: color-mix(in srgb, var(--err) 55%, transparent); color: var(--err); background: transparent; }
+button.danger-outline:hover:not(:disabled) { background: color-mix(in srgb, var(--err) 12%, transparent); }
+
+
+/* 操作面板：当前是操作还是编辑草稿 */
+.padmode { padding: 6px 14px; }
+.padmode b { color: var(--ok); font-weight: 600; }
+.padmode.editing b { color: var(--accent); }
+.resume-summary { align-items: flex-start; }
+.resume-summary > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }

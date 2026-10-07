@@ -15,6 +15,8 @@ export const ALERT_LABEL: Record<AlertCode, string> = {
   'scheduler-error': '调度错误',
   'internal-error': '内部错误',
   'engine-start-failed': '引擎启动失败',
+  'apply-cancelled-runs': '应用配置取消了动作',
+  'apply-deferred': '延后应用',
 };
 
 const keyOf = (e: LogEntry) => `${e.t}|${e.alert?.code}|${e.alert?.subject ?? ''}|${e.detail ?? ''}`;

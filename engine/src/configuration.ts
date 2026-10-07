@@ -1,6 +1,24 @@
 import type { Project } from './types.ts';
 
 /** 服务端用当前运行配置生成变更清单；界面和引擎都可复用，无 Node 依赖。 */
+/** 事件、动作、面板控件这类带 id 的列表：按项列出增删改，不把整段 JSON 塞进变更清单。 */
+const NESTED = new Set(['cues', 'actions', 'tiles', 'params']);
+type Named = { id?: string; name?: string; label?: string; time?: string; type?: string; payload?: string; key?: string };
+const nameOf = (x: Named) => x.name ?? x.label ?? x.key ?? (x.type === 'udp' && x.payload ? `发送 ${x.payload.slice(0, 24)}` : x.type ? `${x.type} 动作` : x.id ?? '未命名');
+function listChanges(before: Named[], after: Named[]): string {
+  const old = new Map(before.map((x, i) => [x.id ?? x.key ?? String(i), x]));
+  const next = new Map(after.map((x, i) => [x.id ?? x.key ?? String(i), x]));
+  const parts: string[] = [];
+  for (const [id, x] of next) {
+    const o = old.get(id);
+    if (!o) parts.push(`新增「${nameOf(x)}」${x.time ? `（${x.time}）` : ''}`);
+    else if (JSON.stringify(o) !== JSON.stringify(x)) parts.push(`修改「${nameOf(x)}」${o.time !== x.time && o.time && x.time ? `（时间 ${o.time} → ${x.time}）` : ''}`);
+  }
+  for (const [id, x] of old) if (!next.has(id)) parts.push(`删除「${nameOf(x)}」`);
+  if (!parts.length) parts.push('调整顺序');
+  return parts.length > 8 ? `${parts.slice(0, 8).join('、')} 等 ${parts.length} 处` : parts.join('、');
+}
+
 export function configurationChanges(before: Project, after: Project): string[] {
   const rows: string[] = [];
   if (before.name !== after.name) rows.push(`项目名称：${before.name} → ${after.name}`);
@@ -13,8 +31,13 @@ export function configurationChanges(before: Project, after: Project): string[] 
         const oldFields = x as unknown as Record<string, unknown>, newFields = next.get(id)! as unknown as Record<string, unknown>;
         const names: Record<string, string> = { name: '名称', ip: 'IP', port: '端口', payload: '指令内容', actions: '动作', cues: '事件与动作', health: '检测', feedback: '回读', rule: '日期规则', enabled: '启用', execution: '执行方式', onFailure: '失败策略', tiles: '面板控件', params: '参数', match: '匹配', passcode: '口令' };
         const value = (key: string, v: unknown) => key === 'passcode' ? v ? '已设置' : '未设置' : v === undefined ? '未设置' : String(typeof v === 'string' ? v : JSON.stringify(v)).slice(0, 180);
+        const nested = (key: string): string | null => {
+          const a = oldFields[key], b = newFields[key];
+          if (!NESTED.has(key) || !Array.isArray(a) || !Array.isArray(b)) return null;
+          return `${names[key] ?? key}：${listChanges(a as Named[], b as Named[])}`;
+        };
         const details = [...new Set([...Object.keys(oldFields), ...Object.keys(newFields)])].filter((key) => key !== 'id' && JSON.stringify(oldFields[key]) !== JSON.stringify(newFields[key]))
-          .map((key) => `${names[key] ?? key}：${value(key, oldFields[key])} → ${value(key, newFields[key])}`).join('；');
+          .map((key) => nested(key) ?? `${names[key] ?? key}：${value(key, oldFields[key])} → ${value(key, newFields[key])}`).join('；');
         rows.push(`修改${label}「${next.get(id)!.name}」：${details}`);
       }
     }

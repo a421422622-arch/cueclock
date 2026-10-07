@@ -10,7 +10,8 @@ export interface DayView {
   kindLabel: string;
   holidayName?: string;
   timelines: { id: string; name: string; groupId?: string; active: boolean; reason: string }[];
-  items: { atMs: number; time: string; timelineId: string; timelineName: string; cueId: string; cueName: string; description: string }[];
+  /** key = 事件点|动作|第几次重复，与调度器「今天已执行」的去重键一致（0.6.0 起） */
+  items: { atMs: number; time: string; timelineId: string; timelineName: string; cueId: string; cueName: string; description: string; key?: string }[];
   warnings: string[];
 }
 
@@ -36,6 +37,7 @@ export function simulateDays(project: Project, from: string, days: number): DayV
         cueId: it.cueId,
         cueName: it.cueName,
         description: describeAction(it.action, { i: it.repIndex, n: it.repTotal }),
+        key: `${it.timelineId}|${it.cueId}|${it.action.id}|${it.repIndex}`,
       })),
       warnings: plan.warnings,
     });

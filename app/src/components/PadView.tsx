@@ -1,19 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Pad, PadTile } from '@engine/types.ts';
-import { beginDraft, viewRuntime, edit, isLocked, openUnlock, rpc, select, setPadEdit, setPadId, toast, useStore } from '../store.ts';
+import { beginDraft, displayedProject, edit, rpc, select, setPadId, toast, useStore, viewingRuntime } from '../store.ts';
 import { genId } from '../lib/labels.ts';
 import { dragSender, newTile, padColumns, sliderIndex, sliderRange, sliderSteps, sliderValueAt, textOn } from '../lib/pad.ts';
 import { RpcFailure } from '../transport.ts';
-import { Seg } from './fields.tsx';
 import { Icon } from './Icon.tsx';
 
 type Flash = 'ok' | 'bad';
 
-/** 操作面板：一块按钮网格，现场手动操作。操作模式点按钮就执行；编辑模式点按钮选中、在右侧检查器里改绑定。 */
+/**
+ * 操作面板：一块按钮网格，现场手动操作。跟随全局「查看正在运行 / 编辑草稿」：
+ * 运行视图点按钮就执行（用正在运行的配置）；草稿视图点按钮选中、在右侧检查器里改绑定。
+ */
 export function PadView() {
-  const project = useStore((s) => s.padEdit ? s.project : s.runningProject ?? s.project)!;
+  const project = useStore(displayedProject)!;
   const padId = useStore((s) => s.padId);
-  const editing = useStore((s) => s.padEdit);
+  const editing = !useStore(viewingRuntime);
   const sel = useStore((s) => s.sel);
   const lit = useStore((s) => s.status?.engine?.pads) ?? NO_STATE;
   const running = useStore((s) => !!s.status?.engine?.running);
@@ -29,7 +31,6 @@ export function PadView() {
 
   const addPad = () => {
     if (!beginDraft()) return;
-    setPadEdit(true);
     const id = genId('pad');
     edit((p) => { (p.pads ??= []).push({ id, name: `面板 ${(p.pads?.length ?? 0) + 1}`, tiles: [] }); });
     setPadId(id);
@@ -54,16 +55,6 @@ export function PadView() {
       toast(`「${t.label}」执行失败：${e instanceof RpcFailure ? e.message : String(e)}`);
     }
     setBusy(null);
-  };
-
-  const toggleEdit = (v: boolean) => {
-    if (v && isLocked()) {
-      toast('编辑已锁定：请先输入密码解锁后再编辑面板（操作模式不受影响）');
-      openUnlock();
-      return;
-    }
-    setPadEdit(v);
-    if (!v) void viewRuntime();
   };
 
   const addTile = (kind: PadTile['kind']) => {
@@ -98,10 +89,11 @@ export function PadView() {
         <span className="grow" />
         {!running && <span className="hint err">引擎未运行，按钮暂时无法执行</span>}
         <button title="亮灯状态是软件记下的「上次按的是什么」，设备被别的方式改过时用它清空" onClick={() => void rpc('resetPadState', { padId: pad?.id }).catch(() => {})}>重置状态</button>
-        <Seg<'op' | 'edit'> value={editing ? 'edit' : 'op'} onChange={(v) => toggleEdit(v === 'edit')} options={[{ value: 'op', label: '操作' }, { value: 'edit', label: '编辑' }]} />
       </div>
 
-      <div className="hint" style={{ padding: '6px 14px' }}>操作模式使用已应用配置。亮灭与数值表示最后操作记录；设备真实状态请查看「运行总览」。暂停自动日程时仍可手动操作。</div>
+      <div className={`hint padmode ${editing ? 'editing' : ''}`}>{editing
+        ? <><b>编辑草稿：</b>点按钮选中，在右侧检查器里改绑定；改完「检查并应用」才生效。要操作按钮请切回「查看正在运行」。</>
+        : <><b>操作：</b>点按钮立即执行（使用正在运行的配置）。亮灭与数值是最后操作记录，设备真实状态见「运行总览」；暂停自动日程时仍可手动操作。</>}</div>
       {pad && (
         <div className={`padgrid ${editing ? 'editing' : ''}`} style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
           {pad.tiles.map((t) => {

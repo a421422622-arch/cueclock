@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { discardDraft, handleEditShortcut, init, keepDraftOverEngine, lockNow, openSettings, openUnlock, reloadFromEngine, restoreDraft, setView, toast, useStore } from './store.ts';
+import { cancelDeferredApply, closeResumeSummary, showLogTab, discardDraft, handleEditShortcut, init, keepDraftOverEngine, lockNow, openSettings, openUnlock, reloadFromEngine, restoreDraft, setView, toast, useStore } from './store.ts';
 import { ApplyDialog } from './components/ApplyDialog.tsx';
 import { Overview } from './components/Overview.tsx';
 import { RuntimeConfiguration } from './components/RuntimeConfiguration.tsx';
@@ -21,6 +21,8 @@ import { Icon } from './components/Icon.tsx';
 import { layoutVars, resetLayout, useLayout } from './lib/layoutStore.ts';
 import { autoZoomController } from './lib/autoZoomRuntime.ts';
 
+const clock = (t: number) => new Date(t).toLocaleTimeString('zh-CN', { hour12: false });
+
 export function App() {
   const loaded = useStore((s) => s.loaded);
   const conn = useStore((s) => s.conn);
@@ -29,6 +31,8 @@ export function App() {
   const startError = useStore((s) => s.status?.daemon.startError);
   const view = useStore((s) => s.view);
   const configurationView = useStore((s) => s.configurationView);
+  const deferredApply = useStore((s) => s.deferredApply);
+  const resumeSummary = useStore((s) => s.resumeSummary);
   const notice = useStore((s) => s.status?.daemon.notice);
   const settingsOpen = useStore((s) => s.settingsOpen);
   const lock = useStore((s) => s.lock);
@@ -99,6 +103,22 @@ export function App() {
           引擎配置已在别处改变（另一个窗口应用、从备份恢复或打开了其他配置），和你的本机草稿冲突。草稿仍保存在本机。
           <button onClick={() => void keepDraftOverEngine()}>以我的草稿为准（先看差异）</button>
           <button onClick={() => void reloadFromEngine()}>放弃本地修改并重新加载</button>
+        </div>
+      )}
+      {resumeSummary && (
+        <div className="banner warn resume-summary">
+          <span>已恢复自动日程。暂停期间{resumeSummary.since ? `（${clock(resumeSummary.since)}–${clock(resumeSummary.until)}）` : ''}
+            {resumeSummary.skippedTotal > 0 && <>跳过了 {resumeSummary.skippedTotal} 个动作，<b>不会补发</b>：{resumeSummary.skipped.slice(0, 6).map((x) => `${x.source}${x.count > 1 ? ` ×${x.count}` : ''}`).join('、')}{resumeSummary.skipped.length > 6 ? ` 等 ${resumeSummary.skipped.length} 处` : ''}。</>}
+            {resumeSummary.ignoredPackets > 0 && <>收到 {resumeSummary.ignoredPackets} 个 UDP 触发包未处理。</>}
+            需要的话可以在左侧「指令」或面板里手动补发。</span>
+          <button onClick={() => showLogTab('log')}>查看日志</button>
+          <button onClick={closeResumeSummary}>知道了</button>
+        </div>
+      )}
+      {deferredApply && (
+        <div className="banner warn">
+          新配置已通过检查，交给引擎挂起：正在执行的动作链结束后自动应用{deferredApply.deadline ? `（最晚等到 ${new Date(deferredApply.deadline).toLocaleTimeString('zh-CN', { hour12: false })}）` : ''}。在此之前运行的仍是旧配置。
+          <button onClick={() => void cancelDeferredApply()}>取消延后应用</button>
         </div>
       )}
       {draftOffer && (

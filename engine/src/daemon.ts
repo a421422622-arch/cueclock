@@ -88,6 +88,11 @@ export class Daemon {
   private sleepGuard = new SleepGuard(process.platform, process.pid, undefined, (message) => this.recordAlert({ dir: 'SYS', result: 'error', detail: `后台防休眠失败：${message}`, alert: { code: 'internal-error', level: 'error' } }));
   private project: Project | null = null;
   private rev = 0;
+  /**
+   * 「等正在执行的动作链结束再应用」：检查通过的配置先挂在这里，引擎空闲时自动应用。
+   * 期间配置在别处被改（rev 变了）、引擎重启、或等待超时都会放弃，不会把过期的草稿应用上去。
+   */
+  private pendingApply: { project: Project; baseRev: number; since: number; deadline: number; timer: ReturnType<typeof setInterval> } | null = null;
   private instanceId = randomBytes(12).toString('hex');
   private settingsWrites: Promise<void> = Promise.resolve();
   private engine: Engine | null = null;
@@ -346,10 +351,55 @@ export class Daemon {
     return {
       ...engineHello(),
       lock: { enabled: !!this.settings.lock },
-      daemon: { pid: process.pid, projectFile: this.store!.file, rev: this.rev, instanceId: this.instanceId, startError: this.startError, notice: this.notice },
+      daemon: { pid: process.pid, projectFile: this.store!.file, rev: this.rev, instanceId: this.instanceId, startError: this.startError, notice: this.notice,
+        pendingApply: this.pendingApply ? { since: this.pendingApply.since, deadline: this.pendingApply.deadline, baseRev: this.pendingApply.baseRev } : null },
       network: this.networkInfo(),
       engine: this.engine?.status() ?? null,
     };
+  }
+
+  /** 先做和立即应用相同的检查（版本、格式、错误），通过后挂起，空闲时再真正应用。 */
+  private async deferApply(p: Record<string, unknown>): Promise<unknown> {
+    const project = this.parseProject(p.project);
+    if (p.baseRev !== this.rev) throw new RpcError('conflict', `项目已被其他客户端修改（当前版本 ${this.rev}，你基于 ${String(p.baseRev)}），请重新加载`, { rev: this.rev });
+    const issues = validateProject(project);
+    if (issues.some((i) => i.level === 'error')) throw new RpcError('invalid-project', '项目检查未通过，未保存', issues);
+    this.dropPendingApply('已被新的延后应用替换');
+    const since = Date.now(), waitMs = Math.min(4 * 3600_000, Math.max(1000, Number(p.maxWaitMs ?? 30 * 60_000)));
+    const timer = setInterval(() => void this.checkPendingApply(), 250);
+    timer.unref?.();
+    this.pendingApply = { project, baseRev: this.rev, since, deadline: since + waitMs, timer };
+    const waiting = this.engine?.inFlight() ?? [];
+    this.recordAlert({ dir: 'SYS', result: 'info', alert: { code: 'apply-deferred', level: 'info' },
+      detail: `新配置已通过检查，等 ${waiting.length} 个正在执行的动作链结束后自动应用（最长等 ${Math.round(waitMs / 60000)} 分钟）：${waiting.map((r) => r.name).join('、')}` });
+    this.broadcast({ event: 'status', data: this.statusPayload() });
+    return { deferred: true, rev: this.rev, waitingFor: waiting.length, deadline: since + waitMs, warnings: issues.filter((i) => i.level === 'warn') };
+  }
+
+  private dropPendingApply(why: string): void {
+    const pending = this.pendingApply;
+    if (!pending) return;
+    clearInterval(pending.timer);
+    this.pendingApply = null;
+    this.recordAlert({ dir: 'SYS', result: 'skipped', alert: { code: 'apply-deferred', level: 'warn' }, detail: `延后应用已放弃（${why}），新配置没有应用；草稿仍在界面本机` });
+    this.broadcast({ event: 'status', data: this.statusPayload() });
+  }
+
+  private async checkPendingApply(): Promise<void> {
+    const pending = this.pendingApply;
+    if (!pending) return;
+    if (this.rev !== pending.baseRev) return this.dropPendingApply('等待期间配置已在别处改变');
+    if (Date.now() > pending.deadline) return this.dropPendingApply('等待超时，动作链仍未结束');
+    if ((this.engine?.inFlight().length ?? 0) > 0) return;
+    clearInterval(pending.timer);
+    this.pendingApply = null;
+    try {
+      const r = await this.serialize(() => this.saveProject({ project: pending.project, baseRev: pending.baseRev, forceBackup: true })) as { rev: number };
+      this.recordAlert({ dir: 'SYS', result: 'info', alert: { code: 'apply-deferred', level: 'info' }, detail: `正在执行的动作链已结束，已自动应用新配置（r${r.rev}）` });
+    } catch (e) {
+      this.recordAlert({ dir: 'SYS', result: 'error', alert: { code: 'apply-deferred', level: 'error' }, detail: `延后应用失败：${(e as Error).message}；新配置没有应用` });
+      this.broadcast({ event: 'status', data: this.statusPayload() });
+    }
   }
 
   /** 保存、重载这类会改状态的操作排队执行，避免并发写文件。 */
@@ -534,16 +584,22 @@ export class Daemon {
         const p = obj(params);
         const project = this.parseProject(p.project);
         if (p.baseRev !== this.rev) throw new RpcError('conflict', '运行配置已变化，请重新加载后再预览');
-        return { rev: this.rev, instanceId: this.instanceId, changes: configurationChanges(this.project!, project), issues: validateProject(project) };
+        return { rev: this.rev, instanceId: this.instanceId, changes: configurationChanges(this.project!, project), issues: validateProject(project), inFlight: this.engine?.inFlight() ?? [] };
       }
 
       case 'applyProject': {
         const p = obj(params);
         return this.serialize(() => {
           if (p.instanceId !== this.instanceId) throw new RpcError('conflict', '引擎已重启，旧预览已失效，请重新检查运行配置');
+          if (p.whenIdle === true && (this.engine?.inFlight().length ?? 0) > 0) return this.deferApply(p);
+          this.dropPendingApply('已改为立即应用另一份配置');
           return this.saveProject({ ...p, forceBackup: true });
         });
       }
+
+      case 'cancelPendingApply':
+        this.dropPendingApply('已手动取消');
+        return { ok: true };
 
       case 'saveProject': {
         const p = obj(params);

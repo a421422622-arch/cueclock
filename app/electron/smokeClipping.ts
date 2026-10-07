@@ -74,10 +74,10 @@ export async function smokeClipping(win: BrowserWindow, outputDir?: string, brea
     if (!await js<boolean>(`!!document.querySelector('.sidebody .dev')`)) await click('button[title="新建触发器"]');
     else await click('.sidebody .dev');
     await shot('inspector-trigger');
-    await click('.viewtabs span', '操作面板'); await click('.padbar .seg span', '操作'); await shot('pad-operation');
-    await click('.padbar .seg span', '编辑'); await click('.padtabs > span'); await shot('inspector-pad');
+    await click('.viewtabs span', '操作面板'); await click('.configuration-switch button', '查看正在运行'); await shot('pad-operation');
+    await click('.configuration-switch button', '编辑草稿'); await click('.padtabs > span'); await shot('inspector-pad');
     for (const kind of ['button', 'toggle', 'slider']) { await click(`.padgrid .padtile.${kind}:not(.add)`); await shot(`inspector-pad-${kind}`); }
-    await click('.padbar .seg span', '操作');
+    await click('.configuration-switch button', '查看正在运行');
     await click('.configuration-switch button', '编辑草稿');
     await click('.projbtn'); await shot('configuration-files');
     await click('#configuration-software-tab'); await pause(250); await shot('configuration-software');
