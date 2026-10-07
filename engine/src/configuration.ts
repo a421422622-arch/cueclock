@@ -33,7 +33,11 @@ export function configurationChanges(before: Project, after: Project): string[] 
       else if (JSON.stringify(x) !== JSON.stringify(next.get(id))) {
         const oldFields = x as unknown as Record<string, unknown>, newFields = next.get(id)! as unknown as Record<string, unknown>;
         const names: Record<string, string> = { name: '名称', ip: 'IP', port: '端口', payload: '指令内容', actions: '动作', cues: '事件与动作', health: '检测', feedback: '回读', rule: '日期规则', enabled: '启用', execution: '执行方式', onFailure: '失败策略', tiles: '面板控件', params: '参数', match: '匹配', passcode: '口令' };
-        const value = (key: string, v: unknown) => key === 'passcode' ? v ? '已设置' : '未设置' : v === undefined ? '未设置' : String(typeof v === 'string' ? v : JSON.stringify(v)).slice(0, 180);
+        const health = (v: unknown) => {
+          const h = v as { mode?: string; intervalSec?: number } | undefined;
+          return !h ? '未设置' : `${h.mode === 'ping' ? 'Ping' : h.mode === 'udp' ? 'UDP 探测' : String(h.mode)}，每 ${h.intervalSec ?? 30} 秒`;
+        };
+        const value = (key: string, v: unknown) => key === 'passcode' ? v ? '已设置' : '未设置' : key === 'health' ? health(v) : v === undefined ? '未设置' : String(typeof v === 'string' ? v : JSON.stringify(v)).slice(0, 180);
         const nested = (key: string): string | null => {
           const a = oldFields[key], b = newFields[key];
           if (!NESTED.has(key) || !Array.isArray(a) || !Array.isArray(b)) return null;

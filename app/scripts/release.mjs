@@ -165,6 +165,11 @@ async function switchTo(dir) {
     await sleep(200);
   }
   if (!after?.engine?.running) fail('新引擎未在 30 秒内就绪，请查看日志');
+  // 界面刚有进程号时还没拿到单实例锁：此时再手动拉起第二个实例会抢锁，守护拉起的那个会正常退出且不会被重拉（实测踩过）。
+  // 所以等它稳定存活几秒、仍在同一个进程号，才算切换完成。
+  const uiPid = jobPid();
+  await sleep(4000);
+  if (!uiPid || jobPid() !== uiPid || !alive(uiPid)) fail('新界面启动后没有保持运行（可能被别的实例占了单实例锁），请查看 launchctl print 与日志');
   const checks = {
     version: after.engineVersion, build: after.engineBuild, pid: after.daemon.pid, uiPid: jobPid(),
     sameProject: after.daemon.projectFile === record.before?.projectFile,
@@ -180,6 +185,16 @@ async function switchTo(dir) {
   if (!checks.sameProject || checks.pausedKept === false || checks.overridesKept === false) process.exitCode = 2;
 }
 
+/** 把已在运行的界面窗口调出来（再启动一次同一个程序，单实例机制会让已有窗口显示）。只在界面稳定运行时才做。 */
+async function show() {
+  const plist = await readFile(launchAgentPath(os.homedir()), 'utf8').catch(() => null);
+  const first = /<key>ProgramArguments<\/key>\s*<array>\s*<string>([^<]+)<\/string>\s*<string>([^<]+)<\/string>/.exec(plist ?? '');
+  if (!first) fail('没有登录项');
+  if (!jobPid()) fail('守护的界面没有在运行；先 launchctl kickstart gui/$(id -u)/com.cueclock.app');
+  spawn(first[1], [first[2]], { detached: true, stdio: 'ignore' }).unref();
+  console.log('✓ 已请求显示窗口');
+}
+
 async function status() {
   const st = await tryStatus(stateDir);
   console.log(st ? `正式引擎：${st.engineVersion} · 构建 ${st.engineBuild} · PID ${st.daemon.pid} · ${st.engine?.paused ? '已暂停' : '运行中'} · ${st.daemon.projectFile}` : '正式引擎：未运行');
@@ -192,4 +207,5 @@ if (process.platform !== 'darwin') fail('目前只支持 macOS');
 if (cmd === 'build') await build();
 else if (cmd === 'switch' && arg) await switchTo(arg);
 else if (cmd === 'status') await status();
-else fail('用法：node scripts/release.mjs build | switch <版本目录> | status');
+else if (cmd === 'show') await show();
+else fail('用法：node scripts/release.mjs build | switch <版本目录> | status | show');

@@ -167,3 +167,10 @@ test('变更清单：事件启用 / 禁用单独写明', async () => {
   const after = structuredClone(before); after.timelines[0]!.cues[0]!.enabled = true;
   assert.equal(configurationChanges(before, after).find((r) => r.startsWith('修改模式'))!, '修改模式「工作日」：事件与动作：修改「开馆」（启用）');
 });
+
+test('变更清单：设备检测配置用可读文字，不输出 JSON', async () => {
+  const { configurationChanges } = await import('../src/configuration.ts');
+  const before = project([]); const after = structuredClone(before);
+  after.devices[0]!.health = { mode: 'ping', intervalSec: 5 };
+  assert.equal(configurationChanges(before, after).find((r) => r.startsWith('修改设备'))!, `修改设备「${before.devices[0]!.name}」：检测：未设置 → Ping，每 5 秒`);
+});
