@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { NetworkSettings, NicInfo } from '@engine/network.ts';
 import { closeSettings, lockNow, openUnlock, removeLockPassword, rpc, setConfigurationPage, setLockPassword, toast, useStore } from '../store.ts';
 import { checkNewPassword } from '../lib/lockUi.ts';
+import { resetLayout } from '../lib/layoutStore.ts';
 import { appBridge } from '../transport.ts';
 import type { AppState } from '../transport.ts';
 import { RpcFailure } from '../transport.ts';
@@ -297,13 +298,23 @@ function LockSection() {
 
 function ExitSection() {
   const bridge = appBridge;
-  if (!bridge) return null;
+  const layoutSection = (
+    <>
+      <div className="sech" style={{ marginTop: 16 }}>界面布局</div>
+      <div className="row">
+        <button onClick={() => { resetLayout(); toast('界面布局已恢复默认'); }}>恢复默认界面布局</button>
+        <span className="hint">左侧栏、检查器、日志、日历详情的大小都可以拖动分隔条调整（双击分隔条恢复该项）；这里一次全部恢复。菜单「视图 → 恢复默认界面布局」同样。</span>
+      </div>
+    </>
+  );
+  if (!bridge) return layoutSection;
   const act = async (name: string) => {
     try { await bridge.appAction(name); }
     catch (e) { toast(`操作失败：${(e as Error).message}`); }
   };
   return (
     <>
+      {layoutSection}
       <div className="sech" style={{ marginTop: 16 }}>退出程序</div>
       <div className="row">
         <button onClick={() => void act('quit')}>退出界面（引擎继续运行）</button>

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { discardDraft, handleEditShortcut, init, lockNow, openSettings, openUnlock, reloadFromEngine, restoreDraft, setView, useStore } from './store.ts';
+import { discardDraft, handleEditShortcut, init, lockNow, openSettings, openUnlock, reloadFromEngine, restoreDraft, setView, toast, useStore } from './store.ts';
 import { ApplyDialog } from './components/ApplyDialog.tsx';
 import { Overview } from './components/Overview.tsx';
 import { TopBar } from './components/TopBar.tsx';
@@ -15,6 +15,8 @@ import { BatchHealthDialog } from './components/BatchHealthDialog.tsx';
 import { shouldAutoLock } from './lib/lockUi.ts';
 import { appBridge } from './transport.ts';
 import { EngineVersionBanner } from './components/EngineVersion.tsx';
+import { Splitter } from './components/Splitter.tsx';
+import { layoutVars, resetLayout, useLayout } from './lib/layoutStore.ts';
 
 export function App() {
   const loaded = useStore((s) => s.loaded);
@@ -31,14 +33,17 @@ export function App() {
   const batchHealthOpen = useStore((s) => s.batchHealthOpen);
   const draftOffer = useStore((s) => s.draftOffer);
   const logCollapsed = useStore((s) => s.logCollapsed);
+  const layout = useLayout();
 
   useEffect(() => {
     void init();
     const off = appBridge?.onNeedUnlock(openUnlock); // 主进程发现被锁住时，请界面弹出解锁框
+    const offLayout = appBridge?.onResetLayout(() => { resetLayout(); toast('界面布局已恢复默认'); }); // 菜单「视图 → 恢复默认界面布局」
     document.addEventListener('keydown', handleEditShortcut);
     return () => {
       document.removeEventListener('keydown', handleEditShortcut);
       off?.();
+      offLayout?.();
     };
   }, []);
 
@@ -96,7 +101,7 @@ export function App() {
           <button onClick={openSettings}>打开设置</button>
         </div>
       )}
-      <div className={`body ${logCollapsed ? 'log-collapsed' : ''}`}>
+      <div className={`body ${logCollapsed ? 'log-collapsed' : ''}`} style={layoutVars(layout)}>
         <Sidebar />
         <div className="center">
           <div className="viewtabs">
@@ -109,6 +114,9 @@ export function App() {
         </div>
         <Inspector />
         <LogPanel />
+        <Splitter k="sideW" orientation="vertical" className="side-split" label="左侧栏宽度" step={1} measure={(e, r) => e.clientX - r.left} />
+        <Splitter k="inspW" orientation="vertical" className="insp-split" label="检查器宽度" step={-1} measure={(e, r) => r.right - e.clientX} />
+        {!logCollapsed && <Splitter k="logH" orientation="horizontal" className="log-split" label="日志高度" step={-1} measure={(e, r) => r.bottom - e.clientY} />}
       </div>
       <ApplyDialog />
       {settingsOpen && <SettingsDialog />}

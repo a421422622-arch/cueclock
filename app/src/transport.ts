@@ -93,6 +93,8 @@ export interface AppBridge {
   appAction(name: string, arg?: unknown): Promise<void>;
   onAppState(cb: () => void): () => void;
   onNeedUnlock(cb: () => void): () => void;
+  /** 菜单「视图 → 恢复默认界面布局」 */
+  onResetLayout(cb: () => void): () => void;
 }
 
 declare global {

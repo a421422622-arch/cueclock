@@ -21,6 +21,11 @@ contextBridge.exposeInMainWorld('cueclock', {
     ipcRenderer.on('app:need-unlock', h);
     return () => ipcRenderer.removeListener('app:need-unlock', h);
   },
+  onResetLayout: (cb: () => void) => {
+    const h = () => cb();
+    ipcRenderer.on('app:reset-layout', h);
+    return () => ipcRenderer.removeListener('app:reset-layout', h);
+  },
   onAppState: (cb: () => void) => {
     const h = () => cb();
     ipcRenderer.on('app:state-changed', h);

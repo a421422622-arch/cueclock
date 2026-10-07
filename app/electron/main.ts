@@ -208,6 +208,7 @@ const actions: MenuActions & { togglePause(): void } = {
     void ensureUnlocked('切换配置').then((ok) => (ok ? openProject(deps(), file) : false)).then((ok) => (ok ? refreshFromEngine() : undefined));
   },
   reveal: () => revealProject(lastStatus?.daemon.projectFile ?? null),
+  resetLayout: () => { showWindow(); sendToWindow('app:reset-layout'); },
   setKeepInTray: (v) => {
     prefs = { ...prefs, keepInTray: v };
     savePrefs(stateDir, prefs);
@@ -458,6 +459,7 @@ async function smokeApp(): Promise<void> {
   const fileMenu = m?.items.find((i) => i.label === '文件');
   r.menuTop = m?.items.map((i) => i.label);
   r.fileMenu = fileMenu?.submenu?.items.filter((i) => i.label).map((i) => i.label);
+  r.viewMenu = m?.items.find((i) => i.label === '视图')?.submenu?.items.filter((i) => i.label).map((i) => i.label);
   r.recentMenu = fileMenu?.submenu?.items.find((i) => i.label === '最近项目')?.submenu?.items.map((i) => i.label);
   r.tray = !!trayCtl && !trayCtl.raw.isDestroyed();
 

@@ -6,6 +6,8 @@ import { formatCalendarText, parseCalendarText } from '@engine/calendarText.ts';
 import type { DayView } from '@engine/simulate.ts';
 import { edit, rpc, select, setView, useStore } from '../store.ts';
 import { groupColor } from '../lib/colors.ts';
+import { layoutVars, useLayout } from '../lib/layoutStore.ts';
+import { Splitter } from './Splitter.tsx';
 import { DAY_KIND_LABEL } from '../lib/labels.ts';
 
 const WEEK_HEAD = ['一', '二', '三', '四', '五', '六', '日'];
@@ -31,6 +33,7 @@ function updateCalendar(p: Project, fn: (c: CalendarData) => void): void {
 }
 
 export function CalendarView() {
+  const layout = useLayout();
   const project = useStore((s) => s.project)!;
   const [selDate, setSelDate] = useState(() => dateKey(new Date()));
   const [month, setMonth] = useState(() => selDate.slice(0, 7));
@@ -59,7 +62,7 @@ export function CalendarView() {
   );
 
   return (
-    <div className="cal">
+    <div className="cal" style={layoutVars(layout)}>
       <div className="calmain">
         <div className="calhead">
           <button onClick={() => setMonth(shiftMonth(month, -1))}>◀</button>
@@ -93,6 +96,7 @@ export function CalendarView() {
         </div>
       </div>
       <DayDetail date={selDate} />
+      <Splitter k="calW" orientation="vertical" className="cal-split" label="日详情宽度" step={-1} measure={(e, r) => r.right - e.clientX} />
       {dialog && <CalendarTextDialog onClose={() => setDialog(false)} />}
     </div>
   );

@@ -37,7 +37,16 @@ input[type=range] { padding: 0; accent-color: var(--amber); }
 .logo b { color: var(--amber); }
 
 .app { display: flex; flex-direction: column; height: 100vh; }
-.body { flex: 1; min-height: 0; display: grid; grid-template-columns: 250px 1fr 370px; grid-template-rows: minmax(0, 1fr) 180px; grid-template-areas: "side main insp" "side log insp"; }
+/* 面板尺寸用变量：默认值在这里，用户拖动调整后由界面写在 .body 的 style 上（见 lib/layoutStore.ts） */
+.body { --side-w: 250px; --insp-w: 370px; --log-h: 180px; position: relative; flex: 1; min-height: 0; display: grid; grid-template-columns: var(--side-w) minmax(0, 1fr) var(--insp-w); grid-template-rows: minmax(0, 1fr) var(--log-h); grid-template-areas: "side main insp" "side log insp"; }
+.splitter { position: absolute; z-index: 6; touch-action: none; background: transparent; outline: none; transition: background .12s; }
+.splitter:hover, .splitter:focus-visible { background: color-mix(in srgb, var(--amber) 55%, transparent); }
+.splitter.vertical { width: 7px; top: 0; bottom: 0; cursor: col-resize; }
+.splitter.horizontal { height: 7px; cursor: row-resize; }
+.side-split { left: calc(var(--side-w) - 3px); }
+.insp-split { right: calc(var(--insp-w) - 3px); }
+.log-split { left: var(--side-w); right: var(--insp-w); bottom: calc(var(--log-h) - 3px); }
+.cal-split { right: calc(var(--cal-w) - 3px); }
 
 /* 顶栏 */
 .top { flex: none; display: flex; align-items: center; gap: 12px; padding: 0 14px; height: 54px; background: var(--s1); border-bottom: 1px solid var(--line); }
@@ -201,12 +210,12 @@ input[type=range] { padding: 0; accent-color: var(--amber); }
   .projname { width: 120px; }
   .next { min-width: 0; }
   .top { gap: 8px; padding: 0 10px; }
-  .body { grid-template-columns: 220px 1fr 340px; }
+  .body { --side-w: 220px; --insp-w: 340px; }
 }
 @media (max-width: 1500px) { .tb.dim { display: none; } }
 
 /* 日历与预览 */
-.cal { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) 340px; min-height: 0; }
+.cal { --cal-w: 340px; position: relative; flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) var(--cal-w); min-height: 0; }
 .calmain { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--line); }
 .calhead { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--s1); }
 .calhead h2 { font-size: 15px; font-weight: 600; min-width: 108px; }
@@ -244,7 +253,7 @@ input[type=range] { padding: 0; accent-color: var(--amber); }
 .dayitem b { font-weight: 500; }
 .daybtns { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; padding: 8px 0 12px; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
 .modal-bg { position: fixed; inset: 0; background: #000a; z-index: 40; display: grid; place-items: center; }
-.modal { width: 560px; max-width: 92vw; max-height: 88vh; background: var(--s1); border: 1px solid var(--line2); border-radius: 12px; display: flex; flex-direction: column; box-shadow: 0 20px 60px #000c; }
+.modal { resize: both; overflow: hidden; min-width: 340px; min-height: 180px; width: 560px; max-width: 96vw; max-height: 94vh; background: var(--s1); border: 1px solid var(--line2); border-radius: 12px; display: flex; flex-direction: column; box-shadow: 0 20px 60px #000c; }
 .modal h3 { padding: 12px 16px; border-bottom: 1px solid var(--line); font-size: 14px; }
 .modal .mb { padding: 12px 16px; overflow: auto; display: flex; flex-direction: column; gap: 8px; }
 .modal .mf { padding: 10px 16px; border-top: 1px solid var(--line); display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
@@ -376,7 +385,7 @@ select.warnb { border-color: var(--warn); }
   .top .next { max-width: 180px; }
   .top .clock .d { max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
 }
-@media (max-height: 800px) { .body:not(.log-collapsed) { grid-template-rows: minmax(0, 1fr) 140px; } }
+@media (max-height: 800px) { .body { --log-h: 140px; } }
 .menu .mi.cur { color: var(--ink); font-weight: 600; cursor: default; }
 .menu .mi.cur:hover { background: transparent; }
 

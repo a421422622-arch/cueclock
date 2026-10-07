@@ -21,6 +21,8 @@ export interface MenuActions {
   setKeepInTray(v: boolean): void;
   setLaunchAtLogin(v: boolean): void;
   showWindow(): void;
+  /** 把各面板的大小恢复成默认（界面本机保存的布局） */
+  resetLayout(): void;
   quit(): void;
   quitAndStopEngine(): void;
 }
@@ -82,6 +84,7 @@ export function buildAppMenu(s: MenuState, a: MenuActions): Menu {
     submenu: [
       { role: 'reload', label: '重新加载界面' },
       { role: 'resetZoom', label: '实际大小' }, { role: 'zoomIn', label: '放大' }, { role: 'zoomOut', label: '缩小' },
+      { type: 'separator' }, { label: '恢复默认界面布局', click: () => a.resetLayout() },
       { type: 'separator' }, { role: 'togglefullscreen', label: '全屏' },
       ...(s.isPackaged ? [] : ([{ type: 'separator' }, { role: 'toggleDevTools', label: '开发者工具' }] as Item[])),
     ],
