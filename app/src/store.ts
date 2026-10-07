@@ -85,7 +85,7 @@ export interface AppState {
   batchHealthOpen: boolean;
   batchHealthInit: import('../../engine/src/types.ts').DeviceHealthConfig | null;
   /** 日志区当前页签；顶栏告警徽标要能直接切过去 */
-  logTab: 'log' | 'alerts' | 'issues';
+  logTab: 'log' | 'alerts' | 'audit' | 'issues';
   /** 磁盘上的历史告警（最近 7 天）；实时告警在 logs 里 */
   alertHistory: LogEntry[];
   /** 上次查看告警的时间戳，之后的 warn/error 才算新告警 */

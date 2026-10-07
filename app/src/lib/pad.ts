@@ -128,3 +128,54 @@ export function textOn(hex: string | undefined): string {
   const lum = (0.299 * (n >> 16) + 0.587 * ((n >> 8) & 255) + 0.114 * (n & 255)) / 255;
   return lum > 0.6 ? '#0a0a0c' : '#f5f5f7';
 }
+
+// ───────────── 按钮的「显示状态」：设备真实回读 or 最后操作记录 ─────────────
+
+export interface TileLive {
+  /** record = 最后一次操作记录（没绑设备）；device = 设备回读；unknown = 绑定了设备但现在拿不到可用的回读 */
+  source: 'record' | 'device' | 'unknown';
+  lit: boolean;
+  /** 滑块位置（界面单位）。有设备回读时是设备的值换算回来的 */
+  value?: number;
+  /** 补充文字：设备回读到的原始值 */
+  text?: string;
+  /** source 为 unknown 时：为什么拿不到 */
+  why?: string;
+  /** 设备状态与「最后操作记录」对不上时的说明（例如按过「开」，设备却回读为关） */
+  mismatch?: string;
+}
+
+export interface FeedbackReading { at: number; values: Record<string, string>; stale: boolean }
+
+const norm = (s: string) => s.trim().toLowerCase();
+
+/** 设备回读值（设备单位）→ 滑块位置（界面单位），是 sliderOutput 的反向；超出范围取端点。 */
+export function sliderFromDevice(tile: PadTile, deviceValue: number): number {
+  const { min, max } = sliderRange(tile);
+  let v = deviceValue;
+  const m = tile.mapping;
+  if (m && m.max !== m.min) v = min + (deviceValue - m.min) / (m.max - m.min) * (max - min);
+  return snapSliderValue(tile, Math.min(max, Math.max(min, v))); // 贴合步长显示（128/255 → 50，而不是 50.2）
+}
+
+/**
+ * 决定一个按钮此刻怎么显示。没绑设备状态 → 沿用「最后操作记录」；绑了 → 以设备回读为准，
+ * 回读缺失或过期时如实显示「未知」，不假装知道。
+ */
+export function tileLive(tile: PadTile, record: boolean | number | undefined, fb: FeedbackReading | undefined, now: number, pressedAt?: number): TileLive {
+  const bind = tile.feedback;
+  if (!bind) return { source: 'record', lit: record === true, ...(typeof record === 'number' ? { value: record } : {}) };
+  if (!fb) return { source: 'unknown', lit: false, why: '设备还没有回读结果（需要定期状态查询：在线检测选「UDP 探测」并配置回读解析）' };
+  if (fb.stale) return { source: 'unknown', lit: false, why: `设备回读已过期（${Math.max(0, Math.round((now - fb.at) / 1000))} 秒前的结果）` };
+  const raw = fb.values[bind.field];
+  if (raw === undefined) return { source: 'unknown', lit: false, why: `回读里没有字段「${bind.field}」` };
+  if (tile.kind === 'slider') {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return { source: 'unknown', lit: false, text: raw, why: `回读值「${raw}」不是数字` };
+    return { source: 'device', lit: false, value: sliderFromDevice(tile, n), text: raw };
+  }
+  const lit = (bind.on ?? []).some((x) => norm(x) === norm(raw));
+  // 回读比这次按下更新才有资格说「不一致」：刚按下时设备还没回报，旧回读和新操作对不上是正常的
+  const mismatch = tile.kind === 'toggle' && record === true && !lit && (pressedAt === undefined || fb.at > pressedAt) ? `最后一次操作是「开」，但设备回读是「${raw}」` : undefined;
+  return { source: 'device', lit, text: raw, ...(mismatch ? { mismatch } : {}) };
+}

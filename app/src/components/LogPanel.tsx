@@ -28,6 +28,7 @@ export function LogPanel() {
           <span className={tab === 'alerts' ? 'on' : ''} onClick={() => showLogTab('alerts')}>
             告警{unseen.count > 0 && <b className={unseen.hasError ? 'bad' : 'warn'}> {unseen.count}</b>}
           </span>
+          <span className={tab === 'audit' ? 'on' : ''} onClick={() => showLogTab('audit')}>操作记录</span>
           <span className={tab === 'issues' ? 'on' : ''} onClick={() => showLogTab('issues')}>
             问题{issues.length > 0 && <b className={errors ? 'bad' : 'warn'}> {issues.length}</b>}
           </span>
@@ -36,7 +37,7 @@ export function LogPanel() {
         <button className={`ico ${testOpen ? 'on' : ''}`} aria-pressed={testOpen} title="向任意 IP:端口发一条测试内容" onClick={() => setTestOpen(!testOpen)}>测试发送</button>
         <button className="ico" onClick={toggleLog} aria-expanded={!collapsed}>{collapsed ? '展开日志' : '收起日志'}</button>
       </div>
-      {tab === 'log' ? <Logs /> : tab === 'alerts' ? <Alerts /> : <Issues />}
+      {tab === 'log' ? <Logs /> : tab === 'alerts' ? <Alerts /> : tab === 'audit' ? <Audit /> : <Issues />}
       {testOpen && <TestSend />}
     </section>
   );
@@ -110,6 +111,32 @@ const LogRow = memo(function LogRow({ l, view }: { l: LogEntry; view: 'ascii' | 
     </div>
   );
 });
+
+interface AuditRow { t: number; action: string; detail: string; changes?: string[] }
+
+/** 操作记录：谁在什么时候改了什么配置（应用配置、恢复备份、网络设置、编辑锁……）。单独存盘，比普通日志留得久。 */
+function Audit() {
+  const [rows, setRows] = useState<AuditRow[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let stop = false;
+    const load = () => rpc<AuditRow[]>('getAudit', { limit: 300 }).then((r) => { if (!stop) { setRows(r.slice().reverse()); setErr(null); } }).catch((e) => { if (!stop) setErr(e instanceof RpcFailure ? e.message : String(e)); });
+    void load();
+    const t = setInterval(load, 4000);
+    return () => { stop = true; clearInterval(t); };
+  }, []);
+  return (
+    <div className="logbody audit">
+      {err && <div className="empty">读取失败：{err}（旧版引擎没有操作记录功能，需要重启引擎）</div>}
+      {!err && rows === null && <div className="empty">读取中…</div>}
+      {!err && rows?.length === 0 && <div className="empty">还没有操作记录。应用配置、恢复备份、修改网络设置等都会记在这里。</div>}
+      {rows?.map((r) => <details key={`${r.t}-${r.action}-${r.detail}`} className="auditrow">
+        <summary><span className="ts">{new Date(r.t).toLocaleString('zh-CN', { hour12: false })}</span><b>{r.action}</b><span className="det" title={r.detail}>{r.detail}</span>{r.changes?.length ? <span className="tag">{r.changes.length} 项变更</span> : null}</summary>
+        {r.changes?.length ? <ul>{r.changes.map((c, i) => <li key={i}>{c}</li>)}</ul> : null}
+      </details>)}
+    </div>
+  );
+}
 
 type AlertFilter = 'all' | 'attention' | 'error';
 

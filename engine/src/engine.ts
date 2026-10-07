@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import type { Action, Command, Device, Project, Scene, UdpAction } from './types.ts';
+import type { Action, Command, Device, PadTile, Project, Scene, UdpAction } from './types.ts';
 import { resolveActions, resolveCommandAction } from './commands.ts';
 import { RealClock } from './clock.ts';
 import type { Clock } from './clock.ts';
@@ -336,7 +336,11 @@ export class Engine extends EventEmitter {
     if (!reply || !device.feedback || current?.ip !== device.ip || JSON.stringify(current.feedback) !== JSON.stringify(device.feedback)) return;
     if (order < (this.commands.get(device.id)?.order ?? 0)) return;
     const values = readFeedback(device.feedback, reply);
-    if (values) this.feedback.set(device.id, { at: this.clock.now(), values, order });
+    if (!values) return;
+    const previous = this.feedback.get(device.id);
+    this.feedback.set(device.id, { at: this.clock.now(), values, order });
+    // 值变了就通知界面马上刷新（面板按钮显示的是设备真实状态，不能等下一次定时拉取）；值没变不打扰
+    if (!previous || JSON.stringify(previous.values) !== JSON.stringify(values)) this.emit('feedback', device.id);
   }
 
   // ───────────── 操作面板 ─────────────
@@ -409,7 +413,27 @@ export class Engine extends EventEmitter {
     }
     if (!slider || final) this.log({ dir: 'SYS', result: 'info', source, detail: slider ? `滑块设为 ${state}` : tile.kind === 'toggle' ? `开关切换为${state ? '开' : '关'}` : '按钮被点击' });
     this.spawn(this.runActionList(actions, now, source, true), '执行面板按钮');
+    this.reprobeAfterPad(tile);
     return { actions: expandActions(resolveActions(this.project, actions, { preview: true }).actions).length, state };
+  }
+
+  /**
+   * 按下绑定了设备状态的按钮后，让这台设备尽快重新回读：设备处理需要一点时间，所以隔 0.5 秒和 2 秒各读一次。
+   * 不然界面要等下一次定时检测（可能几十秒）才看到设备真实状态。只在设备配了「UDP 探测」、后台检测没被暂停时做（暂停就是承诺不发探测包）。
+   */
+  private reprobeAfterPad(tile: PadTile): void {
+    const id = tile.feedback?.deviceId;
+    const first = id ? this.project.devices.find((d) => d.id === id) : undefined;
+    if (!id || !first || first.enabled === false || first.health?.mode !== 'udp' || !this.running || this.opts.dryRun || this.healthPausedFlag) return;
+    for (const delay of [500, 2000]) {
+      this.spawn((async () => {
+        const signal = this.runCtl?.signal;
+        await this.clock.sleepUntil(this.clock.now() + delay, signal);
+        if (signal?.aborted || this.healthPausedFlag) return;
+        const device = this.project.devices.find((d) => d.id === id);
+        if (device?.health?.mode === 'udp' && device.enabled !== false) await this.probeDevice(device, 'auto').catch(() => {});
+      })(), '按钮后重读设备状态');
+    }
   }
 
   /** 清空面板的亮灯状态（不指定面板就清全部）。设备被别的方式改过、面板与实际不同步时用。 */

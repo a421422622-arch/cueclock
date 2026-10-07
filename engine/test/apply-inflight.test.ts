@@ -174,3 +174,10 @@ test('变更清单：设备检测配置用可读文字，不输出 JSON', async 
   after.devices[0]!.health = { mode: 'ping', intervalSec: 5 };
   assert.equal(configurationChanges(before, after).find((r) => r.startsWith('修改设备'))!, `修改设备「${before.devices[0]!.name}」：检测：未设置 → Ping，每 5 秒`);
 });
+
+test('变更清单：面板按钮 / 事件改名写成「名称 旧 → 新」', async () => {
+  const { configurationChanges } = await import('../src/configuration.ts');
+  const before = { ...project([]), pads: [{ id: 'p', name: '面板', tiles: [{ id: 't', kind: 'button' as const, label: '按钮 1', actions: [] }] }] } as Project;
+  const after = structuredClone(before); after.pads![0]!.tiles[0]!.label = '全开';
+  assert.equal(configurationChanges(before, after).find((r) => r.startsWith('修改面板'))!, '修改面板「面板」：面板控件：修改「全开」（名称 按钮 1 → 全开）');
+});

@@ -23,6 +23,11 @@ import { matchBuffer } from './match.ts';
 import { DEFAULT_PORT, LineReader, PROTOCOL_VERSION, RpcError } from './protocol.ts';
 import type { DaemonInfo, EventMessage, Request, Response } from './protocol.ts';
 import { engineHello } from './version.ts';
+import { appendAudit, readAudit } from './audit.ts';
+import type { AuditEntry } from './audit.ts';
+import { BUNDLE_FORMAT, BUNDLE_VERSION, BundleError, countProject, parseBundle } from './bundle.ts';
+import type { Bundle } from './bundle.ts';
+import os from 'node:os';
 
 export interface DaemonOptions {
   /** 不给就用状态目录 settings.json 里上次打开的项目，再没有就用默认项目 */
@@ -268,6 +273,16 @@ export class Daemon {
     return path.join(this.stateDir, 'logs');
   }
 
+  /**
+   * 操作记录：配置层面的改动留痕（谁在什么时候改了什么）。写进单独的 audit.jsonl（保留得比普通日志久），
+   * 同时作为一条普通日志推给界面，日志里也能看到。绝不记录密码。
+   */
+  private recordAudit(entry: Omit<AuditEntry, 't'>): void {
+    const e: AuditEntry = { t: Date.now(), ...entry };
+    void appendAudit(this.stateDir, e).catch(() => {});
+    this.recordAlert({ dir: 'SYS', result: 'info', source: '操作记录', detail: `${e.action}：${e.detail}${e.changes?.length ? `（${e.changes.slice(0, 3).join('；')}${e.changes.length > 3 ? ` 等 ${e.changes.length} 项` : ''}）` : ''}` });
+  }
+
   /** daemon 层的告警：写磁盘、推给界面、留在内存里（引擎没运行时 getLogs 也能看到）。 */
   private recordAlert(entry: Omit<LogEntry, 't'>): void {
     const e: LogEntry = { t: Date.now(), ...entry };
@@ -287,6 +302,7 @@ export class Daemon {
     const file = this.store!.file;
     const engine = new Engine(this.project!, { dryRun: this.opts.dryRun, network: this.settings.network, startPaused: this.pausedBeforeStart, healthPaused: this.settings.healthPaused === true, padState: this.settings.padState?.[file], overrides: this.settings.overrides?.[file] });
     engine.on('log', (e: LogEntry) => this.broadcast({ event: 'log', data: e }));
+    engine.on('feedback', () => this.broadcastStatusSoon());
     engine.on('overrides', (st: Record<string, import('./engine.ts').DeviceOverride>) => {
       this.settings = { ...this.settings, overrides: { ...this.settings.overrides, [file]: st } };
       void this.persistSettings();
@@ -359,6 +375,17 @@ export class Daemon {
       network: this.networkInfo(),
       engine: this.engine?.status() ?? null,
     };
+  }
+
+  private statusTimer: ReturnType<typeof setTimeout> | undefined;
+  /** 状态变化很频繁时合并广播：100ms 内多次变化只推一次。 */
+  private broadcastStatusSoon(): void {
+    if (this.statusTimer) return;
+    this.statusTimer = setTimeout(() => {
+      this.statusTimer = undefined;
+      if (this.store) this.broadcast({ event: 'status', data: this.statusPayload() });
+    }, 100);
+    this.statusTimer.unref?.();
   }
 
   /** 先做和立即应用相同的检查（版本、格式、错误），通过后挂起，空闲时再真正应用。 */
@@ -535,6 +562,7 @@ export class Daemon {
       case 'unlock': {
         this.checkPassword(obj(params ?? {}).password);
         conn.unlocked = true;
+        this.recordAudit({ action: '编辑锁', detail: '已解锁编辑' });
         return this.lockInfo(conn);
       }
 
@@ -546,6 +574,7 @@ export class Daemon {
         if (this.settings.lock) this.checkPassword(p.current); // 已有密码时，修改必须再输一次当前密码
         this.settings = { ...this.settings, lock: hashPassword(p.password) };
         await this.persistSettings();
+        this.recordAudit({ action: '编辑锁', detail: this.settings.lock && p.current !== undefined ? '已修改密码' : '已设置密码' });
         for (const c of this.conns) c.unlocked = false; // 密码变了，其他连接的解锁全部作废
         conn.unlocked = true;
         this.broadcast({ event: 'status', data: this.statusPayload() });
@@ -557,6 +586,7 @@ export class Daemon {
         const { lock: _removed, ...rest } = this.settings;
         this.settings = rest;
         await this.persistSettings();
+        this.recordAudit({ action: '编辑锁', detail: '已移除密码' });
         this.broadcast({ event: 'status', data: this.statusPayload() });
         return this.lockInfo(conn);
       }
@@ -638,8 +668,28 @@ export class Daemon {
           this.sleepGuard.set(preventSleep && !!this.engine);
           this.settings = { ...this.settings, preventSleep };
           await this.persistSettings();
+          this.recordAudit({ action: '运行选项', detail: `运行时防止电脑休眠：${preventSleep ? '开' : '关'}` });
           return { preventSleep, sleepSupported: this.sleepGuard.supported, sleepActive: this.sleepGuard.active };
         });
+      }
+
+      case 'getAudit': {
+        const p = obj(params ?? {});
+        return readAudit(this.stateDir, Math.min(2000, Math.max(1, Number(p.limit ?? 500))));
+      }
+
+      case 'exportBundle': {
+        const bundle = await this.buildBundle();
+        this.recordAudit({ action: '导出备份包', detail: `「${bundle.project.name}」r${bundle.project.rev}` });
+        return bundle;
+      }
+
+      case 'previewBundle':
+        return this.previewBundle(obj(params).bundle);
+
+      case 'applyBundle': {
+        const p = obj(params);
+        return this.serialize(() => this.applyBundle(p));
       }
 
       case 'getProbeHistory': {
@@ -656,6 +706,7 @@ export class Daemon {
           const previous = this.settings.healthPaused === true;
           this.settings = { ...this.settings, healthPaused: paused };
           this.engine?.setHealthPaused(paused);
+          this.recordAudit({ action: '在线检测', detail: paused ? '暂停全部后台检测' : '恢复后台检测' });
           this.broadcast({ event: 'status', data: this.statusPayload() });
           try { await this.persistSettings(true); }
           catch (e) { throw new RpcError('settings-write-failed', `${paused ? '暂停' : '恢复'}已生效，但重启持久化失败（上次为${previous ? '暂停' : '运行'}）：${(e as Error).message}`); }
@@ -864,11 +915,13 @@ export class Daemon {
     }
     const issues = validateProject(project);
     if (issues.some((i) => i.level === 'error')) throw new RpcError('invalid-project', '这份备份有错误，不能恢复', issues);
+    const before = this.project;
     await this.store!.save(project, { forceBackup: true });
     this.project = project;
     this.rev++;
     if (this.engine) await this.engine.reload(project);
     else await this.startEngine();
+    this.recordAudit({ action: '从自动备份恢复', detail: `${name} → 「${project.name}」`, changes: before ? configurationChanges(before, project).slice(0, 40) : undefined, rev: this.rev, file: this.store!.file });
     this.broadcast({ event: 'project-changed', data: { file: this.store!.file, rev: this.rev } });
     this.broadcast({ event: 'status', data: this.statusPayload() });
     return { rev: this.rev, warnings: issues.filter((i) => i.level === 'warn') };
@@ -878,6 +931,7 @@ export class Daemon {
   private async setNetwork(net: NetworkSettings): Promise<unknown> {
     this.settings = { ...this.settings, network: net };
     await this.persistSettings();
+    this.recordAudit({ action: '网络设置', detail: `本机网卡：${(net.localAddresses ?? []).join('、') || '自动'}${net.localPort ? `，本机端口 ${net.localPort}` : ''}` });
     this.clearRetry();
     await this.engine?.stop();
     this.engine = null;
@@ -928,6 +982,7 @@ export class Daemon {
     this.notice = null;
     await this.remember(file);
     await this.startEngine();
+    this.recordAudit({ action: '打开项目', detail: `「${next.name}」${file}`, file });
     this.broadcast({ event: 'project-changed', data: { file, rev: this.rev } });
     this.broadcast({ event: 'status', data: this.statusPayload() });
     return { file, rev: this.rev, issues: issues.filter((i) => i.level === 'warn') };
@@ -951,12 +1006,95 @@ export class Daemon {
     if (issues.some((i) => i.level === 'error')) {
       throw new RpcError('invalid-project', '项目检查未通过，未保存', issues);
     }
+    const before = this.project!;
     await this.store!.save(project, { forceBackup: p.forceBackup === true });
     this.project = project;
     this.rev++;
     if (this.engine) await this.engine.reload(project);
     else await this.startEngine();
+    this.recordAudit({ action: '应用配置', detail: `「${project.name}」r${this.rev}`, changes: configurationChanges(before, project).slice(0, 40), rev: this.rev, file: this.store!.file });
     this.broadcast({ event: 'status', data: this.statusPayload() });
     return { rev: this.rev, warnings: issues.filter((i) => i.level === 'warn') };
+  }
+
+  // ───────────── 备份包 ─────────────
+
+  private async buildBundle(): Promise<Bundle> {
+    const st = this.engine?.status();
+    const hello = engineHello();
+    const sysAndEngine = [...this.sysLogs, ...(this.engine?.logs ?? [])].sort((a, b) => a.t - b.t).slice(-1000);
+    return {
+      format: BUNDLE_FORMAT, formatVersion: BUNDLE_VERSION, createdAt: new Date().toISOString(),
+      createdBy: { engineVersion: hello.engineVersion ?? '', engineBuild: hello.engineBuild ?? '', protocol: hello.protocol, platform: process.platform, arch: process.arch },
+      project: { name: this.project!.name, file: this.store!.file, rev: this.rev, data: this.project! },
+      settings: { network: this.settings.network, preventSleep: this.settings.preventSleep === true, healthPaused: this.settings.healthPaused === true },
+      runtime: {
+        running: !!this.engine, paused: st?.paused ?? this.pausedBeforeStart, date: st?.date, dayKind: st?.dayKind,
+        devices: (st?.devices ?? []).map((d) => { const dev = this.project!.devices.find((x) => x.id === d.id); return { id: d.id, name: dev?.name ?? d.id, ip: dev?.ip ?? '', state: d.state, lastCheckAt: d.lastCheckAt, fails: d.fails }; }),
+      },
+      logs: sysAndEngine,
+      alerts: await readAlerts(this.logsDir, 7, 300),
+      audit: await readAudit(this.stateDir, 500),
+      backups: await this.store!.listBackups().then((l) => l.map((b) => ({ name: b.name, t: b.t, size: b.size, projectName: b.projectName })), () => []),
+      note: '备份包：项目 + 机器设置 + 诊断信息。不含编辑锁密码（新机器上需重新设置）、设备接管和面板亮灯状态。用「配置管理 → 从备份包恢复」还原。',
+    };
+  }
+
+  private bundleParse(raw: unknown): { bundle: Bundle; project: Project } {
+    try { return parseBundle(raw); } catch (e) {
+      if (e instanceof BundleError) throw new RpcError('bad-request', e.message);
+      throw e;
+    }
+  }
+
+  private previewBundle(raw: unknown): unknown {
+    const { bundle, project } = this.bundleParse(raw);
+    const issues = validateProject(project);
+    const hello = engineHello();
+    const warnings: string[] = [];
+    const from = bundle.createdBy?.engineVersion;
+    if (from && hello.engineVersion && from.localeCompare(hello.engineVersion, undefined, { numeric: true }) > 0) warnings.push(`备份包来自更新的软件版本 ${from}（本机 ${hello.engineVersion}）：新版本才有的设置在这里可能不生效`);
+    const net = bundle.settings.network as { localAddresses?: string[] } | undefined;
+    const missing = missingAddresses(net?.localAddresses);
+    if (missing.length) warnings.push(`备份包里的网卡 ${missing.join('、')} 在本机不存在；恢复网络设置前请确认`);
+    return {
+      createdAt: bundle.createdAt, from: bundle.createdBy, projectName: project.name, counts: countProject(project),
+      changes: configurationChanges(this.project!, project), issues, warnings,
+      settings: { network: bundle.settings.network ?? null, preventSleep: bundle.settings.preventSleep, healthPaused: bundle.settings.healthPaused },
+      current: { projectName: this.project!.name, network: this.settings.network ?? null, preventSleep: this.settings.preventSleep === true, healthPaused: this.settings.healthPaused === true },
+      auditCount: bundle.audit?.length ?? 0, logCount: bundle.logs?.length ?? 0,
+    };
+  }
+
+  /** 把备份包里的项目还原成当前项目（先强制备份当前版本，可以再回到之前的样子）；机器设置按选项还原。 */
+  private async applyBundle(p: Record<string, unknown>): Promise<unknown> {
+    const { bundle, project } = this.bundleParse(p.bundle);
+    const issues = validateProject(project);
+    if (issues.some((i) => i.level === 'error')) throw new RpcError('invalid-project', '备份包里的项目有错误，不能还原', issues);
+    const before = this.project!;
+    await this.store!.save(project, { forceBackup: true });
+    this.project = project;
+    this.rev++;
+    if (this.engine) await this.engine.reload(project);
+    else await this.startEngine();
+    const done: string[] = [];
+    if (p.applyRuntime === true) {
+      this.settings = { ...this.settings, preventSleep: bundle.settings.preventSleep && this.sleepGuard.supported, healthPaused: bundle.settings.healthPaused };
+      this.engine?.setHealthPaused(bundle.settings.healthPaused);
+      await this.persistSettings();
+      done.push('运行选项（防休眠 / 后台检测暂停）');
+    }
+    this.recordAudit({ action: '从备份包还原', detail: `「${project.name}」，备份包生成于 ${bundle.createdAt}${done.length ? `，同时还原：${done.join('、')}` : ''}`, changes: configurationChanges(before, project).slice(0, 40), rev: this.rev, file: this.store!.file });
+    this.broadcast({ event: 'project-changed', data: { file: this.store!.file, rev: this.rev } });
+    this.broadcast({ event: 'status', data: this.statusPayload() });
+    let networkApplied = false;
+    if (p.applyNetwork === true && bundle.settings.network) {
+      let net: NetworkSettings;
+      try { net = parseNetwork(bundle.settings.network); } catch (e) { throw new RpcError('bad-request', `项目已还原，但备份包里的网络设置不合法：${(e as Error).message}`); }
+      await this.setNetwork(net);
+      this.recordAudit({ action: '网络设置', detail: `随备份包还原：${(net.localAddresses ?? []).join('、') || '自动'}` });
+      networkApplied = true;
+    }
+    return { rev: this.rev, warnings: issues.filter((i) => i.level === 'warn'), networkApplied, runtimeApplied: p.applyRuntime === true };
   }
 }

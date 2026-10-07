@@ -3,6 +3,7 @@ import { appBridge } from '../transport.ts';
 import type { AppState } from '../transport.ts';
 import { displayedProject, viewingRuntime, openBackups, prepareApply, toast, useStore } from '../store.ts';
 import { configName } from '../lib/configName.ts';
+import { BundleRestore, exportBundle } from './BundleDialog.tsx';
 
 /** 文件页沿用原生对话框、切换确认、编辑锁和备份恢复。 */
 export function ConfigurationFiles() {
@@ -49,5 +50,8 @@ export function ConfigurationFiles() {
     <div className="sech">配置备份</div>
     <div className="hint">保存前自动备份旧版本，至少间隔 1 分钟，保留最近 30 份。</div>
     <div className="row"><button onClick={openBackups}>从备份恢复…</button></div>
+    <div className="sech">备份包（换电脑 / 重装 / 交给维护的人）</div>
+    <div className="hint">备份包是一个文件：当前配置 + 本机网络和运行设置 + 运行状态、最近日志、告警和操作记录。在新电脑上选「从备份包恢复」就能一步还原；出问题时发给维护的人，对方能看到完整现场。不含编辑锁密码。</div>
+    <div className="row"><button onClick={() => void exportBundle()}>导出备份包…</button><BundleRestore /></div>
   </>;
 }

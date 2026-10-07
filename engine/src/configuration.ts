@@ -13,7 +13,8 @@ function listChanges(before: Named[], after: Named[]): string {
     const o = old.get(id);
     if (!o) parts.push(`新增「${nameOf(x)}」${x.time ? `（${x.time}）` : ''}`);
     else if (JSON.stringify(o) !== JSON.stringify(x)) {
-      const notes = [o.time !== x.time && o.time && x.time ? `时间 ${o.time} → ${x.time}` : '', (o.enabled !== false) !== (x.enabled !== false) ? (x.enabled !== false ? '启用' : '禁用') : ''].filter(Boolean);
+      const oldName = o.name ?? o.label, newName = x.name ?? x.label;
+      const notes = [oldName !== newName && oldName && newName ? `名称 ${oldName} → ${newName}` : '', o.time !== x.time && o.time && x.time ? `时间 ${o.time} → ${x.time}` : '', (o.enabled !== false) !== (x.enabled !== false) ? (x.enabled !== false ? '启用' : '禁用') : ''].filter(Boolean);
       parts.push(`修改「${nameOf(x)}」${notes.length ? `（${notes.join('，')}）` : ''}`);
     }
   }

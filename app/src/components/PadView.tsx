@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Pad, PadTile } from '@engine/types.ts';
-import { beginDraft, displayedProject, edit, rpc, select, setPadId, toast, useStore, viewingRuntime } from '../store.ts';
+import { beginDraft, displayedProject, edit, engineNow, rpc, select, setPadId, toast, useStore, viewingRuntime } from '../store.ts';
 import { genId } from '../lib/labels.ts';
-import { dragSender, newTile, padColumns, sliderIndex, sliderRange, sliderSteps, sliderValueAt, textOn } from '../lib/pad.ts';
+import { dragSender, newTile, padColumns, sliderIndex, sliderRange, sliderSteps, sliderValueAt, textOn, tileLive } from '../lib/pad.ts';
+import type { TileLive } from '../lib/pad.ts';
 import { RpcFailure } from '../transport.ts';
 import { Icon } from './Icon.tsx';
 
@@ -19,10 +20,12 @@ export function PadView() {
   const sel = useStore((s) => s.sel);
   const lit = useStore((s) => s.status?.engine?.pads) ?? NO_STATE;
   const running = useStore((s) => !!s.status?.engine?.running);
+  const devices = useStore((s) => s.status?.engine?.devices);
   const pads = project.pads ?? [];
   const pad = pads.find((p) => p.id === padId) ?? pads[0];
   const [flash, setFlash] = useState<Record<string, Flash>>({});
   const [busy, setBusy] = useState<string | null>(null);
+  const pressedAt = useRef<Record<string, number>>({}); // 本机最近一次按下每个按钮的时间（引擎时钟），用来判断设备回读是不是比这次操作新
 
   // 当前面板被删除/切换项目后，回到第一个
   useEffect(() => {
@@ -46,6 +49,7 @@ export function PadView() {
     const key = `${p.id}/${t.id}`;
     if (t.confirm && !window.confirm(`确认执行「${t.label}」？`)) return;
     setBusy(key);
+    pressedAt.current[key] = engineNow();
     try {
       const r = await rpc<{ persistFailed?: boolean }>('runPadTile', { padId: p.id, tileId: t.id });
       mark(key, 'ok');
@@ -98,7 +102,9 @@ export function PadView() {
         <div className={`padgrid ${editing ? 'editing' : ''}`} style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
           {pad.tiles.map((t) => {
             const key = `${pad.id}/${t.id}`;
-            const on = lit[key] === true;
+            // 绑了设备状态的按钮以设备回读为准；没绑的沿用「最后操作记录」
+            const live = tileLive(t, lit[key], t.feedback ? devices?.find((d) => d.id === t.feedback!.deviceId)?.feedback : undefined, engineNow(), pressedAt.current[key]);
+            const on = live.lit;
             const selected = editing && sel?.kind === 'padTile' && sel.padId === pad.id && sel.tileId === t.id;
             const c = t.color ?? '#98989f';
             if (t.kind === 'slider') {
@@ -107,7 +113,8 @@ export function PadView() {
                   key={t.id}
                   padId={pad.id}
                   tile={t}
-                  value={typeof lit[key] === 'number' ? (lit[key] as number) : undefined}
+                  value={live.source === 'device' ? live.value : live.source === 'record' && typeof lit[key] === 'number' ? (lit[key] as number) : undefined}
+                  live={t.feedback ? live : undefined}
                   editing={editing}
                   selected={selected}
                   disabled={!editing && !running}
@@ -120,14 +127,16 @@ export function PadView() {
             return (
               <button
                 key={t.id}
-                className={`padtile ${on ? 'lit' : ''} ${selected ? 'selected' : ''} ${flash[key] ?? ''} ${t.kind}`}
+                className={`padtile ${on ? 'lit' : ''} ${live.source === 'unknown' ? 'unknown' : ''} ${live.mismatch ? 'mismatch' : ''} ${selected ? 'selected' : ''} ${flash[key] ?? ''} ${t.kind}`}
+                title={live.mismatch ?? (live.source === 'unknown' ? live.why : live.source === 'device' ? `设备回读：${live.text}` : undefined)}
                 style={{ ['--c' as string]: c, ['--t' as string]: textOn(c), gridColumn: t.size === 2 ? 'span 2' : undefined }}
                 disabled={!editing && !running}
                 onClick={() => (editing ? select({ kind: 'padTile', padId: pad.id, tileId: t.id }) : void press(pad, t))}
               >
                 <span className="pl">{t.label || '（未命名）'}</span>
-                {t.kind === 'toggle' && <span className="pb">{on ? '开' : '关'}</span>}
-                {t.kind === 'button' && t.group && <span className="pb">{t.group}</span>}
+                {t.kind === 'toggle' && <span className="pb">{live.source === 'unknown' ? '状态未知' : on ? '开' : '关'}</span>}
+                {t.kind === 'button' && (t.feedback ? live.text !== undefined || live.source === 'unknown' : !!t.group) && <span className="pb">{t.feedback ? (live.source === 'unknown' ? '状态未知' : live.text) : t.group}</span>}
+                {t.feedback && <LiveBadge live={live} />}
                 {t.confirm && <span className="pc" title="点击前需要确认"><Icon name="alert" size={13} /></span>}
                 {busy === key && <span className="pbusy">…</span>}
                 {editing && t.actions.length === 0 && (t.offActions ?? []).length === 0 && <span className="pe">未绑定</span>}
@@ -155,14 +164,23 @@ export function PadView() {
 
 const NO_STATE: Record<string, boolean | number> = {};
 
+/** 按钮角标：状态来自设备回读（绿点）/ 回读不可用（问号）/ 与最后操作对不上（警告）。 */
+function LiveBadge({ live }: { live: TileLive }) {
+  if (live.mismatch) return <span className="pf warn" title={live.mismatch}><Icon name="alert" size={12} />与设备不一致</span>;
+  if (live.source === 'unknown') return <span className="pf off" title={live.why}>？回读不可用</span>;
+  if (live.source === 'device') return <span className="pf on" title={`设备回读：${live.text}`}><i />设备回读</span>;
+  return null;
+}
+
 /**
  * 滑块（调光等范围值）。拖动时按 ~80ms 节流发送中间值，松手发送最终值；
  * 显示的是引擎记下的「最后发出的值」，没发过时显示初始位置（不会发送）。
  */
-function SliderTile({ padId, tile, value, editing, selected, disabled, flash, onSelect, onResult }: {
+function SliderTile({ padId, tile, value, live, editing, selected, disabled, flash, onSelect, onResult }: {
   padId: string;
   tile: PadTile;
   value: number | undefined;
+  live?: TileLive;
   editing: boolean;
   selected: boolean;
   disabled: boolean;
@@ -202,7 +220,8 @@ function SliderTile({ padId, tile, value, editing, selected, disabled, flash, on
       onClick={editing ? onSelect : undefined}
     >
       <span className="pl">{tile.label || '（未命名）'}</span>
-      <span className="pv">{shown}{tile.unit ?? ''}</span>
+      <span className="pv">{live?.source === 'unknown' && drag === null ? '？' : shown}{live?.source === 'unknown' && drag === null ? '' : tile.unit ?? ''}</span>
+      {live && <LiveBadge live={live} />}
       <input
         type="range"
         min={0}

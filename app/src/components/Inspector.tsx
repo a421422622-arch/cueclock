@@ -6,7 +6,7 @@ import { describeDeviceState } from '../lib/deviceState.ts';
 import { offlineDelayLabel } from '../lib/interval.ts';
 import { IntervalPicker } from './IntervalPicker.tsx';
 import type { Pad, PadTile } from '@engine/types.ts';
-import { changeKind, duplicateTile, groupNames, moveTile, sliderOutput, sliderRange, sliderSteps } from '../lib/pad.ts';
+import { changeKind, duplicateTile, groupNames, moveTile, sliderOutput, sliderRange, sliderSteps, tileLive } from '../lib/pad.ts';
 import { GROUP_COLORS } from '../lib/colors.ts';
 import { displayedProject, viewingRuntime, beginDraft, openPingMonitor, setPadId } from '../store.ts';
 import { formatTime, parseTime } from '@engine/time.ts';
@@ -686,6 +686,52 @@ function SliderFields({ tile, patch }: { tile: PadTile; patch: (fn: (t: PadTile)
   );
 }
 
+/** 让按钮显示设备真实状态：选设备和回读字段；开关再写哪些值算「开」。 */
+function TileFeedbackFields({ tile, patch }: { tile: PadTile; patch: (fn: (t: PadTile) => PadTile | void) => void }) {
+  const project = useStore(displayedProject)!;
+  const bind = tile.feedback;
+  const withFeedback = project.devices.filter((d) => d.feedback && d.feedback.fields.length > 0);
+  const dev = bind ? project.devices.find((d) => d.id === bind.deviceId) : undefined;
+  const reading = useStore((s) => (bind ? s.status?.engine?.devices.find((d) => d.id === bind.deviceId)?.feedback : undefined));
+  const live = bind ? tileLive(tile, undefined, reading, engineNow()) : null;
+  const set = (fn: (b: NonNullable<PadTile['feedback']>) => void) => patch((t) => { if (t.feedback) fn(t.feedback); });
+  return (
+    <Field
+      label="显示设备状态"
+      hint={!bind
+        ? (withFeedback.length ? '默认亮灭是「最后按了什么」。绑定后按钮显示设备回读到的真实状态；设备被遥控器或别的方式改过也能看出来。' : '还没有设备配置状态回读。先在「设备」里设置「设备状态回读」（解析设备回包里的字段），并把在线检测设为「UDP 探测」让它定期刷新。')
+        : tile.kind === 'toggle' ? '回读值等于「算开的值」里任何一个就显示为开；多个值用逗号分隔，不区分大小写。'
+        : tile.kind === 'slider' ? '设备回读的数字会按「范围映射」换算回滑块位置显示。' : '按钮上显示这个字段的回读值。'}
+    >
+      <div className="stack">
+        <select value={bind?.deviceId ?? ''} onChange={(e) => patch((t) => {
+          const d = project.devices.find((x) => x.id === e.target.value);
+          t.feedback = d ? { deviceId: d.id, field: d.feedback?.fields[0]?.label ?? '', ...(t.kind === 'toggle' ? { on: t.feedback?.on ?? [] } : {}) } : undefined;
+        })}>
+          <option value="">不绑定（显示最后操作）</option>
+          {withFeedback.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+          {bind && !withFeedback.some((d) => d.id === bind.deviceId) && <option value={bind.deviceId}>{dev ? `${dev.name}（没配回读）` : `？${bind.deviceId}（设备不存在）`}</option>}
+        </select>
+        {bind && dev?.feedback && (
+          <select value={bind.field} onChange={(e) => set((b) => { b.field = e.target.value; })}>
+            {dev.feedback.fields.map((f) => <option key={f.label} value={f.label}>回读字段：{f.label}</option>)}
+            {!dev.feedback.fields.some((f) => f.label === bind.field) && <option value={bind.field}>？{bind.field}（已不存在）</option>}
+          </select>
+        )}
+        {bind && tile.kind === 'toggle' && (
+          <input className="mono" placeholder="算「开」的值，如 ON, 1, 开机" value={(bind.on ?? []).join(', ')}
+            onChange={(e) => set((b) => { b.on = e.target.value.split(/[,，]/).map((x) => x.trim()).filter(Boolean); })} />
+        )}
+        {bind && live && (
+          <span className={`hint ${live.source === 'device' ? 'okc' : 'warnc'}`}>
+            {live.source === 'device' ? `当前回读：${live.text}${tile.kind === 'toggle' ? `（显示为${live.lit ? '开' : '关'}）` : ''}` : live.why}
+          </span>
+        )}
+      </div>
+    </Field>
+  );
+}
+
 function PadTileInspector({ padId, tileId }: { padId: string; tileId: string }) {
   const project = useStore(displayedProject)!;
   const draftPending = useStore((s) => s.saveState !== 'saved');
@@ -732,6 +778,7 @@ function PadTileInspector({ padId, tileId }: { padId: string; tileId: string }) 
         )}
         {tile.kind === 'slider' && <SliderFields tile={tile} patch={patch} />}
         <Field label="手动接管" hint="操作时接管全部目标设备，期间自动动作跳过；到期后不补发。空值保持自动与手动并行。"><NumInput value={tile.takeoverSec} min={1} max={86400} width={80} allowEmpty onChange={(v) => patch((t) => { t.takeoverSec = v; })} /> 秒</Field>
+        <TileFeedbackFields tile={tile} patch={patch} />
         {tile.kind !== 'slider' && <Field label="确认"><Check checked={tile.confirm === true} onChange={(v) => patch((t) => { t.confirm = v || undefined; })} label="点击前先让操作员确认（适合「全关」这类）" /></Field>}
       </div>
 

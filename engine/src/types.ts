@@ -247,6 +247,16 @@ export interface PadTile {
   unit?: string;
   /** UI范围线性映射到设备值；precision默认0（取整），不填mapping保持旧原始值。 */
   mapping?: { min: number; max: number; precision?: number };
+  /** 显示设备真实状态：按钮的亮灭 / 数值 / 文字来自设备回读，而不是「最后按了什么」。设备需要配置回读解析（Device.feedback）并定期刷新（UDP 探测检测）。 */
+  feedback?: PadTileFeedback;
+}
+
+export interface PadTileFeedback {
+  deviceId: string;
+  /** 设备回读字段名（Device.feedback.fields[].label） */
+  field: string;
+  /** 开关：回读值等于其中任何一个就算「开」（不区分大小写、忽略首尾空格）。滑块 / 按钮不用 */
+  on?: string[];
 }
 
 export interface Pad {

@@ -97,3 +97,42 @@ test('守护进程：setHealthPaused 落盘、重启后保持；getProbeHistory 
   await client.request('setHealthPaused', { paused: false });
   assert.equal((await client.request<{ engine: { healthPaused: boolean } }>('status')).engine.healthPaused, false);
 });
+
+test('按下绑定了设备状态的按钮后，引擎 0.5 秒和 2 秒各重读一次设备（只对配了 UDP 探测的设备；检测暂停时不读）', async (t) => {
+  const reply = { kind: 'prefix' as const, format: 'ascii' as const, pattern: 'P=', timeoutMs: 100, retries: 0 };
+  const probe = { id: 'q', name: '状态', targets: ['D1'], port: 9300, format: 'ascii' as const, payload: 'STATE?', reply };
+  const send = { id: 'a', type: 'udp' as const, targets: ['D1'], format: 'ascii' as const, payload: 'SET ON' };
+  const mk = (health: object | undefined) => ({ ...project([]), commands: [probe], devices: [{ id: 'D1', name: '灯', ip: '10.0.0.2', port: 9300, ...(health ? { health } : {}),
+    feedback: { format: 'ascii' as const, pattern: '^P=(\\w+)$', fields: [{ label: '电源', group: 1 }] } }],
+    pads: [{ id: 'p', name: '面板', tiles: [{ id: 't', kind: 'toggle' as const, label: '电源', actions: [send], offActions: [], feedback: { deviceId: 'D1', field: '电源', on: ['ON'] } }] }] }) as Project;
+  const probes = (e: Engine, tr: RecordingTransport) => tr.sent.filter((x) => x.text === 'STATE?').length + (e.getProbeHistory('D1').length * 0);
+  for (const [name, health, pause, want] of [['udp 探测', { mode: 'udp', intervalSec: 3600, probe: { commandId: 'q' } }, false, 2], ['没配检测', undefined, false, 0], ['检测已暂停', { mode: 'udp', intervalSec: 3600, probe: { commandId: 'q' } }, true, 0]] as const) {
+    const clock = new VirtualClock(at(10, 0)); const tr = new RecordingTransport();
+    tr.sendAndWaitReply = async (ip, port, data) => { tr.sent.push({ ip, port, text: data.toString() }); return { status: 'confirmed', reply: Buffer.from('P=ON') }; };
+    const e = new Engine(mk(health), { clock, transport: tr, healthPaused: pause }); await e.start();
+    await clock.advanceTo(clock.now() + 6000); await new Promise((r) => setTimeout(r, 20)); // 先让后台检测的第一次探测过去（间隔 1 小时，之后不会再有）
+    const before = probes(e, tr);
+    e.runPadTile('p', 't');
+    await clock.advanceTo(clock.now() + 400); assert.equal(probes(e, tr) - before, 0, `${name}：0.4 秒时还没读`);
+    await clock.advanceTo(clock.now() + 200); await new Promise((r) => setTimeout(r, 20));
+    await clock.advanceTo(clock.now() + 2000); await new Promise((r) => setTimeout(r, 20));
+    assert.equal(probes(e, tr) - before, want, name);
+    await e.stop();
+  }
+});
+
+test('设备回读的值变了才通知界面（feedback 事件）；值没变不打扰', async (t) => {
+  const reply = { kind: 'prefix' as const, format: 'ascii' as const, pattern: 'P=', timeoutMs: 100, retries: 0 };
+  const probe = { id: 'q', name: '状态', targets: ['D1'], port: 9300, format: 'ascii' as const, payload: 'STATE?', reply };
+  const p = { ...project([]), commands: [probe], devices: [{ id: 'D1', name: '灯', ip: '10.0.0.2', port: 9300, health: { mode: 'udp' as const, intervalSec: 5, probe: { commandId: 'q' } },
+    feedback: { format: 'ascii' as const, pattern: '^P=(\\w+)$', fields: [{ label: '电源', group: 1 }] } }] } as Project;
+  const clock = new VirtualClock(at(10, 0)); const tr = new RecordingTransport(); let answer = 'P=OFF';
+  tr.sendAndWaitReply = async (ip, port, data) => { tr.sent.push({ ip, port, text: data.toString() }); return { status: 'confirmed', reply: Buffer.from(answer) }; };
+  const e = new Engine(p, { clock, transport: tr }); let events = 0; e.on('feedback', () => events++);
+  await e.start(); t.after(() => e.stop());
+  await clock.advanceTo(clock.now() + 12_000); await new Promise((r) => setTimeout(r, 20));
+  assert.equal(events, 1, '第一次读到值算变化，之后同样的值不再通知');
+  answer = 'P=ON';
+  await clock.advanceTo(clock.now() + 6000); await new Promise((r) => setTimeout(r, 20));
+  assert.equal(events, 2, '值变了再通知一次');
+});

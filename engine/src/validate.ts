@@ -282,6 +282,15 @@ export function validateProject(p: Project): Issue[] {
       if (t.color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(t.color)) err(path, `颜色 "${t.color}" 必须是 #RRGGBB`);
       if (t.size !== undefined && t.size !== 1 && t.size !== 2) err(path, '按钮大小只能是 1 或 2 列');
       if (t.group !== undefined && t.kind !== 'button') err(path, '单选组只能用于按钮，不能用于开关或滑块');
+      if (t.feedback !== undefined) {
+        const fb = t.feedback, dev = p.devices.find((d) => d.id === fb.deviceId);
+        if (typeof fb !== 'object' || fb === null || typeof fb.deviceId !== 'string' || typeof fb.field !== 'string') err(path, '设备状态绑定格式不对（需要 deviceId 和 field）');
+        else if (!dev) err(path, `设备状态绑定的设备 "${fb.deviceId}" 不存在`);
+        else if (!dev.feedback) warn(path, `设备「${dev.name}」还没有配置状态回读解析，按钮拿不到设备真实状态（在设备里设置「设备状态回读」）`);
+        else if (!dev.feedback.fields.some((f) => f.label === fb.field)) err(path, `设备「${dev.name}」的状态回读里没有字段 "${fb.field}"`);
+        else if (t.kind === 'toggle' && !(Array.isArray(fb.on) && fb.on.some((x) => typeof x === 'string' && x.trim() !== ''))) warn(path, '开关绑定了设备状态但没写哪些回读值算「开」，会一直显示为关');
+        if (fb && fb.on !== undefined && !(Array.isArray(fb.on) && fb.on.every((x) => typeof x === 'string'))) err(path, '「算开的值」必须是文字列表');
+      }
       if (t.takeoverSec !== undefined && !(Number.isFinite(t.takeoverSec) && t.takeoverSec >= 1 && t.takeoverSec <= 86400)) err(path, '面板接管期限必须在 1~86400 秒之间');
       if (t.kind === 'slider') {
         checkSlider(path, t);
