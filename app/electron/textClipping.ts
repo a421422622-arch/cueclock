@@ -12,7 +12,7 @@ export interface TextClipping {
 export const CLIPPING_PAGES = ['overview', 'runtime-timeline', 'runtime-inspector', 'timeline', 'inspector-mode', 'inspector-group', 'inspector-cue', 'inspector-device', 'calendar',
   'inspector-command-0', 'inspector-command-1', 'inspector-command-2', 'inspector-command-3', 'inspector-scene', 'inspector-trigger',
   'pad-operation', 'inspector-pad', 'inspector-pad-button', 'inspector-pad-toggle', 'inspector-pad-slider',
-  'configuration-files', 'configuration-software', 'apply-dialog', 'mode-dialog', 'ping-monitor'];
+  'configuration-files', 'configuration-software', 'apply-dialog', 'mode-dialog', 'ping-monitor', 'pad-feedback-unknown', 'audit', 'audit-expanded', 'bundle-dialog'];
 
 export function assertClippingCoverage(names: string[]): void {
   const expected = [1440, 1100].flatMap((width) => CLIPPING_PAGES.map((page) => `${width}-${page}`));
@@ -43,6 +43,9 @@ export function inspectTextClipping(): TextClipping[] {
   // 只允许指定位置的横向省略号，不放行垂直裁切，也不泛化成所有 b/small。
   const ellipsis = [
     ['.ln:not(.open) > .det', '日志详情：点行展开'],
+    ['.ln:not(.open) > .c', '日志内容：悬停或点行展开查看全文'],
+    ['.auditrow:not([open]) > summary > .det', '操作记录摘要：悬停或展开查看全文'],
+    ['.bundle-summary b[title]', '备份包/项目名称摘要：悬停显示全文'],
     ['.tchip', '日历模式：悬停提示'],
     ['.cue .lb > b, .cue .lb > small', '时间轴胶囊：悬停显示全文'],
     ['.hcell .name, .hcell .rule', '轨道摘要：检查器查看详情'],

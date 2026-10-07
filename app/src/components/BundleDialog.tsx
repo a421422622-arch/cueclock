@@ -73,7 +73,7 @@ export function BundleRestore() {
         <div className="mb">
           <div className="bundle-summary">
             <div><small>备份包</small><b title={preview.name}>{preview.name}</b></div>
-            <div><small>项目</small><b>{preview.p.projectName}</b></div>
+            <div><small>项目</small><b title={preview.p.projectName}>{preview.p.projectName}</b></div>
             <div><small>生成时间</small><b>{new Date(preview.p.createdAt).toLocaleString('zh-CN', { hour12: false })}</b></div>
             <div><small>来源</small><b>{preview.p.from?.engineVersion ?? '未知'} · {preview.p.from?.platform ?? ''}</b></div>
           </div>

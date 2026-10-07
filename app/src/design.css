@@ -630,6 +630,9 @@ button:active:not(:disabled) { transform: translateY(.5px); }
 .padtile.slider .pv { font-size: 38px; }
 .padtile.slider input[type=range] { height: 30px; }
 .padtile .pf { left: 16px; bottom: 12px; }
+.padtile.slider .pr { align-items: center; gap: 6px; opacity: 1; }
+.padtile.slider .pr > i { opacity: .6; }
+.padtile.slider .pr > .pf { position: static; flex-shrink: 0; }
 .padbar { padding: 12px 22px; }
 .padtabs span { padding: 7px 18px; font-size: 14px; }
 .padmode { padding: 8px 22px; font-size: 12px; color: var(--muted); }

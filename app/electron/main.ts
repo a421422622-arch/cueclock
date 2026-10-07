@@ -17,6 +17,7 @@ import { autostart } from './autostart.ts';
 import type { AutostartState } from './autostart.ts';
 import { assessEngine } from '../../engine/src/version.ts';
 import { clippingFixture } from './smokeFixture.ts';
+import { smokeLogPerformance } from './smokeLogPerformance.ts';
 import { smokeRuntimeConfiguration } from './smokeRuntimeConfiguration.ts';
 import { smokeClipping } from './smokeClipping.ts';
 import { assertIsolatedSmoke } from './smokeSafety.ts';
@@ -402,7 +403,9 @@ async function smokeUi(): Promise<void> {
     await new Promise((r) => setTimeout(r, 900));
     layout[name] = await js(measureTop).catch((e) => ({ error: String(e) }));
   }
-  const clipping = await smokeClipping(win!, argValue('--clipping-dir'), argv.includes('--smoke-break-css'));
+  const clippingDir = argValue('--clipping-dir');
+  const logPerformance = await smokeLogPerformance(win!, (method, params) => client!.request(method, params), clippingDir && path.join(clippingDir, 'performance'));
+  const clipping = await smokeClipping(win!, clippingDir, argv.includes('--smoke-break-css'));
   const layoutShot = argValue('--layout-screenshot');
   if (layoutShot) writeFileSync(layoutShot, (await win!.webContents.capturePage()).toPNG());
   // 从左侧统一入口检查两个页面，软件设置不再依赖右侧按钮。
@@ -431,11 +434,12 @@ async function smokeUi(): Promise<void> {
   })()`).catch((e) => ({ error: String(e) }));
   const cfg = configuration as { title?: string; tabs?: string[]; selected?: string; menu?: string[]; rightSettings?: boolean } | null;
   const software = settings as { sections?: string[]; error?: string } | null;
-  const passed = ready && runtimeConfiguration.passed && clipping.passed && Object.values(layout).every((x) => (x as { overflow: boolean; overlap: boolean }).overflow === false && (x as { overlap: boolean }).overlap === false) && cfg?.title === '配置管理' && cfg.tabs?.join(',') === '配置文件,软件设置'
+  const passed = ready && runtimeConfiguration.passed && logPerformance.passed && clipping.passed && Object.values(layout).every((x) => (x as { overflow: boolean; overlap: boolean }).overflow === false && (x as { overlap: boolean }).overlap === false) && cfg?.title === '配置管理' && cfg.tabs?.join(',') === '配置文件,软件设置'
     && cfg.selected === '配置文件' && cfg.rightSettings === false && !!software?.sections?.includes('本机网络') && !software.error;
   const out = argValue('--screenshot');
   if (out) writeFileSync(out, (await win!.webContents.capturePage()).toPNG());
-  console.log('SMOKE_UI ' + JSON.stringify({ ready, ...(info as object), layout, clipping, runtimeConfiguration, menu: cfg?.menu ?? [], configuration, settings }));
+  // 大矩阵报告超过管道缓冲区：等stdout写完再exit，防止验收脚本读到截断JSON。
+  await new Promise<void>((resolve, reject) => process.stdout.write('SMOKE_UI ' + JSON.stringify({ ready, ...(info as object), layout, clipping, runtimeConfiguration, logPerformance, menu: cfg?.menu ?? [], configuration, settings }) + '\n', (error) => error ? reject(error) : resolve()));
   app.exit(passed ? 0 : 1);
 }
 

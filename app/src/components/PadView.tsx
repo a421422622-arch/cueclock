@@ -221,7 +221,6 @@ function SliderTile({ padId, tile, value, live, editing, selected, disabled, fla
     >
       <span className="pl">{tile.label || '（未命名）'}</span>
       <span className="pv">{live?.source === 'unknown' && drag === null ? '？' : shown}{live?.source === 'unknown' && drag === null ? '' : tile.unit ?? ''}</span>
-      {live && <LiveBadge live={live} />}
       <input
         type="range"
         min={0}
@@ -240,7 +239,7 @@ function SliderTile({ padId, tile, value, live, editing, selected, disabled, fla
         onKeyUp={finish}
         onBlur={finish}
       />
-      <span className="pr"><i>{min}{tile.unit}</i><i>{max}{tile.unit}</i></span>
+      <span className="pr"><i>{min}{tile.unit}</i>{live && <LiveBadge live={live} />}<i>{max}{tile.unit}</i></span>
       {editing && tile.actions.length === 0 && <span className="pe">未绑定</span>}
     </div>
   );

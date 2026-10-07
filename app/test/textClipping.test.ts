@@ -25,3 +25,19 @@ test('压力夹具合法且不会自动向设备发送或监听触发端口', ()
   assert.equal(p.settings?.recovery?.enabled, false);
   assert.deepEqual(p.triggers, []);
 });
+
+test('Electron矩阵不能漏掉设备回读未知、操作记录与真实备份包预览', () => {
+  for (const page of ['pad-feedback-unknown', 'audit', 'bundle-dialog']) assert(CLIPPING_PAGES.includes(page), `缺少 ${page}`);
+});
+
+test('压力夹具包含绑定设备回读的开关和滑块，并保留未绑定的操作按钮', () => {
+  const p = clippingFixture(), tiles = p.pads![0]!.tiles;
+  for (const kind of ['toggle', 'slider']) {
+    const tile = tiles.find((t) => t.kind === kind)!;
+    assert(tile.feedback, `${kind} 没有设备回读绑定`);
+    const device = p.devices.find((d) => d.id === tile.feedback!.deviceId)!;
+    assert(device.enabled === false);
+    assert(device.feedback?.fields.some((f) => f.label === tile.feedback!.field));
+  }
+  assert(!tiles.find((t) => t.kind === 'button')!.feedback);
+});

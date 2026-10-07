@@ -20,8 +20,8 @@ export function clippingFixture(): Project {
     ] }],
     pads: [{ id: 'pad', name: '东侧展厅现场联动操作面板', columns: 3, tiles: [
       { id: 'button', kind: 'button', label: '开馆联动预热与媒体启动', confirm: true, takeoverSec: 900, actions: [{ id: 'ref', type: 'scene', sceneId: 'scene' }] },
-      { id: 'toggle', kind: 'toggle', label: '投影与灯光设备开关', actions: [action], offActions: [{ ...action, id: 'off', payload: 'OFF' }] },
-      { id: 'slider', kind: 'slider', label: '东侧展厅灯光亮度调节', min: 0, max: 100, step: 1, unit: '%', mapping: { min: 0, max: 255 }, actions: [{ ...action, payload: 'DIM {{value}}', reply: null }] },
+      { id: 'toggle', kind: 'toggle', label: '投影与灯光设备开关', feedback: { deviceId: 'device', field: '设备运行状态', on: ['ON'] }, actions: [action], offActions: [{ ...action, id: 'off', payload: 'OFF' }] },
+      { id: 'slider', kind: 'slider', label: '东侧展厅灯光亮度调节', feedback: { deviceId: 'device', field: '设备运行状态' }, min: 0, max: 100, step: 1, unit: '%', mapping: { min: 0, max: 255 }, actions: [{ ...action, payload: 'DIM {{value}}', reply: null }] },
     ] }],
     triggers: [], settings: { recovery: { enabled: false }, localAddress: '127.0.0.1' },
   };

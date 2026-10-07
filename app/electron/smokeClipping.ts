@@ -8,6 +8,10 @@ export async function smokeClipping(win: BrowserWindow, outputDir?: string, brea
   const js = <T = unknown>(code: string): Promise<T> => win.webContents.executeJavaScript(code, true);
   const settle = () => js(`document.fonts.ready.then(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))))`);
   const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const wait = async (code: string) => {
+    for (let i = 0; i < 60; i++) { if (await js<boolean>(code)) return; await pause(100); }
+    throw new Error(`自检内容没有加载：${code}`);
+  };
   const click = async (selector: string, text?: string) => {
     await js(`(() => { const e = [...document.querySelectorAll(${JSON.stringify(selector)})].find(e => ${text === undefined ? 'true' : `e.textContent.trim() === ${JSON.stringify(text)}`}); if (!e || e.disabled) throw Error('自检控件不存在或不可用：' + ${JSON.stringify(selector + ' ' + (text ?? ''))}); e.click(); })()`);
     await pause(80); await settle();
@@ -77,11 +81,39 @@ export async function smokeClipping(win: BrowserWindow, outputDir?: string, brea
     else await click('.sidebody .dev');
     await shot('inspector-trigger');
     await click('.viewtabs span', '操作面板'); await click('.configuration-switch button', '查看正在运行'); await shot('pad-operation');
+    if (!await js<boolean>(`(() => {
+      const toggle=document.querySelector('.padgrid .padtile.toggle'),slider=document.querySelector('.padgrid .padtile.slider');
+      return toggle?.classList.contains('unknown') && toggle.querySelector('.pb')?.textContent==='状态未知'
+        && getComputedStyle(toggle).borderStyle==='dashed' && toggle.querySelector('.pf.off')?.textContent.includes('回读不可用')
+        && slider?.querySelector('.pv')?.textContent==='？' && slider.querySelector('.pf.off')?.textContent.includes('回读不可用');
+    })()`)) throw new Error('面板没有正确显示真实缺失回读的未知状态');
+    if (await js<boolean>(`(() => {
+      const slider=document.querySelector('.padgrid .padtile.slider'),badge=slider.querySelector('.pf').getBoundingClientRect();
+      return [...slider.querySelectorAll('.pr > i')].some(e=>{const r=e.getBoundingClientRect();return badge.left<r.right-1 && badge.right>r.left+1 && badge.top<r.bottom-1 && badge.bottom>r.top+1;});
+    })()`)) throw new Error('滑块回读角标覆盖了范围标签');
+    await shot('pad-feedback-unknown');
     await click('.configuration-switch button', '编辑草稿'); await click('.padtabs > span'); await shot('inspector-pad');
     for (const kind of ['button', 'toggle', 'slider']) { await click(`.padgrid .padtile.${kind}:not(.add)`); await shot(`inspector-pad-${kind}`); }
     await click('.configuration-switch button', '查看正在运行');
     await click('.configuration-switch button', '编辑草稿');
     await click('.projbtn'); await shot('configuration-files');
+    // 实际导出→修改测试副本→文件控件→真实previewBundle，绝不确认还原或写入网络设置。
+    const beforeBundle = await js(`window.cueclock.rpc('getProject').then(r=>{if(!r.ok)throw Error(r.error.message);return {rev:r.result.rev,instanceId:r.result.instanceId};})`);
+    const expectedBundle = await js<{ projectName: string; changes: string[]; warnings: string[] }>(`(async () => {
+      const r=await window.cueclock.rpc('exportBundle');if(!r.ok)throw Error(r.error.message);const bundle=r.result;
+      bundle.project.data.name='东侧展厅跨机器恢复与灯光投影联动配置（备份包长名称验收）';
+      bundle.createdBy.engineVersion='99.0.0';bundle.settings.network={localAddresses:['198.51.100.210'],localPort:65533};
+      const preview=await window.cueclock.rpc('previewBundle',{bundle});if(!preview.ok)throw Error(preview.error.message);
+      const input=document.querySelector('.configuration-dialog input[type=file]');if(!input||input.disabled)throw Error('备份包文件控件不可用');
+      const files=new DataTransfer();files.items.add(new File([JSON.stringify(bundle)],'东侧展厅运行配置与诊断数据完整备份包.cueclock-bundle.json',{type:'application/json'}));
+      input.files=files.files;input.dispatchEvent(new Event('change',{bubbles:true}));return preview.result;
+    })()`);
+    await wait(`!!document.querySelector('.bundle-dialog')`);
+    if (!expectedBundle.changes.length || !expectedBundle.warnings.length || !await js<boolean>(`document.querySelector('.bundle-dialog').textContent.includes(${JSON.stringify(expectedBundle.projectName)}) && document.querySelector('.bundle-dialog').textContent.includes(${JSON.stringify(expectedBundle.warnings[0])})`)) throw new Error('备份包预览没有显示真实差异和警告');
+    await shot('bundle-dialog');
+    await click('.bundle-dialog .mf button', '取消');
+    const afterBundle = await js(`window.cueclock.rpc('getProject').then(r=>{if(!r.ok)throw Error(r.error.message);return {rev:r.result.rev,instanceId:r.result.instanceId};})`);
+    if (JSON.stringify(beforeBundle) !== JSON.stringify(afterBundle)) throw new Error('备份包预览改变了运行配置或重启了引擎');
     await click('#configuration-software-tab'); await pause(250); await shot('configuration-software');
     await click('.configuration-dialog .mf button', '关闭');
     await click('.apply-open'); await pause(200); await shot('apply-dialog'); await click('.apply-dialog .mf button', '返回编辑');
@@ -90,6 +122,11 @@ export async function smokeClipping(win: BrowserWindow, outputDir?: string, brea
     await click('.viewtabs span', '运行总览'); await click('.overview-table button.link', '检测记录'); await pause(1300); await shot('ping-monitor');
     if (!await js<boolean>(`document.querySelectorAll('.ping-list > div').length >= 3 && !!document.querySelector('.ping-chart rect.ok')`)) throw new Error('检测记录窗口没有显示真实记录');
     await click('.ping-monitor .mf button', '关闭');
+    await click('.loghead .tabs2 > span', '操作记录');
+    await wait(`!!document.querySelector('.auditrow')`); await shot('audit');
+    await js(`(() => { const row=[...document.querySelectorAll('.auditrow')].find(e=>e.querySelector('ul'));if(!row)throw Error('没有真实操作变更清单');row.open=true;row.scrollIntoView({block:'nearest'}); })()`);
+    await shot('audit-expanded');
+    await click('.loghead .tabs2 > span', '日志');
   }
   const result = { passed: false, negativeControl: { rejected, findings: broken, verticalRejected, verticalFindings: vertical }, checks, error: '' };
   try { assertClippingCoverage(checks.map((x) => x.name)); assertNoTextClipping(checks); if (checks.some((x) => x.top.overflow || x.top.overlap)) throw new Error('最长状态顶栏超出或重叠'); result.passed = true; } catch (e) { result.error = (e as Error).message; }
