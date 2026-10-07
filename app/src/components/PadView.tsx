@@ -5,6 +5,7 @@ import { genId } from '../lib/labels.ts';
 import { dragSender, newTile, padColumns, sliderIndex, sliderRange, sliderSteps, sliderValueAt, textOn } from '../lib/pad.ts';
 import { RpcFailure } from '../transport.ts';
 import { Seg } from './fields.tsx';
+import { Icon } from './Icon.tsx';
 
 type Flash = 'ok' | 'bad';
 
@@ -76,7 +77,7 @@ export function PadView() {
         <div className="empty big">
           <div style={{ fontSize: 16, color: 'var(--ink)', marginBottom: 6 }}>还没有操作面板</div>
           面板是一块按钮网格，现场点一下就执行：开馆、闭馆、全关、切场景……按钮可以绑定场景、指令或自定义 UDP。配置上锁后，面板仍然可用。
-          <div style={{ marginTop: 14 }}><button className="primary" onClick={addPad}>＋ 新建面板</button></div>
+          <div style={{ marginTop: 14 }}><button className="primary" onClick={addPad}><Icon name="plus" size={14} />新建面板</button></div>
         </div>
       </div>
     );
@@ -90,7 +91,7 @@ export function PadView() {
           {pads.map((p) => (
             <span key={p.id} className={p.id === pad?.id ? 'on' : ''} onClick={() => { setPadId(p.id); if (editing) select({ kind: 'pad', id: p.id }); }}>{p.name}</span>
           ))}
-          <button className="ico" title="新建面板" onClick={addPad}>＋</button>
+          <button className="ico" title="新建面板" onClick={addPad}><Icon name="plus" size={14} /></button>
         </div>
         <span className="grow" />
         {!running && <span className="hint err">引擎未运行，按钮暂时无法执行</span>}
@@ -133,7 +134,7 @@ export function PadView() {
                 <span className="pl">{t.label || '（未命名）'}</span>
                 {t.kind === 'toggle' && <span className="pb">{on ? '开' : '关'}</span>}
                 {t.kind === 'button' && t.group && <span className="pb">{t.group}</span>}
-                {t.confirm && <span className="pc" title="点击前需要确认">⚠</span>}
+                {t.confirm && <span className="pc" title="点击前需要确认"><Icon name="alert" size={13} /></span>}
                 {busy === key && <span className="pbusy">…</span>}
                 {editing && t.actions.length === 0 && (t.offActions ?? []).length === 0 && <span className="pe">未绑定</span>}
               </button>
@@ -141,9 +142,9 @@ export function PadView() {
           })}
           {editing && (
             <>
-              <button className="padtile add" onClick={() => addTile('button')}>＋ 按钮</button>
-              <button className="padtile add" onClick={() => addTile('toggle')}>＋ 开关</button>
-              <button className="padtile add" onClick={() => addTile('slider')}>＋ 滑块</button>
+              <button className="padtile add" onClick={() => addTile('button')}><Icon name="plus" size={14} />按钮</button>
+              <button className="padtile add" onClick={() => addTile('toggle')}><Icon name="plus" size={14} />开关</button>
+              <button className="padtile add" onClick={() => addTile('slider')}><Icon name="plus" size={14} />滑块</button>
             </>
           )}
           {!editing && pad.tiles.length === 0 && <div className="empty" style={{ gridColumn: '1 / -1' }}>这个面板还是空的。点右上角「编辑」，添加按钮并绑定场景或指令。</div>}

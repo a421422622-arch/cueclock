@@ -3,6 +3,7 @@ import { edit, engineNow, lockNow, openUnlock, prepareApply, reloadFromEngine, r
 import { mergeAlerts, unseenCount } from '../lib/alerts.ts';
 import type { SaveState } from '../store.ts';
 import { ProjectMenu } from './ProjectMenu.tsx';
+import { Icon } from './Icon.tsx';
 
 const SAVE_TEXT: Record<SaveState, string> = {
   saved: '运行配置已应用',
@@ -78,7 +79,7 @@ export function TopBar() {
 
   return (
     <header className="top">
-      <div className="logo">Cue<b>Clock</b></div>
+      <div className="logo"><span className="logo-mark" aria-hidden="true" /><span>Cue<b>Clock</b></span></div>
       <ProjectMenu file={status?.daemon.projectFile ?? null} />
       <input className="projname" value={project.name} onChange={(e) => edit((p) => (p.name = e.target.value))} title={status?.daemon.projectFile} />
       <span className={`savestate ${saveState}`}>{SAVE_TEXT[saveState]}</span>
@@ -87,16 +88,16 @@ export function TopBar() {
       <span className="grow" />
       <Clock />
       <button className={`estop ${paused ? 'on' : ''}`} disabled={!engine} onClick={togglePause} title="暂停期间到点的事件和 UDP 触发都不执行；面板、手动操作与在线检测仍可用。恢复时不补发错过的事件。">
-        {paused ? '▶ 自动已暂停 · 恢复' : '■ 暂停自动日程'}
+        {paused ? <><Icon name="play" size={14} />自动已暂停 · 恢复</> : <><Icon name="pause" size={14} />暂停自动日程</>}
       </button>
       {alerts.count > 0 && (
         <button className={`alertpill ${alerts.hasError ? 'bad' : 'warn'}`} onClick={() => showLogTab('alerts')} title="有新的告警，点击查看（只记录在日志里，不对外发送）">
-          ⚠ {alerts.count} 条新告警
+          <Icon name="alert" size={14} />{alerts.count} 条新告警
         </button>
       )}
       {lock.enabled && (lock.unlocked
-        ? <button onClick={() => void lockNow()} title="立即锁定编辑（查看和急停不受影响）">🔓 锁定</button>
-        : <button className="lockpill" onClick={openUnlock} title="编辑已锁定，点击输入密码解锁">🔒 已锁定 · 解锁</button>)}
+        ? <button onClick={() => void lockNow()} title="立即锁定编辑（查看和急停不受影响）"><Icon name="unlock" size={14} />锁定</button>
+        : <button className="lockpill" onClick={openUnlock} title="编辑已锁定，点击输入密码解锁"><Icon name="lock" size={14} />已锁定 · 解锁</button>)}
       <div className="nic">
         <span className={`dot ${tone}`} />{engineText}
         <br />

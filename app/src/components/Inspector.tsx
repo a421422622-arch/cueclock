@@ -20,6 +20,7 @@ import { Check, ColorField, Field, NumInput, Seg, ValidatedInput } from './field
 import { RpcFailure } from '../transport.ts';
 import { cloneMode, cueDevices } from '../lib/timeline.ts';
 import { deviceColor, modeColor } from '../lib/colors.ts';
+import { Icon } from './Icon.tsx';
 
 export function Inspector() {
   const sel = useStore((s) => s.sel);
@@ -124,7 +125,7 @@ function CueInspector({ timelineId, cueId }: { timelineId: string; cueId: string
       <div className="sech">动作（按顺序，延时会让后面的整体顺延） <span>{cue.actions.length}</span></div>
       <ActionList actions={cue.actions} defaultTarget={cue.defaultTarget} focusedAction={focusedAction} onChange={(next) => patch((c) => (c.actions = next))} />
       <div className="foot">
-        <button disabled={draftPending} title={draftPending ? '先应用草稿后再立即执行' : undefined} onClick={run}>▶ 立即执行</button>
+        <button disabled={draftPending} title={draftPending ? '先应用草稿后再立即执行' : undefined} onClick={run}><Icon name="play" size={12} />立即执行</button>
         <button onClick={() => {
           const id = genId('c');
           edit((p) => {
@@ -201,7 +202,7 @@ function TimelineInspector({ id }: { id: string }) {
               <div key={i} className="row">
                 <DateInput value={r.from} onChange={(v) => setRule((x) => (x.dateRanges![i]!.from = v))} /> 至
                 <DateInput value={r.to} onChange={(v) => setRule((x) => (x.dateRanges![i]!.to = v))} />
-                <button className="ico" onClick={() => setRule((x) => (x.dateRanges = x.dateRanges!.filter((_, j) => j !== i)))}>✕</button>
+                <button className="ico" onClick={() => setRule((x) => (x.dateRanges = x.dateRanges!.filter((_, j) => j !== i)))}><Icon name="x" size={13} /></button>
               </div>
             ))}
             <button onClick={() => setRule((r) => { const d = today(); r.dateRanges = [...(r.dateRanges ?? []), { from: d, to: d }]; })}>＋ 添加范围</button>
@@ -429,7 +430,7 @@ function CommandInspector({ id }: { id: string }) {
             <input className="mono" value={testArgs[p.name] ?? ''} placeholder={p.default ?? '必填'} onChange={(e) => setTestArgs({ ...testArgs, [p.name]: e.target.value })} />
           </label>
         ))}
-        <button className="primary" disabled={tester.busy || missing.length > 0} title={missing.length ? `先填写参数：${missing.join('、')}` : '真的会发出，用的是当前正在编辑的内容（即使还没应用）'} onClick={() => void tester.run(cmd, testArgs)}>▶ 测试发送</button>
+        <button className="primary" disabled={tester.busy || missing.length > 0} title={missing.length ? `先填写参数：${missing.join('、')}` : '真的会发出，用的是当前正在编辑的内容（即使还没应用）'} onClick={() => void tester.run(cmd, testArgs)}><Icon name="play" size={12} />测试发送</button>
         <TestResult state={tester} />
       </div>
       <div className="sech">发送内容</div>
@@ -442,7 +443,7 @@ function CommandInspector({ id }: { id: string }) {
           <input className="mono" style={{ width: 96 }} value={p.name} placeholder="参数名" onChange={(e) => setParam(i, { name: e.target.value })} />
           <input style={{ width: 90 }} value={p.label ?? ''} placeholder="显示名" onChange={(e) => setParam(i, { label: e.target.value || undefined })} />
           <input className="mono" style={{ width: 90 }} value={p.default ?? ''} placeholder="默认值" onChange={(e) => setParam(i, { default: e.target.value === '' ? undefined : e.target.value })} />
-          <button className="ico" onClick={() => patch((c) => (c.params = (c.params ?? []).filter((_, j) => j !== i)))}>✕</button>
+          <button className="ico" onClick={() => patch((c) => (c.params = (c.params ?? []).filter((_, j) => j !== i)))}><Icon name="x" size={13} /></button>
         </div>
       ))}
       {undeclared.length > 0 && (
@@ -503,7 +504,7 @@ function SceneInspector({ id }: { id: string }) {
       <div className="hint pad">可以放「使用指令」「自定义 UDP」「延时」。场景里不能再套场景，也不能放「时间线控制」。</div>
       <ActionList inScene actions={scene.actions} onChange={(next) => patch((s) => (s.actions = next))} />
       <div className="row" style={{ gap: 8, marginTop: 10 }}>
-        <button className="primary" onClick={test}>▶ 立即执行这个场景</button>
+        <button className="primary" onClick={test}><Icon name="play" size={12} />立即执行这个场景</button>
         {res && <span className={`hint ${res.bad ? 'err' : 'okc'}`}>{res.text}</span>}
       </div>
       <div className="hint" style={{ marginTop: 4 }}>用的是当前正在编辑的内容（即使还没保存），按配置方式执行；应用配置会取消仍在等待的旧动作链。</div>
@@ -740,7 +741,7 @@ function PadTileInspector({ padId, tileId }: { padId: string; tileId: string }) 
         </>
       )}
       <div className="row" style={{ gap: 8, marginTop: 10 }}>
-        <button className="primary" disabled={draftPending} title={draftPending ? '先应用面板草稿后再试按' : undefined} onClick={tryIt}>{tile.kind === 'slider' ? '▶ 试发一次（初始位置的值）' : '▶ 试按一次'}</button>
+        <button className="primary" disabled={draftPending} title={draftPending ? '先应用面板草稿后再试按' : undefined} onClick={tryIt}><Icon name="play" size={12} />{tile.kind === 'slider' ? '试发一次（初始位置的值）' : '试按一次'}</button>
         {res && <span className={`hint ${res.bad ? 'err' : 'okc'}`}>{res.text}</span>}
       </div>
       <div className="hint" style={{ marginTop: 4 }}>真的会发出指令；开关会同时切换状态。</div>

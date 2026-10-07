@@ -8,6 +8,7 @@ import { genId } from '../lib/labels.ts';
 import { sceneRefCount } from '../lib/usage.ts';
 import { describeDeviceState } from '../lib/deviceState.ts';
 import { engineNow } from '../store.ts';
+import { Icon } from './Icon.tsx';
 import { deviceColor, GROUP_COLORS } from '../lib/colors.ts';
 
 /** 列表里的快速测试：有必填参数就转到右侧填写；否则直接发，结果用提示条说明。 */
@@ -62,15 +63,15 @@ export function Sidebar() {
   return (
     <aside className="side">
       <div className="tabs">
-        <span className={tab === 'dev' ? 'on' : ''} onClick={() => setTab('dev')}>设备 {project.devices.length}</span>
-        <span className={tab === 'cmd' ? 'on' : ''} onClick={() => setTab('cmd')}>指令 {(project.commands ?? []).length}</span>
-        <span className={tab === 'scene' ? 'on' : ''} onClick={() => setTab('scene')}>场景 {(project.scenes ?? []).length}</span>
-        <span className={tab === 'trig' ? 'on' : ''} onClick={() => setTab('trig')}>触发器 {project.triggers.length}</span>
+        <span className={tab === 'dev' ? 'on' : ''} onClick={() => setTab('dev')} title="设备"><Icon name="device" size={15} /><em>设备</em><i className="cnt">{project.devices.length}</i></span>
+        <span className={tab === 'cmd' ? 'on' : ''} onClick={() => setTab('cmd')} title="指令"><Icon name="terminal" size={15} /><em>指令</em><i className="cnt">{(project.commands ?? []).length}</i></span>
+        <span className={tab === 'scene' ? 'on' : ''} onClick={() => setTab('scene')} title="场景"><Icon name="layers" size={15} /><em>场景</em><i className="cnt">{(project.scenes ?? []).length}</i></span>
+        <span className={tab === 'trig' ? 'on' : ''} onClick={() => setTab('trig')} title="触发器"><Icon name="zap" size={15} /><em>触发器</em><i className="cnt">{project.triggers.length}</i></span>
       </div>
       <div className="sidebody">
         {tab === 'dev' ? (
           <>
-            <div className="sechead">UDP 设备 <span><button title="批量设置在线检测（Ping / UDP 探测、间隔）" onClick={() => openBatchHealth()} disabled={project.devices.length === 0}>批量检测…</button> <button onClick={addDevice}>＋</button></span></div>
+            <div className="sechead">UDP 设备 <span><button title="批量设置在线检测（Ping / UDP 探测、间隔）" onClick={() => openBatchHealth()} disabled={project.devices.length === 0}>批量检测…</button> <button className="ico add" title="新建设备" onClick={addDevice}><Icon name="plus" size={14} /></button></span></div>
             {project.devices.length === 0 && <div className="empty">还没有设备。点右上角＋添加接收端的 IP 和端口。</div>}
             {project.devices.map((d) => (
               <div key={d.id} className={`dev ${sel?.kind === 'device' && sel.id === d.id ? 'sel' : ''}`} onClick={() => select({ kind: 'device', id: d.id })}>
@@ -85,14 +86,14 @@ export function Sidebar() {
           </>
         ) : tab === 'cmd' ? (
           <>
-            <div className="sechead">UDP 指令库 <button onClick={addCommand}>＋</button></div>
+            <div className="sechead">UDP 指令库 <button className="ico add" title="新建指令" onClick={addCommand}><Icon name="plus" size={14} /></button></div>
             {(project.commands ?? []).length === 0 && (
               <div className="empty">还没有指令。把常用的 UDP 内容（目标、端口、格式、参数）配成指令，时间线和触发器上直接选用，不用每次重填。</div>
             )}
             {(project.commands ?? []).map((c) => (
               <div key={c.id} className={`dev ${sel?.kind === 'command' && sel.id === c.id ? 'sel' : ''}`} onClick={() => select({ kind: 'command', id: c.id })}>
                 <div className="n">{c.name}{(c.params ?? []).length > 0 && <span className="tag r">{(c.params ?? []).length} 参数</span>}
-                  <button className="ico rowtest" title="立即发送一次这条指令（真的会发出）" onClick={(e) => { e.stopPropagation(); void quickTest(c); }}>▶ 测试</button></div>
+                  <button className="ico rowtest" title="立即发送一次这条指令（真的会发出）" onClick={(e) => { e.stopPropagation(); void quickTest(c); }}><Icon name="play" size={11} />测试</button></div>
                 <div className="a mono"><span>{c.payload.length > 26 ? c.payload.slice(0, 26) + '…' : c.payload}</span><span>{c.protocol && <span className="tag r">{c.protocol === 'pjlink' ? 'PJLink' : 'TCP'}</span>}<span className={`tag ${c.format === 'hex' ? 'hex' : 'asc'}`}>{c.format.toUpperCase()}</span></span></div>
                 <div className="a"><span className="dim">{c.targets.map((t) => (t.startsWith('tag:') ? `标签 ${t.slice(4)}` : (project.devices.find((d) => d.id === t)?.name ?? '？'))).join('、') || '（无目标）'}{c.port ? ` :${c.port}` : ''}</span></div>
               </div>
@@ -100,7 +101,7 @@ export function Sidebar() {
           </>
         ) : tab === 'scene' ? (
           <>
-            <div className="sechead">场景库 <button onClick={addScene}>＋</button></div>
+            <div className="sechead">场景库 <button className="ico add" title="新建场景" onClick={addScene}><Icon name="plus" size={14} /></button></div>
             {(project.scenes ?? []).length === 0 && (
               <div className="empty">还没有场景。把"开馆""闭馆"这类要同时做几件事的动作配成场景，时间线和触发器上整体选用，改一次处处生效。</div>
             )}
@@ -114,7 +115,7 @@ export function Sidebar() {
           </>
         ) : (
           <>
-            <div className="sechead">接收触发 <button onClick={addTrigger}>＋</button></div>
+            <div className="sechead">接收触发 <button className="ico add" title="新建触发器" onClick={addTrigger}><Icon name="plus" size={14} /></button></div>
             {project.triggers.length === 0 && <div className="empty">还没有触发器。收到指定 UDP 内容时执行一组动作。</div>}
             {project.triggers.map((t) => (
               <div key={t.id} className={`dev ${sel?.kind === 'trigger' && sel.id === t.id ? 'sel' : ''}`} onClick={() => select({ kind: 'trigger', id: t.id })}>

@@ -1,9 +1,13 @@
 :root {
   color-scheme: dark;
-  --canvas: #0a0a0c; --s1: #141416; --s2: #1c1c1f; --s3: #252529; --s4: #2c2c31;
-  --line: #38383f; --line2: #48484f; --grid: #1d1d21;
-  --ink: #f5f5f7; --ink2: #d1d1d6; --muted: #98989f; --subtle: #636366;
-  --amber: #ffb84d; --cyan: #00d9ff; --ok: #34c759; --warn: #ff9f0a; --err: #ff453a; --purple: #bf5af2;
+  /* 设计令牌：中性偏冷的灰阶，层级靠亮度差而不是描边；一个强调色（琥珀），其余颜色只表示状态 */
+  --canvas: #0c0d10; --s1: #121419; --s2: #181b22; --s3: #20242d; --s4: #292e39;
+  --line: #242933; --line2: #343b49; --grid: #181b21;
+  --ink: #eceef3; --ink2: #c5cad5; --muted: #8b92a1; --subtle: #5d6573;
+  --amber: #ffb347; --cyan: #5ac8fa; --ok: #3ddc97; --warn: #f5b94b; --err: #ff6b6b; --purple: #b794f6;
+  --accent: var(--amber); --accent-soft: color-mix(in srgb, var(--amber) 13%, transparent); --accent-line: color-mix(in srgb, var(--amber) 45%, transparent);
+  --r-sm: 6px; --r-md: 9px; --r-lg: 14px;
+  --ring: 0 0 0 3px color-mix(in srgb, var(--amber) 30%, transparent);
   --mono: "SF Mono", Menlo, Consolas, monospace;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }

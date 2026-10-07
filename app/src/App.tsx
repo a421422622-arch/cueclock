@@ -16,6 +16,7 @@ import { shouldAutoLock } from './lib/lockUi.ts';
 import { appBridge } from './transport.ts';
 import { EngineVersionBanner } from './components/EngineVersion.tsx';
 import { Splitter } from './components/Splitter.tsx';
+import { Icon } from './components/Icon.tsx';
 import { layoutVars, resetLayout, useLayout } from './lib/layoutStore.ts';
 
 export function App() {
@@ -105,10 +106,10 @@ export function App() {
         <Sidebar />
         <div className="center">
           <div className="viewtabs">
-            <span className={view === 'overview' ? 'on' : ''} onClick={() => setView('overview')}>运行总览</span>
-            <span className={view === 'timeline' ? 'on' : ''} onClick={() => setView('timeline')}>模式与时间轴</span>
-            <span className={view === 'calendar' ? 'on' : ''} onClick={() => setView('calendar')}>日历与预览</span>
-            <span className={view === 'pad' ? 'on' : ''} onClick={() => setView('pad')}>操作面板</span>
+            <span className={view === 'overview' ? 'on' : ''} onClick={() => setView('overview')}><Icon name="activity" size={15} />运行总览</span>
+            <span className={view === 'timeline' ? 'on' : ''} onClick={() => setView('timeline')}><Icon name="timeline" size={15} />模式与时间轴</span>
+            <span className={view === 'calendar' ? 'on' : ''} onClick={() => setView('calendar')}><Icon name="calendar" size={15} />日历与预览</span>
+            <span className={view === 'pad' ? 'on' : ''} onClick={() => setView('pad')}><Icon name="pad" size={15} />操作面板</span>
           </div>
           {view === 'overview' ? <Overview /> : view === 'timeline' ? <Timeline /> : view === 'calendar' ? <CalendarView /> : <PadView />}
         </div>

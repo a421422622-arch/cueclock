@@ -9,6 +9,7 @@ import { deviceColor, GROUP_COLORS, modeColor } from '../lib/colors.ts';
 import { cloneMode, layoutMarks, targetTracks } from '../lib/timeline.ts';
 import type { TargetMark, TargetTrack } from '../lib/timeline.ts';
 import { Check, ColorField, Field } from './fields.tsx';
+import { Icon } from './Icon.tsx';
 
 const HOUR = 3_600_000;
 const DAY = 86_400_000;
@@ -145,13 +146,13 @@ export function Timeline() {
   return <div className="main" style={{ '--mode-color': color } as CSSProperties}>
     <div className="modebar">
       <div className="modebar-heading"><span>日程模式</span><span className="hint">每个模式一条主时间轴 · 每个目标一条小时间轴</span>
-        <div className="grow" /><button className="primary" onClick={() => setModeDialog(true)}>＋ 模式</button>
+        <div className="grow" /><button className="primary" onClick={() => setModeDialog(true)}><Icon name="plus" size={14} />模式</button>
         <button onClick={copy} disabled={!tl}>复制模式</button>
         <button onClick={() => {
           const id = genId('g');
           edit((p) => p.groups.push({ id, name: '新模式组', mode: 'exclusive' }));
           select({ kind: 'group', id });
-        }}>＋ 模式组</button>
+        }}><Icon name="plus" size={14} />模式组</button>
       </div>
       <div className="mode-tabs" role="tablist" aria-label="日程模式">
         {project.timelines.map((mode) => {
@@ -176,8 +177,8 @@ export function Timeline() {
       <button className={`follow-button ${following ? 'on' : ''}`} aria-pressed={following} onClick={followMode}>跟随今日生效模式</button>
     </div>
     <div className="toolbar timeline-toolbar">
-      <button disabled={!canUndo} onClick={undo} title="撤销编辑（Ctrl / Cmd+Z）">↶ 撤销</button>
-      <button disabled={!canRedo} onClick={redo} title="重做编辑（Ctrl / Cmd+Shift+Z）">↷ 重做</button>
+      <button disabled={!canUndo} onClick={undo} title="撤销编辑（Ctrl / Cmd+Z）"><Icon name="undo" size={14} />撤销</button>
+      <button disabled={!canRedo} onClick={redo} title="重做编辑（Ctrl / Cmd+Shift+Z）"><Icon name="redo" size={14} />重做</button>
       <span className="sep" />
       <label className="tb">缩放<input aria-label="时间轴缩放" type="range" min={0} max={100}
         value={Math.round((Math.log(pxh / 6) / Math.log(10_000)) * 100)} onChange={(e) => zoomTo(6 * Math.pow(10_000, Number(e.target.value) / 100))} /></label>

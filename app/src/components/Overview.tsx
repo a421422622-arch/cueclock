@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { engineNow, rpc, select, setView, showLogTab, toast, useStore } from '../store.ts';
 import { commandLabel, feedbackLabel, runningModes } from '../lib/operations.ts';
 import { describeDeviceState } from '../lib/deviceState.ts';
+import { Icon } from './Icon.tsx';
 
 const time = (at: number) => new Date(at).toLocaleTimeString('zh-CN', { hour12: false });
 const RUN: Record<string, string> = { running: '执行中', completed: '动作处理完成', failed: '有失败步骤', cancelled: '已停止后续', incomplete: '有未观察步骤' };
@@ -30,12 +31,12 @@ export function Overview() {
     finally { setBusy(null); }
   };
   return <div className="overview">
-    <div className="overview-heading"><div><h2>运行总览</h2><p>运行状态来自引擎；设备状态注明检测方式与更新时间。</p></div><button onClick={() => setView('pad')}>打开操作面板</button></div>
+    <div className="overview-heading"><div><h2>运行总览</h2><p>运行状态来自引擎；设备状态注明检测方式与更新时间。</p></div><button onClick={() => setView('pad')}><Icon name="pad" size={14} />打开操作面板</button></div>
     <div className="overview-cards">
-      <article><small>自动运行</small><strong>{conn !== 'connected' ? '连接中断 · 状态待核实' : !engine?.running ? '引擎未运行' : engine.dryRun ? '模拟模式' : engine.paused ? '已暂停' : '运行中'}</strong><p>暂停自动日程与 UDP 触发，手动操作和在线检测仍可用。</p></article>
-      <article><small>今日生效模式</small><strong>{modes.join('、') || '无'}</strong><p>{engine?.date} · {engine?.dayKind}{viewed ? `；时间轴查看：${viewed}` : ''}</p></article>
-      <article><small>下一事件</small><strong>{next ? `${next.time} · ${next.cueName}` : '近 8 天没有事件'}</strong><p>{next ? `${next.timelineName} · ${next.date} · ${Math.max(0, Math.ceil((next.epoch - now) / 1000))} 秒后${engine?.paused ? '（暂停中，将跳过）' : ''}` : '可前往模式与时间轴安排日程'}</p></article>
-      <article><small>设备检测</small><strong>{bad ? `${bad} 台异常` : '暂无已检测异常'}</strong><p>{project.devices.filter((d) => d.enabled !== false).length} 台启用设备；未检测不代表在线。</p></article>
+      <article data-tone={conn !== 'connected' || !engine?.running ? 'bad' : engine.paused ? 'warn' : 'ok'}><header><Icon name="activity" size={15} /><small>自动运行</small></header><strong>{conn !== 'connected' ? '连接中断 · 状态待核实' : !engine?.running ? '引擎未运行' : engine.dryRun ? '模拟模式' : engine.paused ? '已暂停' : '运行中'}</strong><p>暂停自动日程与 UDP 触发，手动操作和在线检测仍可用。</p></article>
+      <article data-tone="info"><header><Icon name="calendar" size={15} /><small>今日生效模式</small></header><strong>{modes.join('、') || '无'}</strong><p>{engine?.date} · {engine?.dayKind}{viewed ? `；时间轴查看：${viewed}` : ''}</p></article>
+      <article data-tone="info"><header><Icon name="clock" size={15} /><small>下一事件</small></header><strong>{next ? `${next.time} · ${next.cueName}` : '近 8 天没有事件'}</strong><p>{next ? `${next.timelineName} · ${next.date} · ${Math.max(0, Math.ceil((next.epoch - now) / 1000))} 秒后${engine?.paused ? '（暂停中，将跳过）' : ''}` : '可前往模式与时间轴安排日程'}</p></article>
+      <article data-tone={bad ? 'bad' : 'neutral'}><header><Icon name="device" size={15} /><small>设备检测</small></header><strong>{bad ? `${bad} 台异常` : '暂无已检测异常'}</strong><p>{project.devices.filter((d) => d.enabled !== false).length} 台启用设备；未检测不代表在线。</p></article>
     </div>
     <div className="overview-heading"><h3>设备与手动接管</h3><label>接管期限 <select value={duration} onChange={(e) => setDuration(Number(e.target.value))}><option value={300000}>5 分钟</option><option value={900000}>15 分钟</option><option value={3600000}>1 小时</option></select></label></div>
     <p className="hint">接管期间该设备的自动日程、UDP 触发和恢复动作跳过；到期恢复后续动作。面板亮灭表示操作记录。</p>

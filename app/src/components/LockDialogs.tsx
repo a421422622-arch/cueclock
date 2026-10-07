@@ -3,6 +3,7 @@ import { closeBackups, closeUnlock, rpc, toast, unlock, useStore } from '../stor
 import { RpcFailure } from '../transport.ts';
 import { summaryText } from '../lib/lockUi.ts';
 import type { BackupSummary } from '../lib/lockUi.ts';
+import { Icon } from './Icon.tsx';
 
 /** 解锁：输入编辑锁密码。查看和急停不需要它。 */
 export function UnlockDialog() {
@@ -18,7 +19,7 @@ export function UnlockDialog() {
   return (
     <div className="modal-bg" onClick={closeUnlock}>
       <div className="modal" style={{ width: 380 }} onClick={(e) => e.stopPropagation()}>
-        <h3>🔒 编辑已锁定</h3>
+        <h3><Icon name="lock" size={16} /> 编辑已锁定</h3>
         <div className="mb">
           <div className="hint">输入密码后才能修改配置、测试发送、切换配置、停止引擎。查看和急停不受影响。</div>
           <input type="password" autoFocus value={pw} placeholder="编辑锁密码" onChange={(e) => setPw(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && pw && void submit()} />

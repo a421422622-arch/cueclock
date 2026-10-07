@@ -13,6 +13,7 @@ import { getState, select, useStore } from '../store.ts';
 import { Check, Field, NumInput, Seg } from './fields.tsx';
 import { TestResult, useCommandTest } from './TestSend.tsx';
 import { adHocCommand, runtimeOnly } from '../lib/commandTest.ts';
+import { Icon } from './Icon.tsx';
 
 const KIND_OPTIONS: { value: MatchKind; label: string }[] = [
   { value: 'exact', label: '完全匹配' },
@@ -60,7 +61,7 @@ export function ActionList({ actions, onChange, defaultTarget, focusedAction, tr
               <button className="ico" title="上移" onClick={() => move(i, -1)}>↑</button>
               <button className="ico" title="下移" onClick={() => move(i, 1)}>↓</button>
               <button className="ico" title="复制" onClick={() => dup(i)}>⧉</button>
-              <button className="ico" title="删除" onClick={() => remove(i)}>✕</button>
+              <button className="ico" title="删除" onClick={() => remove(i)}><Icon name="x" size={13} /></button>
             </div>
           </div>
           <div className="ab">
@@ -279,7 +280,7 @@ export function SendEditor({
       {testable && (
         <Field label="测试" hint={runtimeOnly(v.payload) ? '内容里有运行时才有的值（$1 捕获或 {{value}} / {{hex}}），不能当场测试' : '真的会发出：目标、端口、内容按上面的设置，偏移不参与'}>
           <span className="testbar inline">
-            <button className="primary" disabled={tester.busy || v.targets.length === 0 || runtimeOnly(v.payload)} title={v.targets.length === 0 ? '先选目标' : undefined} onClick={() => void tester.run(adHocCommand(v))}>▶ 测试发送</button>
+            <button className="primary" disabled={tester.busy || v.targets.length === 0 || runtimeOnly(v.payload)} title={v.targets.length === 0 ? '先选目标' : undefined} onClick={() => void tester.run(adHocCommand(v))}><Icon name="play" size={12} />测试发送</button>
             <TestResult state={tester} />
           </span>
         </Field>
