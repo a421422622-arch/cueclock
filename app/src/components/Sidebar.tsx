@@ -78,16 +78,18 @@ export function Sidebar() {
           <>
             <div className="sechead">UDP 设备 <span><button title="批量设置在线检测（Ping / UDP 探测、间隔）" onClick={() => openBatchHealth()} disabled={readonly || project.devices.length === 0}>批量检测…</button> <button className="ico add" title="新建设备" onClick={addDevice}><Icon name="plus" size={14} /></button></span></div>
             {project.devices.length === 0 && <div className="empty">还没有设备。点右上角＋添加接收端的 IP 和端口。</div>}
-            {project.devices.map((d) => (
-              <div key={d.id} className={`dev ${sel?.kind === 'device' && sel.id === d.id ? 'sel' : ''}`} onClick={() => select({ kind: 'device', id: d.id })}>
-                <div className="n"><i style={{ background: deviceColor(project, d.id), opacity: d.enabled === false ? .4 : 1 }} />{d.name}{d.tag && <span className="tag r">{d.tag}</span>}</div>
+            {project.devices.map((d) => {
+              // 名字前的圆点 = 在线状态（绿在线 / 黄异常 / 红离线 / 灰未检测或已禁用）；轨道颜色是名字后面的小色块
+              const st = describeDeviceState(health?.find((x) => x.id === d.id), d.enabled !== false, engineNow());
+              const waiting = !!d.health && d.enabled !== false && st.light === 'unknown';
+              return <div key={d.id} className={`dev ${sel?.kind === 'device' && sel.id === d.id ? 'sel' : ''}`} onClick={() => select({ kind: 'device', id: d.id })}>
+                <div className="n"><i className={`statusdot ${st.light}`} title={waiting ? '已设置在线检测，等待第一次检测结果' : st.light === 'unknown' ? '未设置在线检测，状态未知' : st.title} />{d.name}{d.tag && <span className="tag r">{d.tag}</span>}
+                  <b className="swatch" title="这台设备在时间轴上的轨道颜色" style={{ background: deviceColor(project, d.id), opacity: d.enabled === false ? .4 : 1 }} /></div>
                 <div className="a mono"><span>{d.ip}{d.port ? `:${d.port}` : ''}</span><span className={`tag ${d.format === 'hex' ? 'hex' : 'asc'}`}>{(d.format ?? 'ascii').toUpperCase()}</span></div>
-                {(() => {
-                  const st = describeDeviceState(health?.find((x) => x.id === d.id), d.enabled !== false, engineNow());
-                  return st.light === 'unknown' || st.light === 'disabled' ? null : <div className="a"><span className={`light ${st.light}`} title={st.title}>● {st.label}</span></div>;
-                })()}
-              </div>
-            ))}
+                {waiting ? <div className="a"><span className="light unknown">等待首次检测…</span></div>
+                  : st.light === 'unknown' || st.light === 'disabled' ? null : <div className="a"><span className={`light ${st.light}`} title={st.title}>{st.label}</span></div>}
+              </div>;
+            })}
           </>
         ) : tab === 'cmd' ? (
           <>

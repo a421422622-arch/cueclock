@@ -548,3 +548,12 @@ button.danger-outline:hover:not(:disabled) { background: color-mix(in srgb, var(
 .health-bar > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .health-bar[data-paused="true"] { border-color: color-mix(in srgb, var(--amber) 50%, transparent); background: color-mix(in srgb, var(--amber) 8%, var(--s2)); color: var(--amber); }
 
+/* 设备行：名字前是在线状态灯，轨道颜色是名字后的小色块 */
+.dev .n .statusdot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--subtle); }
+.dev .n .statusdot.on { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent); }
+.dev .n .statusdot.warn { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 22%, transparent); }
+.dev .n .statusdot.off { background: var(--err); box-shadow: 0 0 0 3px color-mix(in srgb, var(--err) 24%, transparent); }
+.dev .n .statusdot.disabled { background: transparent; border: 1.5px solid var(--subtle); }
+.dev .n .swatch { margin-left: auto; width: 14px; height: 6px; border-radius: 3px; flex: none; }
+.light.unknown { color: var(--muted); }
+
