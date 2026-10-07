@@ -209,6 +209,7 @@ const actions: MenuActions & { togglePause(): void } = {
   },
   reveal: () => revealProject(lastStatus?.daemon.projectFile ?? null),
   resetLayout: () => { showWindow(); sendToWindow('app:reset-layout'); },
+  autoZoom: () => { showWindow(); sendToWindow('app:auto-zoom'); },
   setKeepInTray: (v) => {
     prefs = { ...prefs, keepInTray: v };
     savePrefs(stateDir, prefs);
@@ -376,6 +377,23 @@ async function smokeUi(): Promise<void> {
     engine: document.querySelector('.nic')?.innerText,
     node: typeof require + '/' + typeof process,
   })`).catch((e) => ({ error: String(e) }));
+  // 窗口尺寸与顶栏：把顶栏撑到最长的状态（草稿 + 暂停），分别在默认宽度和最小宽度下检查是否超出或互相覆盖
+  const measureTop = `(() => { const t = document.querySelector('.top'); const tr = t.getBoundingClientRect();
+    const items = [...t.children].filter((c) => !c.classList.contains('grow') && getComputedStyle(c).display !== 'none' && c.getBoundingClientRect().width > 0);
+    const rect = (e) => e.getBoundingClientRect();
+    return { innerWidth: window.innerWidth, zoom: window.cueclock.getZoomFactor(), items: items.length,
+      overflow: t.scrollWidth > t.clientWidth + 1 || items.some((c) => rect(c).right > tr.right + 1 || rect(c).left < tr.left - 1),
+      overlap: items.some((a, i) => items.slice(i + 1).some((b) => rect(a).right > rect(b).left + 1 && rect(a).left < rect(b).right - 1 && rect(a).top < rect(b).bottom && rect(b).top < rect(a).bottom)) }; })()`;
+  await js(`(() => { document.querySelector('.estop')?.click(); const n = document.querySelector('.projname'); if (n) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(n, n.value + '（草稿）'); n.dispatchEvent(new Event('input', { bubbles: true })); } })()`).catch(() => undefined);
+  await new Promise((r) => setTimeout(r, 700));
+  const layout: Record<string, unknown> = {};
+  for (const [name, w, h] of [['w1440', 1440, 900], ['w1100', 1100, 700], ['w1440again', 1440, 900]] as const) {
+    win!.setSize(w, h);
+    await new Promise((r) => setTimeout(r, 900));
+    layout[name] = await js(measureTop).catch((e) => ({ error: String(e) }));
+  }
+  const layoutShot = argValue('--layout-screenshot');
+  if (layoutShot) writeFileSync(layoutShot, (await win!.webContents.capturePage()).toPNG());
   // 从左侧统一入口检查两个页面，软件设置不再依赖右侧按钮。
   const configuration = await js(`(async () => {
     document.querySelector('.projbtn')?.click();
@@ -406,7 +424,7 @@ async function smokeUi(): Promise<void> {
     && cfg.selected === '配置文件' && cfg.rightSettings === false && !!software?.sections?.includes('本机网络') && !software.error;
   const out = argValue('--screenshot');
   if (out) writeFileSync(out, (await win!.webContents.capturePage()).toPNG());
-  console.log('SMOKE_UI ' + JSON.stringify({ ready, ...(info as object), menu: cfg?.menu ?? [], configuration, settings }));
+  console.log('SMOKE_UI ' + JSON.stringify({ ready, ...(info as object), layout, menu: cfg?.menu ?? [], configuration, settings }));
   app.exit(passed ? 0 : 1);
 }
 

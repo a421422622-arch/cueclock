@@ -121,6 +121,9 @@ export function Timeline() {
     const to = Math.min(DAY, ((view.left + view.width) / pxh) * HOUR + step);
     const out: number[] = [];
     for (let t = from; t <= to; t += step) out.push(t);
+    // 一天的终点标签（24:00）靠左对齐不了，若和前一个刻度标签挤在一起就不画（"21:0024:00" 重叠）
+    const last = out.at(-1);
+    if (last === DAY && out.length > 1 && ((last - out[out.length - 2]!) / HOUR) * pxh < 64) out.pop();
     return out;
   }, [view, pxh, step]);
 

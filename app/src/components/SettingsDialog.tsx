@@ -3,6 +3,7 @@ import type { NetworkSettings, NicInfo } from '@engine/network.ts';
 import { closeSettings, lockNow, openUnlock, removeLockPassword, rpc, setConfigurationPage, setLockPassword, toast, useStore } from '../store.ts';
 import { checkNewPassword } from '../lib/lockUi.ts';
 import { resetLayout } from '../lib/layoutStore.ts';
+import { autoZoomController } from '../lib/autoZoomRuntime.ts';
 import { appBridge } from '../transport.ts';
 import type { AppState } from '../transport.ts';
 import { RpcFailure } from '../transport.ts';
@@ -298,6 +299,8 @@ function LockSection() {
 
 function ExitSection() {
   const bridge = appBridge;
+  const autoZoom = autoZoomController();
+  const [autoOn, setAutoOn] = useState(() => autoZoom?.enabled() ?? false);
   const layoutSection = (
     <>
       <div className="sech" style={{ marginTop: 16 }}>界面布局</div>
@@ -305,6 +308,9 @@ function ExitSection() {
         <button onClick={() => { resetLayout(); toast('界面布局已恢复默认'); }}>恢复默认界面布局</button>
         <span className="hint">左侧栏、检查器、日志、日历详情的大小都可以拖动分隔条调整（双击分隔条恢复该项）；这里一次全部恢复。菜单「视图 → 恢复默认界面布局」同样。</span>
       </div>
+      {autoZoom && <div className="row" style={{ marginTop: 8 }}>
+        <Check checked={autoOn} onChange={(v) => { autoZoom.set(v); setAutoOn(v); }} label="窗口较窄时，整个界面按比例缩小（文字和控件一起），避免内容超出" />
+      </div>}
     </>
   );
   if (!bridge) return layoutSection;

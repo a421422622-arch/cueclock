@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webFrame } from 'electron';
 
 // 只暴露最小接口给界面：请求引擎、订阅引擎事件、少量应用级操作。界面拿不到 Node 或令牌。
 contextBridge.exposeInMainWorld('cueclock', {
@@ -20,6 +20,13 @@ contextBridge.exposeInMainWorld('cueclock', {
     const h = () => cb();
     ipcRenderer.on('app:need-unlock', h);
     return () => ipcRenderer.removeListener('app:need-unlock', h);
+  },
+  getZoomFactor: () => webFrame.getZoomFactor(),
+  setZoomFactor: (f: number) => webFrame.setZoomFactor(f),
+  onAutoZoom: (cb: () => void) => {
+    const h = () => cb();
+    ipcRenderer.on('app:auto-zoom', h);
+    return () => ipcRenderer.removeListener('app:auto-zoom', h);
   },
   onResetLayout: (cb: () => void) => {
     const h = () => cb();

@@ -18,6 +18,7 @@ import { EngineVersionBanner } from './components/EngineVersion.tsx';
 import { Splitter } from './components/Splitter.tsx';
 import { Icon } from './components/Icon.tsx';
 import { layoutVars, resetLayout, useLayout } from './lib/layoutStore.ts';
+import { autoZoomController } from './lib/autoZoomRuntime.ts';
 
 export function App() {
   const loaded = useStore((s) => s.loaded);
@@ -40,11 +41,20 @@ export function App() {
     void init();
     const off = appBridge?.onNeedUnlock(openUnlock); // 主进程发现被锁住时，请界面弹出解锁框
     const offLayout = appBridge?.onResetLayout(() => { resetLayout(); toast('界面布局已恢复默认'); }); // 菜单「视图 → 恢复默认界面布局」
+    const offAuto = appBridge?.onAutoZoom(() => { autoZoomController()?.set(true); toast('已开启：界面随窗口大小自动缩放'); });
+    const zoom = autoZoomController();
+    let zoomTimer: ReturnType<typeof setTimeout> | undefined;
+    const onResize = () => { clearTimeout(zoomTimer); zoomTimer = setTimeout(() => zoom?.apply(), 120); };
+    zoom?.apply();
+    window.addEventListener('resize', onResize);
     document.addEventListener('keydown', handleEditShortcut);
     return () => {
       document.removeEventListener('keydown', handleEditShortcut);
       off?.();
       offLayout?.();
+      offAuto?.();
+      window.removeEventListener('resize', onResize);
+      clearTimeout(zoomTimer);
     };
   }, []);
 

@@ -95,6 +95,10 @@ export interface AppBridge {
   onNeedUnlock(cb: () => void): () => void;
   /** 菜单「视图 → 恢复默认界面布局」 */
   onResetLayout(cb: () => void): () => void;
+  /** 页面缩放（窗口窄时整体按比例缩小）；菜单「视图 → 自动适应窗口大小」 */
+  getZoomFactor(): number;
+  setZoomFactor(f: number): void;
+  onAutoZoom(cb: () => void): () => void;
 }
 
 declare global {

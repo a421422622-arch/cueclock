@@ -23,6 +23,8 @@ export interface MenuActions {
   showWindow(): void;
   /** 把各面板的大小恢复成默认（界面本机保存的布局） */
   resetLayout(): void;
+  /** 重新打开「随窗口大小自动缩放界面」 */
+  autoZoom(): void;
   quit(): void;
   quitAndStopEngine(): void;
 }
@@ -85,6 +87,7 @@ export function buildAppMenu(s: MenuState, a: MenuActions): Menu {
       { role: 'reload', label: '重新加载界面' },
       { role: 'resetZoom', label: '实际大小' }, { role: 'zoomIn', label: '放大' }, { role: 'zoomOut', label: '缩小' },
       { type: 'separator' }, { label: '恢复默认界面布局', click: () => a.resetLayout() },
+      { label: '自动适应窗口大小', click: () => a.autoZoom() },
       { type: 'separator' }, { role: 'togglefullscreen', label: '全屏' },
       ...(s.isPackaged ? [] : ([{ type: 'separator' }, { role: 'toggleDevTools', label: '开发者工具' }] as Item[])),
     ],

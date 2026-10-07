@@ -419,3 +419,14 @@ button.link { background: none; border: 0; }
 .cue-more:hover { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
 
 .row select, .row input:not([type=checkbox]) { min-width: 0; max-width: 100%; }
+
+/* ───────── 顶栏：可收缩，不再整体撑出窗口 ───────── */
+.top > * { min-width: 0; }
+.projname { flex: 0 1 190px; width: auto; min-width: 70px; text-overflow: ellipsis; }
+.savestate, .top .primary, .estop, .alertpill, .lockpill, .clock { flex: none; }
+.next { flex: 0 1 250px; min-width: 120px; }
+.next .v { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nic { flex: 0 1 200px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.top .grow { flex: 1 1 0; min-width: 0; }
+/* 已禁用 / 待配置的胶囊：保持可读 */
+.cue.off { opacity: .8; }
