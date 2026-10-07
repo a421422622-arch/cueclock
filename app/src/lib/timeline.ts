@@ -102,17 +102,22 @@ export function layoutMarks<T extends { atMs: number }>(marks: T[], pxh: number,
  * 事件点「胶囊」的分行：胶囊左边缘对齐事件时间（靠右边缘时整体向左翻转），宽度固定；
  * 横向放不下的下移一行，不隐藏任何事件。返回每个标记所在行与是否翻转。
  */
-export function layoutChips<T extends { atMs: number }>(marks: T[], pxh: number, width: number, gap = 6): { mark: T; row: number; flip: boolean; left: number }[] {
+export function layoutChips<T extends { atMs: number }>(marks: T[], pxh: number, width: number, gap = 6, minWidth = width): { mark: T; row: number; flip: boolean; left: number; w: number }[] {
   const ends: number[] = [];
   const total = 24 * pxh;
-  return [...marks].sort((a, b) => a.atMs - b.atMs).map((mark) => {
-    const x = Math.min(DAY_MS - 1, mark.atMs) / 3_600_000 * pxh;
-    const flip = x + width > total;
-    const left = flip ? Math.max(0, x - width) : x;
+  const sorted = [...marks].sort((a, b) => a.atMs - b.atMs);
+  const xs = sorted.map((m) => Math.min(DAY_MS - 1, m.atMs) / 3_600_000 * pxh);
+  return sorted.map((mark, i) => {
+    const x = xs[i]!;
+    // 挤一挤：相邻事件很近时把胶囊变窄（最窄 minWidth），而不是马上下移一行；挤到最窄仍放不下才分行
+    const next = xs.slice(i + 1).find((nx) => nx > x + 0.5);
+    const w = minWidth < width && next !== undefined ? Math.max(minWidth, Math.min(width, next - x - gap)) : width;
+    const flip = x + w > total;
+    const left = flip ? Math.max(0, x - w) : x;
     let row = ends.findIndex((end) => left >= end + gap);
     if (row < 0) row = ends.length;
-    ends[row] = left + width;
-    return { mark, row, flip, left };
+    ends[row] = left + w;
+    return { mark, row, flip, left, w };
   });
 }
 

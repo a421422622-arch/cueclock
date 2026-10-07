@@ -82,7 +82,7 @@ export function TopBar() {
       <div className="logo"><span className="logo-mark" aria-hidden="true" /><span>Cue<b>Clock</b></span></div>
       <ProjectMenu file={status?.daemon.projectFile ?? null} />
       <input className="projname" value={project.name} onChange={(e) => edit((p) => (p.name = e.target.value))} title={status?.daemon.projectFile} />
-      <span className={`savestate ${saveState}`}>{SAVE_TEXT[saveState]}</span>
+      <span className={`savestate ${saveState}`} title={SAVE_TEXT[saveState]}>{SAVE_TEXT[saveState]}</span>
       {saveState !== 'saved' && <button className="primary apply-open" disabled={saveState === 'saving' || conn !== 'connected'} onClick={() => void prepareApply()}>检查并应用</button>}
       {saveState === 'conflict' && <button onClick={() => void reloadFromEngine()}>放弃本地修改并重新加载</button>}
       <span className="grow" />

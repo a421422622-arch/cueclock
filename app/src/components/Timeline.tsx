@@ -15,9 +15,14 @@ const HOUR = 3_600_000;
 const DAY = 86_400_000;
 const LABEL_W = 232;
 /** 事件点胶囊：宽度、行高、轨道上下留白 */
-const CHIP_W = 140;
-const MASTER_CHIP_W = 128;
-const ROW_H = 34;
+const CHIP_W = 152;
+const MASTER_CHIP_W = 140;
+const CHIP_MIN_W = 46;
+const LANE_MIN_H = 66;
+const MASTER_MIN_H = 74;
+const ROW_H = 36;
+/** 一条轨道最多显示几行胶囊；更密的折叠成「+N」，点一下放大到那一段 */
+const MAX_ROWS = 3;
 const PAD_TOP = 9;
 const RULER_H = 34;
 const TICK_STEPS = [12 * HOUR, 6 * HOUR, 3 * HOUR, HOUR, 1_800_000, 600_000, 300_000, 60_000, 30_000, 10_000, 5_000, 1_000, 500, 100];
@@ -28,6 +33,8 @@ const msOfDay = (epoch: number) => {
   const d = new Date(epoch);
   return d.getHours() * HOUR + d.getMinutes() * 60_000 + d.getSeconds() * 1000 + d.getMilliseconds();
 };
+/** 事件点胶囊里的时间：整秒不显示 .000，省出位置给「待配置」「×N」等说明 */
+const chipTime = (ms: number) => (ms % 1000 === 0 ? formatTime(ms).slice(0, 8) : formatTime(ms));
 const tickLabel = (ms: number, step: number) => {
   const t = formatTime(ms);
   return step >= 60_000 ? t.slice(0, 5) : step >= 1000 ? t.slice(0, 8) : t;
@@ -118,7 +125,7 @@ export function Timeline() {
   }, [view, pxh, step]);
 
   const addCue = (e: MouseEvent<HTMLDivElement>, target?: string) => {
-    if (!tl || (e.target as HTMLElement).closest('.cue')) return;
+    if (!tl || (e.target as HTMLElement).closest('.cue, .cue-more')) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const ms = clampMs(Math.round((((e.clientX - rect.left) / pxh) * HOUR) / snap) * snap);
     const id = genId('c');
@@ -146,8 +153,15 @@ export function Timeline() {
   };
   const mainMarks: TargetMark[] = tl?.cues.map((cue) => ({ key: cue.id, cue, atMs: parseTime(cue.time) ?? 0, relMs: 0,
     label: `${cue.actions.length} 个动作`, disabled: cue.enabled === false, pending: cue.actions.length === 0, repeat: 1 })) ?? [];
-  const mainLayout = layoutChips(mainMarks, pxh, MASTER_CHIP_W);
-  const masterHeight = Math.max(64, (Math.max(0, ...mainLayout.map((m) => m.row)) + 1) * ROW_H + PAD_TOP * 2);
+  const mainLayout = layoutChips(mainMarks, pxh, MASTER_CHIP_W, 6, CHIP_MIN_W);
+  const mainShown = mainLayout.filter((m) => m.row < MAX_ROWS);
+  const masterHeight = Math.max(MASTER_MIN_H, (Math.max(0, ...mainShown.map((m) => m.row)) + 1) * ROW_H + PAD_TOP * 2);
+  /** 放大到某个时刻附近（点「+N」时用）：以该时刻为中心放大 6 倍 */
+  const focusAt = (ms: number) => {
+    const el = scroller.current;
+    if (el) anchor.current = { ms, x: (el.clientWidth - LABEL_W) / 2 };
+    setPxh(Math.min(60_000, pxh * 6));
+  };
 
   return <div className="main" style={{ '--mode-color': color } as CSSProperties}>
     <div className="modebar">
@@ -219,18 +233,19 @@ export function Timeline() {
           <div className="trow mode-master" data-master-mode={tl.id} style={{ position: masterHeight > 160 ? 'relative' : 'sticky' }}>
             <div className="hcell master-label" style={{ width: LABEL_W, height: masterHeight }}>
               <div className="n"><button className="ico caret" aria-label={expanded ? '收起目标时间轴' : '展开目标时间轴'} onClick={() => setExpanded(!expanded)}><Icon name="chevron" size={14} style={{ transform: expanded ? undefined : 'rotate(-90deg)' }} /></button>
-                <span className="name" onClick={() => select({ kind: 'timeline', id: tl.id })}>{tl.name}</span><span className="tag">{tl.cues.length}</span></div>
+                <span className="name" onClick={() => select({ kind: 'timeline', id: tl.id })}>{tl.name}</span><span className="tag">{tl.cues.length}</span>
+                <button className="ico master-edit" title="编辑模式名称、颜色、规则" onClick={() => select({ kind: 'timeline', id: tl.id })}><Icon name="edit" size={13} /></button></div>
               <div className="rule">主时间轴 · 全部目标的事件点</div>
-              <button className="ico master-edit" onClick={() => select({ kind: 'timeline', id: tl.id })}><Icon name="edit" size={12} />编辑模式 / 颜色</button>
             </div>
             <div className="track master-track" style={{ width: W, height: masterHeight }} onDoubleClick={(e) => addCue(e)}>
-              {mainLayout.map(({ mark, row, flip }) => <CueMark key={mark.key} tl={tl} mark={mark} color={color} pxh={pxh} snap={snap} row={row} flip={flip} sel={sel} master />)}
+              {mainShown.map(({ mark, row, flip, w }) => <CueMark key={mark.key} tl={tl} mark={mark} color={color} pxh={pxh} snap={snap} row={row} flip={flip} w={w} sel={sel} master />)}
+              <MoreBadges layout={mainLayout} onFocus={focusAt} />
               {!tl.cues.length && <span className="track-empty">双击主时间轴新建多目标事件，或双击下面的目标小时间轴</span>}
             </div>
           </div>
           {expanded && filtered.map((track) => <TrackRow key={track.device.id} track={track} tl={tl} project={project}
             color={deviceColor(project, track.device.id)} pxh={pxh} snap={snap} W={W} stepPx={step / HOUR * pxh} sel={sel}
-            onAdd={(e) => addCue(e, track.device.id)} />)}
+            onAdd={(e) => addCue(e, track.device.id)} onFocus={focusAt} />)}
           {expanded && filtered.length === 0 && <div className="empty big">{project.devices.length ? '没有匹配的目标，调整筛选或关闭「隐藏空轨」。' : '先在左侧添加设备，每个设备会自动出现一条目标小时间轴。'}</div>}
           <Playhead pxh={pxh} width={W} />
         </> : <div className="timeline-welcome"><b>一个模式，管理所有目标的日程</b><p>主时间轴汇总事件；目标小时间轴按设备展示。同组模式根据日期自动切换。</p>
@@ -253,13 +268,14 @@ function Playhead({ pxh, width }: { pxh: number; width: number }) {
   </>;
 }
 
-function TrackRow({ track, tl, project, color, pxh, snap, W, sel, onAdd }: {
+function TrackRow({ track, tl, project, color, pxh, snap, W, sel, onAdd, onFocus }: {
   track: TargetTrack; tl: TimelineModel; project: Project; color: string; pxh: number; snap: number; W: number; stepPx?: number;
-  sel: Selection; onAdd: (e: MouseEvent<HTMLDivElement>) => void;
+  sel: Selection; onAdd: (e: MouseEvent<HTMLDivElement>) => void; onFocus: (ms: number) => void;
 }) {
   const { device, marks } = track;
-  const layout = layoutChips(marks, pxh, CHIP_W);
-  const height = Math.max(52, (Math.max(0, ...layout.map((m) => m.row)) + 1) * ROW_H + PAD_TOP * 2);
+  const layout = layoutChips(marks, pxh, CHIP_W, 6, CHIP_MIN_W);
+  const shown = layout.filter((m) => m.row < MAX_ROWS);
+  const height = Math.max(LANE_MIN_H, (Math.max(0, ...shown.map((m) => m.row)) + 1) * ROW_H + PAD_TOP * 2);
   const selected = sel?.kind === 'device' && sel.id === device.id;
   return <div className={`trow target-row ${device.enabled === false ? 'dis' : ''} ${selected ? 'rowsel' : ''}`} data-target-id={device.id} style={{ '--target-color': color } as CSSProperties}>
     <div className={`hcell ${selected ? 'sel' : ''}`} style={{ width: LABEL_W, height }} onClick={() => select({ kind: 'device', id: device.id })}>
@@ -270,14 +286,32 @@ function TrackRow({ track, tl, project, color, pxh, snap, W, sel, onAdd }: {
       <div className="rule mono">{device.ip}{device.port ? `:${device.port}` : ''}{device.tag ? ` · ${device.tag}` : ''}{device.enabled === false ? ' · 已禁用' : ''}</div>
     </div>
     <div className="track target-track" style={{ width: W, height }} onDoubleClick={onAdd}>
-      {layout.map(({ mark, row, flip }) => <CueMark key={mark.key} tl={tl} mark={mark} color={color} pxh={pxh} snap={snap} row={row} flip={flip} sel={sel} />)}
+      {shown.map(({ mark, row, flip, w }) => <CueMark key={mark.key} tl={tl} mark={mark} color={color} pxh={pxh} snap={snap} row={row} flip={flip} w={w} sel={sel} />)}
+      <MoreBadges layout={layout} onFocus={onFocus} />
       {!marks.length && <span className="track-empty">双击为 {device.name} 新建事件点</span>}
     </div>
   </div>;
 }
 
-function CueMark({ tl, mark, color, pxh, snap, row, flip, sel, master = false }: {
-  tl: TimelineModel; mark: TargetMark; color: string; pxh: number; snap: number; row: number; flip: boolean; sel: Selection; master?: boolean;
+/** 超出最大行数的事件点：按位置相近分组，折叠成「+N」，点击放大到那一段。 */
+function MoreBadges({ layout, onFocus }: { layout: { mark: TargetMark; row: number; left: number; w: number }[]; onFocus: (ms: number) => void }) {
+  const hidden = layout.filter((m) => m.row >= MAX_ROWS).sort((a, b) => a.left - b.left);
+  const groups: typeof hidden[] = [];
+  for (const m of hidden) {
+    const g = groups.at(-1);
+    if (g && m.left - g[g.length - 1]!.left < 90) g.push(m);
+    else groups.push([m]);
+  }
+  return <>{groups.map((g) => {
+    const first = g[0]!;
+    const names = g.map((m) => `${formatTime(m.mark.atMs).slice(0, 8)} ${m.mark.cue.name}`).join('\n');
+    return <button key={first.mark.key} className="cue-more" style={{ left: first.left, top: PAD_TOP + (MAX_ROWS - 1) * ROW_H + 3 }}
+      title={`还有 ${g.length} 个事件点（太密，已折叠）：\n${names}\n点击放大到这一段`} onPointerDown={(e) => e.stopPropagation()} onClick={() => onFocus(first.mark.atMs)}>+{g.length}</button>;
+  })}</>;
+}
+
+function CueMark({ tl, mark, color, pxh, snap, row, flip, w, sel, master = false }: {
+  tl: TimelineModel; mark: TargetMark; color: string; pxh: number; snap: number; row: number; flip: boolean; w: number; sel: Selection; master?: boolean;
 }) {
   const { cue } = mark;
   const [drag, setDrag] = useState<number | null>(null);
@@ -288,11 +322,11 @@ function CueMark({ tl, mark, color, pxh, snap, row, flip, sel, master = false }:
   const selected = sel?.kind === 'cue' && sel.timelineId === tl.id && sel.cueId === cue.id && (master || !sel.actionId || sel.actionId === mark.actionId);
   const choose = () => select({ kind: 'cue', timelineId: tl.id, cueId: cue.id, actionId: mark.actionId });
   const commit = (at: number) => edit((p) => { const c = p.timelines.find((t) => t.id === tl.id)?.cues.find((c) => c.id === cue.id); if (c) c.time = formatTime(clampMs(at)); });
-  return <div className={`cue ${master ? 'master-cue' : 'target-cue'} ${selected ? 'sel' : ''} ${mark.disabled ? 'off' : ''} ${mark.pending ? 'pending' : ''} ${ms >= DAY ? 'overflow' : ''} ${flip || clampMs(ms) / HOUR * pxh + (master ? MASTER_CHIP_W : CHIP_W) > 24 * pxh ? 'flip' : ''}`}
+  return <div className={`cue ${master ? 'master-cue' : 'target-cue'} ${selected ? 'sel' : ''} ${mark.disabled ? 'off' : ''} ${mark.pending ? 'pending' : ''} ${ms >= DAY ? 'overflow' : ''} ${flip || clampMs(ms) / HOUR * pxh + w > 24 * pxh ? 'flip' : ''} ${w < 96 ? 'narrow' : ''} ${w < 62 ? 'tiny' : ''}`}
     data-cue-id={cue.id} data-action={mark.actionId} data-time={formatTime(base)} role="button" tabIndex={0}
     aria-label={`${cue.name} ${tickLabel(ms, 1)}${mark.pending ? ' 待配置' : ''}`}
     title={`${cue.name}\n事件时间：${formatTime(base)}\n${master ? mark.label : `首次发送：${formatTime(ms)} · ${mark.label}${mark.repeat > 1 ? ` · 重复 ${mark.repeat} 次` : ''}`}\n拖动会整体移动此事件的全部动作和关联目标${ms >= DAY ? '\n已超出当天，不会执行' : ''}`}
-    style={{ left: (clampMs(ms) / HOUR) * pxh, top: PAD_TOP + row * ROW_H, width: master ? MASTER_CHIP_W : CHIP_W, '--cue-color': color } as CSSProperties}
+    style={{ left: (clampMs(ms) / HOUR) * pxh, top: PAD_TOP + row * ROW_H, width: w, '--cue-color': color } as CSSProperties}
     onClick={choose} onKeyDown={(e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(); }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); choose(); commit(base + (e.key === 'ArrowLeft' ? -snap : snap) * (e.shiftKey ? 10 : 1)); }
@@ -316,7 +350,7 @@ function CueMark({ tl, mark, color, pxh, snap, row, flip, sel, master = false }:
       if (s?.moved && s.next !== null) commit(s.next);
       setDrag(null);
     }} onPointerCancel={() => { start.current = null; setDrag(null); }}>
-    <span className="dm" /><span className="lb"><b>{cue.name}</b><small>{tickLabel(ms, 1)}{!master && mark.repeat > 1 ? ` ×${mark.repeat}` : ''}{mark.pending ? ' · 待配置' : ''}</small></span>
+    <span className="dm" /><span className="lb"><b>{cue.name}</b><small>{chipTime(ms)}{!master && mark.repeat > 1 ? ` ×${mark.repeat}` : ''}{mark.pending ? ' · 待配置' : ''}</small></span>
   </div>;
 }
 

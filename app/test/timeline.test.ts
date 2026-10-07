@@ -131,3 +131,19 @@ test('胶囊分行：左边缘对齐时间，放不下的下移，靠右边缘�
   // 刚好首尾相接留出间隙：不下移
   assert.deepEqual(layoutChips([{ atMs: 0 }, { atMs: 1.46 * H }], 100, 140).map((m) => m.row), [0, 0]);
 });
+
+test('胶囊自适应宽度：相邻事件很近时先变窄再分行；最窄也放不下才下移；默认行为（不传最小宽度）不变', () => {
+  const H = 3_600_000;
+  // 100px/小时：两个事件相隔 1 小时 = 100px。宽 140 → 默认要下移；允许最窄 60 → 挤成 94 宽并留在同一行
+  const marks = [{ atMs: 1 * H }, { atMs: 2 * H }, { atMs: 5 * H }];
+  assert.deepEqual(layoutChips(marks, 100, 140).map((m) => m.row), [0, 1, 0]);
+  const squeezed = layoutChips(marks, 100, 140, 6, 60);
+  assert.deepEqual(squeezed.map((m) => m.row), [0, 0, 0]);
+  assert.deepEqual(squeezed.map((m) => Math.round(m.w)), [94, 140, 140]);
+  // 相隔只有 30px：挤到最窄 60 仍放不下 → 下移
+  const tight = layoutChips([{ atMs: 1 * H }, { atMs: 1.3 * H }], 100, 140, 6, 60);
+  assert.deepEqual(tight.map((m) => m.row), [0, 1]);
+  assert.equal(Math.round(tight[0]!.w), 60);
+  // 同一毫秒的多个：互相之间没有间距可挤 → 分行，宽度保持默认
+  assert.deepEqual(layoutChips([{ atMs: H }, { atMs: H }], 100, 140, 6, 60).map((m) => [m.row, m.w]), [[0, 140], [1, 140]]);
+});

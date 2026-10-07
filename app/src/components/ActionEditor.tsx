@@ -271,7 +271,7 @@ export function SendEditor({
           <span className="row">
             <select value={v.checksum?.algo ?? ''} onChange={(e) => onChange({ checksum: e.target.value ? { algo: e.target.value as ChecksumAlgo, ...(v.checksum?.skip ? { skip: v.checksum.skip } : {}) } : undefined })}>
               <option value="">不追加</option>
-              {CHECKSUM_ALGOS.map((a) => <option key={a.value} value={a.value}>{a.label}</option>)}
+              {CHECKSUM_ALGOS.map((a) => <option key={a.value} value={a.value} title={a.note}>{a.label.split('（')[0]}</option>)}
             </select>
             {v.checksum && <>跳过开头 <NumInput value={v.checksum.skip ?? 0} width={44} onChange={(x) => onChange({ checksum: { ...v.checksum!, skip: x || undefined } })} /> 字节</>}
           </span>

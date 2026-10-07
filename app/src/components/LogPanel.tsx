@@ -18,6 +18,7 @@ export function LogPanel() {
   const issues = useStore((s) => s.issues);
   const errors = issues.filter((i) => i.level === 'error').length;
   const collapsed = useStore((s) => s.logCollapsed);
+  const [testOpen, setTestOpen] = useState(false); // 测试发送条不常用，默认收起，把空间给日志
   return (
     <section className="log">
       <div className="loghead">
@@ -31,10 +32,11 @@ export function LogPanel() {
           </span>
         </div>
         <span className="grow" />
+        <button className={`ico ${testOpen ? 'on' : ''}`} aria-pressed={testOpen} title="向任意 IP:端口发一条测试内容" onClick={() => setTestOpen(!testOpen)}>测试发送</button>
         <button className="ico" onClick={toggleLog} aria-expanded={!collapsed}>{collapsed ? '展开日志' : '收起日志'}</button>
       </div>
       {tab === 'log' ? <Logs /> : tab === 'alerts' ? <Alerts /> : <Issues />}
-      <TestSend />
+      {testOpen && <TestSend />}
     </section>
   );
 }
@@ -89,14 +91,15 @@ function Logs() {
 function LogRow({ l, view }: { l: LogEntry; view: 'ascii' | 'hex' }) {
   const tone = RESULT_TONE[l.result] ?? 'dim';
   const content = l.ascii === undefined ? '' : view === 'hex' ? l.hex : l.ascii;
+  const [open, setOpen] = useState(false); // 点一下展开整行（内容与说明很长时默认被截断）
   return (
-    <div className="ln">
+    <div className={`ln ${open ? 'open' : ''}`} onClick={() => { if (!window.getSelection()?.toString()) setOpen(!open); }}>
       <span className="ts">{formatClock(l.t)}</span>
       <span className={l.dir === 'TX' ? 'tx' : l.dir === 'RX' ? 'rx' : 'sys'}>{l.dir}</span>
       <span className="ip">{l.remote ?? ''}</span>
       <span className="c" title={`${l.ascii ?? ''}\n${l.hex ?? ''}`}>{content}</span>
       <span className={`res ${l.alert ? (l.alert.level === 'error' ? 'bad' : l.alert.level === 'warn' ? 'warn' : tone) : tone}`}>{l.alert ? '⚠ ' : ''}{RESULT_LABEL[l.result] ?? l.result}</span>
-      <span className="det" title={l.detail}>
+      <span className="det" title={`${l.source ?? ""} ${l.detail ?? ""}`.trim()}>
         {l.source && <b>{l.source}</b>} {l.detail}
         {l.lagMs !== undefined && <i className="lag"> +{l.lagMs}ms</i>}
       </span>
