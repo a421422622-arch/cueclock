@@ -4,7 +4,7 @@ import { addDays, dateKey, dayKind, weekdayOf } from '@engine/calendar.ts';
 import { resolveDay } from '@engine/rules.ts';
 import { formatCalendarText, parseCalendarText } from '@engine/calendarText.ts';
 import type { DayView } from '@engine/simulate.ts';
-import { edit, rpc, select, setView, useStore } from '../store.ts';
+import { displayedProject, viewingRuntime, edit, rpc, select, setView, useStore } from '../store.ts';
 import { groupColor } from '../lib/colors.ts';
 import { layoutVars, useLayout } from '../lib/layoutStore.ts';
 import { Splitter } from './Splitter.tsx';
@@ -34,7 +34,8 @@ function updateCalendar(p: Project, fn: (c: CalendarData) => void): void {
 
 export function CalendarView() {
   const layout = useLayout();
-  const project = useStore((s) => s.project)!;
+  const project = useStore(displayedProject)!;
+  const readonly = useStore(viewingRuntime);
   const [selDate, setSelDate] = useState(() => dateKey(new Date()));
   const [month, setMonth] = useState(() => selDate.slice(0, 7));
   const [dialog, setDialog] = useState(false);
@@ -70,8 +71,8 @@ export function CalendarView() {
           <button onClick={() => setMonth(shiftMonth(month, 1))}>▶</button>
           <button onClick={() => { setMonth(todayKey.slice(0, 7)); setSelDate(todayKey); }}>今天</button>
           <span className="grow" />
-          <span className="tb dim">每格显示当天实际生效的时间线；黄色「无日程」表示该组当天没有任何时间线命中</span>
-          <button onClick={() => setDialog(true)}>节假日日历…</button>
+          <span className="tb dim">每格显示该配置当天命中的时间线；黄色「无日程」表示该组当天没有任何时间线命中</span>
+          <button disabled={readonly} onClick={() => setDialog(true)}>节假日日历…</button>
         </div>
         <div className="calgrid">
           {WEEK_HEAD.map((w) => <div key={w} className="wkh">周{w}</div>)}
@@ -105,7 +106,8 @@ export function CalendarView() {
 // ───────────── 某一天的详情 ─────────────
 
 function DayDetail({ date }: { date: string }) {
-  const project = useStore((s) => s.project)!;
+  const project = useStore(displayedProject)!;
+  const readonly = useStore(viewingRuntime);
   const conn = useStore((s) => s.conn);
   const [day, setDay] = useState<DayView | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -161,7 +163,7 @@ function DayDetail({ date }: { date: string }) {
           {DAY_KIND_LABEL[kind]}{holidayName ? `（${holidayName}）` : ''}
         </div>
 
-        <div className="daybtns">
+        <fieldset disabled={readonly} className="daybtns">
           {kind === 'holiday' ? (
             <>
               <input value={holidayName ?? ''} style={{ width: 120 }} onChange={(e) => setHoliday(e.target.value)} placeholder="节日名称" />
@@ -178,7 +180,7 @@ function DayDetail({ date }: { date: string }) {
           ) : (
             <button onClick={setMakeup} title="周末但要上班的日子，会按工作日规则运行">设为调休上班日</button>
           )}
-        </div>
+        </fieldset>
 
         {err && <div className="note warn">{conn === 'connected' ? err : '与引擎断开，无法预览'}</div>}
         {day && (
@@ -218,7 +220,7 @@ const HELP = `一行一条，# 或 // 之后是注释：
   班 2026-09-27                    调休上班日（也可写 调休 / work）`;
 
 function CalendarTextDialog({ onClose }: { onClose: () => void }) {
-  const project = useStore((s) => s.project)!;
+  const project = useStore(displayedProject)!;
   const [text, setText] = useState(() => formatCalendarText(project.calendar));
   const parsed = useMemo(() => parseCalendarText(text), [text]);
   const nHol = Object.keys(parsed.holidays).length;

@@ -9,7 +9,7 @@ import { substituteSliderAction } from '@engine/padvalue.ts';
 import { sliderSample as sampleValues } from '../lib/pad.ts';
 import { genId } from '../lib/labels.ts';
 import { previewPayload, toHex } from '../lib/payload.ts';
-import { getState, select, useStore } from '../store.ts';
+import { displayedProject, getState, select, useStore } from '../store.ts';
 import { Check, Field, NumInput, Seg } from './fields.tsx';
 import { TestResult, useCommandTest } from './TestSend.tsx';
 import { adHocCommand, runtimeOnly } from '../lib/commandTest.ts';
@@ -30,8 +30,8 @@ const firstCommandId = () => getState().project?.commands?.[0]?.id ?? '';
 
 /** 一组动作的编辑器：事件点和触发器共用。 */
 export function ActionList({ actions, onChange, defaultTarget, focusedAction, triggerTemplate = false, inScene = false, sliderSample }: { actions: Action[]; onChange: (next: Action[]) => void; defaultTarget?: string; focusedAction?: string; triggerTemplate?: boolean; inScene?: boolean; /** 滑块里的动作：内容/参数里的 {{value}}、{{hex}} 用这个值做预览；同时不提供场景和时间线控制 */ sliderSample?: number }) {
-  const hasCommands = useStore((s) => (s.project?.commands ?? []).length > 0);
-  const hasScenes = useStore((s) => (s.project?.scenes ?? []).length > 0);
+  const hasCommands = useStore((s) => (displayedProject(s)?.commands ?? []).length > 0);
+  const hasScenes = useStore((s) => (displayedProject(s)?.scenes ?? []).length > 0);
   const update = (i: number, next: Action) => onChange(actions.map((a, j) => (j === i ? next : a)));
   const move = (i: number, d: -1 | 1) => {
     const j = i + d;
@@ -140,7 +140,7 @@ export function SendEditor({
   /** 显示「测试发送」：把当前内容立即发一次（自定义 UDP 动作用；指令库的指令有自己的测试栏） */
   testable?: boolean;
 }) {
-  const project = useStore((s) => s.project)!;
+  const project = useStore(displayedProject)!;
   const tester = useCommandTest();
   // 注意：选择器必须返回稳定的引用。这里不能写 `?? []`——每次都是新数组，会让 React 误判状态一直在变，陷入无限渲染
   const localsRaw = useStore((s) => s.status?.network?.settings.localAddresses);
@@ -335,7 +335,7 @@ export function SendEditor({
 // ───────────── 使用指令 ─────────────
 
 function CommandBody({ a, onChange, triggerTemplate = false, sliderSample }: { a: CommandAction; onChange: (n: CommandAction) => void; triggerTemplate?: boolean; sliderSample?: number }) {
-  const project = useStore((s) => s.project)!;
+  const project = useStore(displayedProject)!;
   const commands = project.commands ?? [];
   const cmd = commands.find((c) => c.id === a.commandId);
   const tags = [...new Set(project.devices.map((d) => d.tag).filter((t): t is string => !!t))];
@@ -430,7 +430,7 @@ function sendSummary(project: Project, a: Action, i: number, n: number): string 
 
 /** 使用场景：选一个场景，可整体后移；下方列出展开后会发送什么，改场景会同步变化。 */
 function SceneBody({ a, onChange }: { a: Extract<Action, { type: 'scene' }>; onChange: (n: Action) => void }) {
-  const project = useStore((s) => s.project)!;
+  const project = useStore(displayedProject)!;
   const scenes = project.scenes ?? [];
   const scene = scenes.find((s) => s.id === a.sceneId);
   const resolved = scene ? resolveActions(project, [a]) : null;
@@ -476,7 +476,7 @@ function SceneBody({ a, onChange }: { a: Extract<Action, { type: 'scene' }>; onC
 }
 
 function ControlBody({ a, onChange }: { a: Extract<Action, { type: 'timeline' }>; onChange: (n: Action) => void }) {
-  const project = useStore((s) => s.project)!;
+  const project = useStore(displayedProject)!;
   return (
     <>
       <Field label="操作">

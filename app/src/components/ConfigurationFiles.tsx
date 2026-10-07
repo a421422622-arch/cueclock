@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { appBridge } from '../transport.ts';
 import type { AppState } from '../transport.ts';
-import { openBackups, prepareApply, toast, useStore } from '../store.ts';
+import { displayedProject, viewingRuntime, openBackups, prepareApply, toast, useStore } from '../store.ts';
 import { configName } from '../lib/configName.ts';
 
 /** 文件页沿用原生对话框、切换确认、编辑锁和备份恢复。 */
 export function ConfigurationFiles() {
-  const project = useStore((s) => s.project)!;
+  const project = useStore(displayedProject)!;
+  const readonly = useStore(viewingRuntime);
   const saveState = useStore((s) => s.saveState);
   const file = useStore((s) => s.status?.daemon.projectFile ?? null);
   const [info, setInfo] = useState<AppState | null>(null);
@@ -26,7 +27,7 @@ export function ConfigurationFiles() {
   const recent = (info?.recent ?? []).filter((path) => path !== file);
   return <>
     <div className="configuration-current">
-      <span className="hint">当前配置</span>
+      <span className="hint">{readonly ? '引擎配置（回读）' : '本机草稿'}</span>
       <strong>{project.name || configName(file)}</strong>
       <span className="configuration-path mono" title={file ?? ''}>{file ?? '尚未读取配置位置'}</span>
       <button disabled={!bridge || !file} onClick={() => void act('reveal')}>在文件夹中显示</button>

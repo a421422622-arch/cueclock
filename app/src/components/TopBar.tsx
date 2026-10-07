@@ -1,12 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { edit, engineNow, lockNow, openUnlock, prepareApply, reloadFromEngine, rpc, showLogTab, toast, useStore } from '../store.ts';
+import { displayedProject, viewingRuntime, edit, engineNow, lockNow, openUnlock, prepareApply, reloadFromEngine, rpc, showLogTab, toast, useStore } from '../store.ts';
 import { mergeAlerts, unseenCount } from '../lib/alerts.ts';
 import type { SaveState } from '../store.ts';
 import { ProjectMenu } from './ProjectMenu.tsx';
 import { Icon } from './Icon.tsx';
 
 const SAVE_TEXT: Record<SaveState, string> = {
-  saved: '运行配置已应用',
+  saved: '草稿已应用',
   dirty: '本机草稿 · 尚未应用',
   saving: '应用中…',
   error: '草稿保存失败',
@@ -53,7 +53,8 @@ function Clock() {
 }
 
 export function TopBar() {
-  const project = useStore((s) => s.project)!;
+  const project = useStore(displayedProject)!;
+  const readonly = useStore(viewingRuntime);
   const conn = useStore((s) => s.conn);
   const status = useStore((s) => s.status);
   const saveState = useStore((s) => s.saveState);
@@ -81,7 +82,7 @@ export function TopBar() {
     <header className="top">
       <div className="logo"><span className="logo-mark" aria-hidden="true" /><span>Cue<b>Clock</b></span></div>
       <ProjectMenu file={status?.daemon.projectFile ?? null} />
-      <input className="projname" value={project.name} onChange={(e) => edit((p) => (p.name = e.target.value))} title={status?.daemon.projectFile} />
+      <input className="projname" readOnly={readonly} aria-label={readonly ? "运行配置名称（只读）" : "草稿配置名称"} value={project.name} onChange={(e) => edit((p) => (p.name = e.target.value))} title={status?.daemon.projectFile} />
       <span className={`savestate ${saveState}`} title={SAVE_TEXT[saveState]}>{SAVE_TEXT[saveState]}</span>
       {saveState !== 'saved' && <button className="primary apply-open" disabled={saveState === 'saving' || conn !== 'connected'} onClick={() => void prepareApply()}>检查并应用</button>}
       {saveState === 'conflict' && <button onClick={() => void reloadFromEngine()}>放弃本地修改并重新加载</button>}

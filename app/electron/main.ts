@@ -17,6 +17,7 @@ import { autostart } from './autostart.ts';
 import type { AutostartState } from './autostart.ts';
 import { assessEngine } from '../../engine/src/version.ts';
 import { clippingFixture } from './smokeFixture.ts';
+import { smokeRuntimeConfiguration } from './smokeRuntimeConfiguration.ts';
 import { smokeClipping } from './smokeClipping.ts';
 import { assertIsolatedSmoke } from './smokeSafety.ts';
 import { isBlockedByVersion } from './rpcGuard.ts';
@@ -265,7 +266,9 @@ async function connectClient(): Promise<void> {
   setInterval(() => void refreshFromEngine(), 10_000).unref();
 }
 
+let smokeReadFailure = false; // 仅隔离 smoke-ui 可注入回读故障，渲染进程无入口。
 ipcMain.handle('rpc', async (_e, method: string, params: unknown) => {
+  if (SMOKE_UI && smokeReadFailure && method === 'getProject') return { ok: false, error: { code: 'internal', message: '隔离验收：注入配置回读故障' } };
   if (!client) return { ok: false, error: { code: 'disconnected', message: '未连接到引擎' } };
   if (isBlockedByVersion(method, engineUpdate)) {
     return { ok: false, error: { code: 'incompatible-version', message: '界面与引擎的通信协议不兼容，请先确认重启引擎' } };
@@ -379,6 +382,11 @@ async function smokeUi(): Promise<void> {
     engine: document.querySelector('.nic')?.innerText,
     node: typeof require + '/' + typeof process,
   })`).catch((e) => ({ error: String(e) }));
+  const runtimeConfiguration = await smokeRuntimeConfiguration(win!, {
+    readFailure: (active) => { smokeReadFailure = active; },
+    disconnect: () => client!.close(),
+    reconnect: () => client!.connect(),
+  });
   // 窗口尺寸与顶栏：把顶栏撑到最长的状态（草稿 + 暂停），分别在默认宽度和最小宽度下检查是否超出或互相覆盖
   const measureTop = `(() => { const t = document.querySelector('.top'); const tr = t.getBoundingClientRect();
     const items = [...t.children].filter((c) => !c.classList.contains('grow') && getComputedStyle(c).display !== 'none' && c.getBoundingClientRect().width > 0);
@@ -386,7 +394,7 @@ async function smokeUi(): Promise<void> {
     return { innerWidth: window.innerWidth, zoom: window.cueclock.getZoomFactor(), items: items.length,
       overflow: t.scrollWidth > t.clientWidth + 1 || items.some((c) => rect(c).right > tr.right + 1 || rect(c).left < tr.left - 1),
       overlap: items.some((a, i) => items.slice(i + 1).some((b) => rect(a).right > rect(b).left + 1 && rect(a).left < rect(b).right - 1 && rect(a).top < rect(b).bottom && rect(b).top < rect(a).bottom)) }; })()`;
-  await js(`(() => { if (!document.querySelector('.estop')?.textContent.includes('自动已暂停')) document.querySelector('.estop')?.click(); const n = document.querySelector('.projname'); if (n) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(n, n.value + '（草稿）'); n.dispatchEvent(new Event('input', { bubbles: true })); } })()`).catch(() => undefined);
+  await js(`(() => { if (!document.querySelector('.estop')?.textContent.includes('自动已暂停')) document.querySelector('.estop')?.click(); document.querySelector('.configuration-switch button:nth-child(2)')?.click(); const n = document.querySelector('.projname'); if (n) { Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(n, n.value + '（草稿）'); n.dispatchEvent(new Event('input', { bubbles: true })); } })()`).catch(() => undefined);
   await new Promise((r) => setTimeout(r, 700));
   const layout: Record<string, unknown> = {};
   for (const [name, w, h] of [['w1440', 1440, 900], ['w1100', 1100, 700], ['w1440again', 1440, 900]] as const) {
@@ -423,11 +431,11 @@ async function smokeUi(): Promise<void> {
   })()`).catch((e) => ({ error: String(e) }));
   const cfg = configuration as { title?: string; tabs?: string[]; selected?: string; menu?: string[]; rightSettings?: boolean } | null;
   const software = settings as { sections?: string[]; error?: string } | null;
-  const passed = ready && clipping.passed && Object.values(layout).every((x) => (x as { overflow: boolean; overlap: boolean }).overflow === false && (x as { overlap: boolean }).overlap === false) && cfg?.title === '配置管理' && cfg.tabs?.join(',') === '配置文件,软件设置'
+  const passed = ready && runtimeConfiguration.passed && clipping.passed && Object.values(layout).every((x) => (x as { overflow: boolean; overlap: boolean }).overflow === false && (x as { overlap: boolean }).overlap === false) && cfg?.title === '配置管理' && cfg.tabs?.join(',') === '配置文件,软件设置'
     && cfg.selected === '配置文件' && cfg.rightSettings === false && !!software?.sections?.includes('本机网络') && !software.error;
   const out = argValue('--screenshot');
   if (out) writeFileSync(out, (await win!.webContents.capturePage()).toPNG());
-  console.log('SMOKE_UI ' + JSON.stringify({ ready, ...(info as object), layout, clipping, menu: cfg?.menu ?? [], configuration, settings }));
+  console.log('SMOKE_UI ' + JSON.stringify({ ready, ...(info as object), layout, clipping, runtimeConfiguration, menu: cfg?.menu ?? [], configuration, settings }));
   app.exit(passed ? 0 : 1);
 }
 

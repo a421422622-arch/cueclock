@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Pad, PadTile } from '@engine/types.ts';
-import { edit, isLocked, openUnlock, rpc, select, setPadEdit, setPadId, toast, useStore } from '../store.ts';
+import { beginDraft, viewRuntime, edit, isLocked, openUnlock, rpc, select, setPadEdit, setPadId, toast, useStore } from '../store.ts';
 import { genId } from '../lib/labels.ts';
 import { dragSender, newTile, padColumns, sliderIndex, sliderRange, sliderSteps, sliderValueAt, textOn } from '../lib/pad.ts';
 import { RpcFailure } from '../transport.ts';
@@ -28,6 +28,8 @@ export function PadView() {
   }, [pad, padId]);
 
   const addPad = () => {
+    if (!beginDraft()) return;
+    setPadEdit(true);
     const id = genId('pad');
     edit((p) => { (p.pads ??= []).push({ id, name: `面板 ${(p.pads?.length ?? 0) + 1}`, tiles: [] }); });
     setPadId(id);
@@ -61,7 +63,7 @@ export function PadView() {
       return;
     }
     setPadEdit(v);
-    if (!v) select(null);
+    if (!v) void viewRuntime();
   };
 
   const addTile = (kind: PadTile['kind']) => {

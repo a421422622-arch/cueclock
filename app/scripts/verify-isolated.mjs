@@ -83,7 +83,7 @@ try {
       const prefix = mode === 'smoke-ui' ? 'SMOKE_UI ' : 'SMOKE_APP ';
       const line = output.split('\n').find((s) => s.startsWith(prefix));
       const result = line && JSON.parse(line.slice(prefix.length));
-      if (!result || mode === 'smoke-ui' && (!result.ready || !result.overview || result.clipping?.passed !== true || !result.clipping?.negativeControl?.rejected || !result.clipping?.negativeControl?.verticalRejected || result.clipping?.checks?.length !== 44 || Object.values(result.layout ?? {}).some((x) => !x || x.overflow !== false || x.overlap !== false)) || mode === 'smoke-app' && (!result.restarted || !result.engineStopped || !result.viewMenu?.includes('恢复默认界面布局'))) throw new Error(`${mode} 行为检查未通过`);
+      if (!result || mode === 'smoke-ui' && (!result.ready || !result.overview || !result.runtimeConfiguration?.passed || result.clipping?.passed !== true || !result.clipping?.negativeControl?.rejected || !result.clipping?.negativeControl?.verticalRejected || result.clipping?.checks?.length !== 48 || Object.values(result.layout ?? {}).some((x) => !x || x.overflow !== false || x.overlap !== false)) || mode === 'smoke-app' && (!result.restarted || !result.engineStopped || !result.viewMenu?.includes('恢复默认界面布局'))) throw new Error(`${mode} 行为检查未通过`);
     }
     await cleanup(record);
   }

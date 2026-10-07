@@ -5,6 +5,8 @@ import type { Issue } from '@engine/validate.ts';
 import { appBridge, transport, RpcFailure } from './transport.ts';
 import type { EngineUpdate } from '../../engine/src/version.ts';
 import { EditHistory } from './lib/history.ts';
+import { readRuntimeConfig, snapshotCurrent, appliedSnapshotMatches } from './lib/runtimeConfig.ts';
+import type { RuntimeConfigSnapshot } from './lib/runtimeConfig.ts';
 import { normalizeEngineStatus } from './lib/status.ts';
 
 export interface DaemonStatus {
@@ -39,6 +41,10 @@ export interface AppState {
   /** 本地草稿，界面上的编辑都改它，本机自动保存，确认应用才交给引擎 */
   project: Project | null;
   runningProject: Project | null;
+  configurationView: 'runtime' | 'draft';
+  runtimeSnapshot: RuntimeConfigSnapshot | null;
+  runtimeReading: boolean;
+  runtimeReadError: string | null;
   rev: number;
   saveState: SaveState;
   issues: Issue[];
@@ -92,6 +98,10 @@ let state: AppState = {
   status: null,
   project: null,
   runningProject: null,
+  configurationView: 'runtime',
+  runtimeSnapshot: null,
+  runtimeReading: false,
+  runtimeReadError: null,
   rev: 0,
   saveState: 'saved',
   issues: [],
@@ -131,6 +141,9 @@ export const getState = () => state;
 type EditSnapshot = { project: Project; sel: Selection; modeId: string | null };
 const history = new EditHistory<EditSnapshot>(50);
 const snapshot = (): EditSnapshot => ({ project: state.project!, sel: state.sel, modeId: state.modeId });
+export const displayedProject = (s: AppState): Project | null => s.configurationView === 'draft' ? s.project : s.runtimeSnapshot?.project ?? s.runningProject;
+export const viewingRuntime = (s: AppState): boolean => s.configurationView === 'runtime';
+export const runtimeVerified = (s: AppState): boolean => !s.runtimeReading && !s.runtimeReadError && snapshotCurrent(s.runtimeSnapshot, s.status, s.conn === 'connected');
 const historyState = () => ({ canUndo: history.canUndo, canRedo: history.canRedo });
 export function useStore<T>(selector: (s: AppState) => T): T {
   return useSyncExternalStore(
@@ -179,7 +192,7 @@ export function restoreDraft(): void {
   if (!d) return;
   if (state.project) history.record(snapshot());
   editVersion++;
-  set({ project: d.project, sel: null, draftOffer: null, saveState: 'dirty', ...historyState() });
+  set({ project: d.project, configurationView: 'draft', sel: null, draftOffer: null, saveState: 'dirty', ...historyState() });
   scheduleSave(0);
 }
 
@@ -208,36 +221,56 @@ function applyStatus(st: DaemonStatus): void {
   const changedInstance = !!state.status?.daemon.instanceId && !!st.daemon.instanceId && state.status.daemon.instanceId !== st.daemon.instanceId;
   const now = st.engine?.now;
   set({ status: { ...st, engine: normalizeEngineStatus(st.engine) }, ...(now ? { clockOffset: now - Date.now() } : {}) });
-  if (state.loaded && (st.daemon.rev !== state.rev || changedInstance) && !inflight && !runtimeFetching) {
-    runtimeFetching = true;
-    const session = projectSession;
+  if (state.loaded && (st.daemon.rev !== state.runtimeSnapshot?.rev || changedInstance || st.daemon.projectFile !== state.runtimeSnapshot?.file) && !inflight && !state.runtimeReading) {
     if (editVersion !== savedVersion) set({ saveState: 'conflict' });
-    void transport.request<{ project: Project; rev: number }>('getProject').then((r) => {
-      if (session !== projectSession) return;
-      if (editVersion === savedVersion) {
-        history.clear();
-        set({ project: r.project, runningProject: r.project, rev: r.rev, ...historyState() });
-      } else set({ runningProject: r.project });
-    }).finally(() => { runtimeFetching = false; }).catch(() => {});
+    void refreshRuntimeConfig();
   }
 }
 
-let runtimeFetching = false;
+let runtimeReadId = 0;
+export async function refreshRuntimeConfig(): Promise<RuntimeConfigSnapshot | null> {
+  const id = ++runtimeReadId, session = projectSession;
+  set({ runtimeReading: true, runtimeReadError: null });
+  try {
+    const r = await readRuntimeConfig<DaemonStatus>(transport.request);
+    if (session !== projectSession || id !== runtimeReadId) return null;
+    const clean = editVersion === savedVersion;
+    if (clean) history.clear();
+    set({ runtimeSnapshot: r.snapshot, runningProject: r.snapshot.project, runtimeReading: false,
+      ...(clean ? { project: r.snapshot.project, rev: r.snapshot.rev, ...historyState() } : {}) });
+    applyStatus(r.status);
+    return r.snapshot;
+  } catch (e) {
+    if (session === projectSession && id === runtimeReadId) set({ runtimeReading: false, runtimeReadError: (e as Error).message });
+    return null;
+  }
+}
+
+export function beginDraft(): boolean {
+  if (!editable()) { toast('请先解锁或更新引擎后编辑'); return false; }
+  set({ configurationView: 'draft', ...(state.view === 'pad' ? { padEdit: true } : {}) });
+  return true;
+}
+export async function viewRuntime(): Promise<void> {
+  set({ configurationView: 'runtime', padEdit: false, sel: null });
+  await refreshRuntimeConfig();
+}
 
 async function loadAll(): Promise<void> {
   const session = ++projectSession;
+  ++runtimeReadId;
   clearTimeout(timer); // 切换项目后，旧项目遗留的待保存定时器不能再触发
-  const [{ project, rev }, st, logs] = await Promise.all([
-    transport.request<{ project: Project; rev: number }>('getProject'),
-    transport.request<DaemonStatus>('status'),
+  const [runtime, logs] = await Promise.all([
+    readRuntimeConfig<DaemonStatus>(transport.request),
     transport.request<LogEntry[]>('getLogs', { limit: 500 }),
   ]);
+  const { project, rev } = runtime.snapshot, st = runtime.status;
   if (session !== projectSession) return;
   const changedFile = state.status?.daemon.projectFile !== st.daemon.projectFile;
   if (changedFile || JSON.stringify(state.project) !== JSON.stringify(project)) history.clear();
   editVersion = savedVersion = 0;
-  set({ project, runningProject: project, applyPreview: null, rev, loaded: true, saveState: 'saved', issues: [], logs, draftOffer: null, ...historyState(),
-    ...(changedFile ? { sel: null, modeId: null, followActive: true } : {}) });
+  set({ runtimeSnapshot: runtime.snapshot, runtimeReading: false, runtimeReadError: null, project, runningProject: project, applyPreview: null, rev, loaded: true, saveState: 'saved', issues: [], logs, draftOffer: null, ...historyState(),
+    ...(changedFile ? { configurationView: 'runtime', sel: null, modeId: null, followActive: true } : {}) });
   applyStatus(st);
   void loadAlertHistory();
   void refreshLock();
@@ -346,8 +379,12 @@ export async function applyConfiguration(): Promise<void> {
     savedVersion = preview.version;
     const clean = editVersion === savedVersion;
     if (clean) clearDraft(); else writeDraft();
-    set({ runningProject: preview.project, rev: r.rev, issues: clean ? r.warnings : state.issues, saveState: clean ? 'saved' : 'dirty', applyPreview: null });
-    toast('配置已应用，旧版本已备份');
+    set({ rev: r.rev, issues: clean ? r.warnings : state.issues, saveState: clean ? 'saved' : 'dirty', applyPreview: null, configurationView: 'runtime', padEdit: false, sel: null });
+    const actual = await refreshRuntimeConfig();
+    if (session !== projectSession) return;
+    if (!actual) toast('配置已应用，但引擎回读未核对；请刷新运行配置');
+    else if (appliedSnapshotMatches(actual, preview.project, r.rev, preview.instanceId)) toast(`引擎配置 r${actual.rev} 已回读核对，旧版本已备份`);
+    else toast(`配置已应用，但运行配置随后变化，当前从引擎读回版本 r${actual.rev}`);
   } catch (e) {
     if (session !== projectSession) return;
     if (e instanceof RpcFailure && e.code === 'conflict') set({ saveState: 'conflict', applyPreview: null });
@@ -359,6 +396,7 @@ export async function applyConfiguration(): Promise<void> {
 
 export function edit(fn: (draft: Project) => void): void {
   if (!state.project) return;
+  if (state.configurationView !== 'draft') { toast('当前查看引擎配置，只读；请切到编辑草稿'); return; }
   if (state.engineUpdate && !state.engineUpdate.compatible) { toast('界面与引擎协议或功能版本不兼容，请先确认重启引擎后再编辑'); return; }
   if (isLocked()) { denyLocked(); return; }
   const next = structuredClone(state.project);
@@ -378,8 +416,8 @@ function restoreEdit(next: EditSnapshot | null): void {
 }
 /** 渲染异常时保存尚未交给引擎的草稿，重新加载不会丢失本地编辑。 */
 export function protectDraft(): void { if (editVersion !== savedVersion) writeDraft(); }
-export const undo = () => state.project && editable() && restoreEdit(history.undo(snapshot()));
-export const redo = () => state.project && editable() && restoreEdit(history.redo(snapshot()));
+export const undo = () => state.configurationView === 'draft' && state.project && editable() && restoreEdit(history.undo(snapshot()));
+export const redo = () => state.configurationView === 'draft' && state.project && editable() && restoreEdit(history.redo(snapshot()));
 /** 协议或功能版本不兼容时不允许编辑（保存会被拦截）；仅构建不同则照常。 */
 function editable(): boolean {
   if (isLocked()) { denyLocked(); return false; }
@@ -461,9 +499,10 @@ export const removeLockPassword = (password: string) => lockCall('removePassword
 export const openUnlock = () => set({ unlockOpen: true });
 export const closeUnlock = () => set({ unlockOpen: false });
 export const setPadId = (id: string | null) => set({ padId: id });
-export const setPadEdit = (v: boolean) => set({ padEdit: v });
+export const setPadEdit = (v: boolean) => { if (v && !beginDraft()) return; set({ padEdit: v }); };
 /** 从问题列表等处直接跳到某个面板按钮：切到面板视图并进入编辑模式选中它 */
 export function showPadTile(padId: string, tileId?: string): void {
+  if (!beginDraft()) return;
   set({ view: 'pad', padId, padEdit: true, sel: tileId ? { kind: 'padTile', padId, tileId } : { kind: 'pad', id: padId } });
 }
 export const openBatchHealth = (init: import('../../engine/src/types.ts').DeviceHealthConfig | null = null) => set({ batchHealthOpen: true, batchHealthInit: init });

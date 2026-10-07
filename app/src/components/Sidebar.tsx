@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { Command } from '@engine/types.ts';
-import { edit, openBatchHealth, rpc, select, toast, useStore } from '../store.ts';
+import { displayedProject, viewingRuntime, beginDraft, edit, openBatchHealth, rpc, select, toast, useStore } from '../store.ts';
 import { RpcFailure } from '../transport.ts';
 import { describeStatus, requiredParams, summarize } from '../lib/commandTest.ts';
 import type { TestOutcome } from '../lib/commandTest.ts';
@@ -26,16 +26,19 @@ async function quickTest(c: Command): Promise<void> {
 
 export function Sidebar() {
   const [tab, setTab] = useState<'dev' | 'cmd' | 'scene' | 'trig'>('dev');
-  const project = useStore((s) => s.project)!;
+  const project = useStore(displayedProject)!;
+  const readonly = useStore(viewingRuntime);
   const sel = useStore((s) => s.sel);
   const health = useStore((s) => s.status?.engine?.devices);
 
   const addDevice = () => {
+    if (!beginDraft()) return;
     const id = genId('d');
     edit((p) => { p.devices.push({ id, name: '新设备', ip: '192.168.1.100', color: GROUP_COLORS[p.devices.length % GROUP_COLORS.length], format: 'ascii', terminator: 'none' }); });
     select({ kind: 'device', id });
   };
   const addCommand = () => {
+    if (!beginDraft()) return;
     const id = genId('cmd');
     edit((p) => {
       const first = p.devices[0];
@@ -46,6 +49,7 @@ export function Sidebar() {
     select({ kind: 'command', id });
   };
   const addScene = () => {
+    if (!beginDraft()) return;
     const id = genId('scene');
     edit((p) => {
       (p.scenes ??= []).push({ id, name: '新场景', actions: [] });
@@ -53,6 +57,7 @@ export function Sidebar() {
     select({ kind: 'scene', id });
   };
   const addTrigger = () => {
+    if (!beginDraft()) return;
     const id = genId('tr');
     edit((p) => {
       p.triggers.push({ id, name: '新触发器', port: 9000, allowFrom: ['192.168.1.0/24'], match: { kind: 'exact', format: 'ascii', pattern: 'GO' }, actions: [] });
@@ -71,7 +76,7 @@ export function Sidebar() {
       <div className="sidebody">
         {tab === 'dev' ? (
           <>
-            <div className="sechead">UDP 设备 <span><button title="批量设置在线检测（Ping / UDP 探测、间隔）" onClick={() => openBatchHealth()} disabled={project.devices.length === 0}>批量检测…</button> <button className="ico add" title="新建设备" onClick={addDevice}><Icon name="plus" size={14} /></button></span></div>
+            <div className="sechead">UDP 设备 <span><button title="批量设置在线检测（Ping / UDP 探测、间隔）" onClick={() => openBatchHealth()} disabled={readonly || project.devices.length === 0}>批量检测…</button> <button className="ico add" title="新建设备" onClick={addDevice}><Icon name="plus" size={14} /></button></span></div>
             {project.devices.length === 0 && <div className="empty">还没有设备。点右上角＋添加接收端的 IP 和端口。</div>}
             {project.devices.map((d) => (
               <div key={d.id} className={`dev ${sel?.kind === 'device' && sel.id === d.id ? 'sel' : ''}`} onClick={() => select({ kind: 'device', id: d.id })}>
@@ -93,7 +98,7 @@ export function Sidebar() {
             {(project.commands ?? []).map((c) => (
               <div key={c.id} className={`dev ${sel?.kind === 'command' && sel.id === c.id ? 'sel' : ''}`} onClick={() => select({ kind: 'command', id: c.id })}>
                 <div className="n">{c.name}{(c.params ?? []).length > 0 && <span className="tag r">{(c.params ?? []).length} 参数</span>}
-                  <button className="ico rowtest" title="立即发送一次这条指令（真的会发出）" onClick={(e) => { e.stopPropagation(); void quickTest(c); }}><Icon name="play" size={11} />测试</button></div>
+                  <button className="ico rowtest" disabled={readonly} title="立即发送一次这条指令（真的会发出）" onClick={(e) => { e.stopPropagation(); void quickTest(c); }}><Icon name="play" size={11} />测试</button></div>
                 <div className="a mono"><span>{c.payload.length > 26 ? c.payload.slice(0, 26) + '…' : c.payload}</span><span>{c.protocol && <span className="tag r">{c.protocol === 'pjlink' ? 'PJLink' : 'TCP'}</span>}<span className={`tag ${c.format === 'hex' ? 'hex' : 'asc'}`}>{c.format.toUpperCase()}</span></span></div>
                 <div className="a"><span className="dim">{c.targets.map((t) => (t.startsWith('tag:') ? `标签 ${t.slice(4)}` : (project.devices.find((d) => d.id === t)?.name ?? '？'))).join('、') || '（无目标）'}{c.port ? ` :${c.port}` : ''}</span></div>
               </div>

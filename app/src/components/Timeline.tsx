@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, MouseEvent } from 'react';
 import type { Cue, DayKind, Project, Timeline as TimelineModel } from '@engine/types.ts';
 import { formatTime, parseTime } from '@engine/time.ts';
-import { edit, engineNow, followMode, redo, select, setMode, syncActiveMode, undo, useStore } from '../store.ts';
+import { displayedProject, viewingRuntime, edit, engineNow, followMode, redo, select, setMode, syncActiveMode, undo, useStore } from '../store.ts';
 import type { Selection } from '../store.ts';
 import { genId, ruleText } from '../lib/labels.ts';
 import { deviceColor, GROUP_COLORS, modeColor } from '../lib/colors.ts';
@@ -41,7 +41,8 @@ const tickLabel = (ms: number, step: number) => {
 };
 
 export function Timeline() {
-  const project = useStore((s) => s.project)!;
+  const project = useStore(displayedProject)!;
+  const readonly = useStore(viewingRuntime);
   const engine = useStore((s) => s.status?.engine ?? null);
   const sel = useStore((s) => s.sel);
   const modeId = useStore((s) => s.modeId);
@@ -59,7 +60,7 @@ export function Timeline() {
   const anchor = useRef<{ ms: number; x: number } | null>(null);
   const tl = project.timelines.find((t) => t.id === modeId)
     ?? project.timelines.find((t) => engine?.timelines.some((e) => e.id === t.id && e.active)) ?? project.timelines[0];
-  const info = engine?.timelines.find((e) => e.id === tl?.id);
+  const info = readonly ? engine?.timelines.find((e) => e.id === tl?.id) : undefined;
   const color = tl ? modeColor(project, tl.id) : GROUP_COLORS[0]!;
   const group = project.groups.find((g) => g.id === tl?.groupId);
   const tracks = useMemo(() => tl ? targetTracks(project, tl) : [], [project, tl]);
@@ -128,7 +129,7 @@ export function Timeline() {
   }, [view, pxh, step]);
 
   const addCue = (e: MouseEvent<HTMLDivElement>, target?: string) => {
-    if (!tl || (e.target as HTMLElement).closest('.cue, .cue-more')) return;
+    if (readonly || !tl || (e.target as HTMLElement).closest('.cue, .cue-more')) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const ms = clampMs(Math.round((((e.clientX - rect.left) / pxh) * HOUR) / snap) * snap);
     const id = genId('c');
@@ -170,7 +171,7 @@ export function Timeline() {
     <div className="modebar">
       <div className="mode-tabs" role="tablist" aria-label="日程模式">
         {project.timelines.map((mode) => {
-          const active = engine?.timelines.find((e) => e.id === mode.id)?.active;
+          const active = readonly && engine?.timelines.find((e) => e.id === mode.id)?.active;
           const g = project.groups.find((x) => x.id === mode.groupId);
           return <button key={mode.id} role="tab" aria-selected={tl?.id === mode.id} data-mode-id={mode.id}
             className={`mode-tab ${tl?.id === mode.id ? 'on' : ''}`} style={{ '--tab-color': modeColor(project, mode.id) } as CSSProperties}
@@ -183,9 +184,9 @@ export function Timeline() {
         {!project.timelines.length && <div className="empty">还没有模式。新建模式，或使用下面的常用日程模板。</div>}
       </div>
       <div className="mode-actions">
-          <button className="primary" onClick={() => setModeDialog(true)}><Icon name="plus" size={14} />模式</button>
-          <button onClick={copy} disabled={!tl} title="复制当前模式（副本默认禁用）"><Icon name="copy" size={14} />复制</button>
-          <button title="新建模式组" onClick={() => {
+          <button className="primary" disabled={readonly} onClick={() => setModeDialog(true)}><Icon name="plus" size={14} />模式</button>
+          <button onClick={copy} disabled={readonly || !tl} title="复制当前模式（副本默认禁用）"><Icon name="copy" size={14} />复制</button>
+          <button title="新建模式组" disabled={readonly} onClick={() => {
             const id = genId('g');
             edit((p) => p.groups.push({ id, name: '新模式组', mode: 'exclusive' }));
             select({ kind: 'group', id });
@@ -194,8 +195,8 @@ export function Timeline() {
     </div>
     <div className="toolbar timeline-toolbar">
       <div className="tbgroup">
-        <button className="ico" disabled={!canUndo} onClick={undo} title="撤销编辑（Ctrl / Cmd+Z）"><Icon name="undo" size={15} /></button>
-        <button className="ico" disabled={!canRedo} onClick={redo} title="重做编辑（Ctrl / Cmd+Shift+Z）"><Icon name="redo" size={15} /></button>
+        <button className="ico" disabled={readonly || !canUndo} onClick={undo} title="撤销编辑（Ctrl / Cmd+Z）"><Icon name="undo" size={15} /></button>
+        <button className="ico" disabled={readonly || !canRedo} onClick={redo} title="重做编辑（Ctrl / Cmd+Shift+Z）"><Icon name="redo" size={15} /></button>
       </div>
       <span className="sep" />
       <div className="tbgroup zoomgroup">
@@ -243,7 +244,7 @@ export function Timeline() {
             <div className="track master-track" style={{ width: W, height: masterHeight }} onDoubleClick={(e) => addCue(e)}>
               {mainShown.map(({ mark, row, flip, w }) => <CueMark key={mark.key} tl={tl} mark={mark} color={color} pxh={pxh} snap={snap} row={row} flip={flip} w={w} sel={sel} master />)}
               <MoreBadges layout={mainLayout} onFocus={focusAt} />
-              {!tl.cues.length && <span className="track-empty">双击主时间轴新建多目标事件，或双击下面的目标小时间轴</span>}
+              {!tl.cues.length && <span className="track-empty">{readonly ? '运行配置没有事件点；切到编辑草稿可新增' : '双击主时间轴新建多目标事件，或双击下面的目标小时间轴'}</span>}
             </div>
           </div>
           {expanded && filtered.map((track) => <TrackRow key={track.device.id} track={track} tl={tl} project={project}
@@ -252,10 +253,10 @@ export function Timeline() {
           {expanded && filtered.length === 0 && <div className="empty big">{project.devices.length ? '没有匹配的目标，调整筛选或关闭「隐藏空轨」。' : '先在左侧添加设备，每个设备会自动出现一条目标小时间轴。'}</div>}
           <Playhead pxh={pxh} width={W} />
         </> : <div className="timeline-welcome"><b>一个模式，管理所有目标的日程</b><p>主时间轴汇总事件；目标小时间轴按设备展示。同组模式根据日期自动切换。</p>
-          <button className="primary" onClick={bootstrap}>创建工作日 / 周末 / 节假日模式</button><button onClick={() => setModeDialog(true)}>从空模式开始</button></div>}
+          <button className="primary" disabled={readonly} onClick={bootstrap}>创建工作日 / 周末 / 节假日模式</button><button disabled={readonly} onClick={() => setModeDialog(true)}>从空模式开始</button></div>}
       </div>
     </div>
-    <div className="timeline-footer"><span>{overflow ? <span className="err">{overflow} 个目标动作超出当天，已标红；运行时会跳过</span> : '双击新建 · 拖动整体移动事件 · Ctrl / Cmd+滚轮缩放'}</span>
+    <div className="timeline-footer"><span>{overflow ? <span className="err">{overflow} 个目标动作超出当天，已标红；运行时会跳过</span> : readonly ? '运行配置只读 · 点击查看详情 · Ctrl / Cmd+滚轮缩放' : '双击新建 · 拖动整体移动事件 · Ctrl / Cmd+滚轮缩放'}</span>
       <span>{tl ? `24 小时 · ${tracks.reduce((n, t) => n + t.marks.length, 0)} 个目标动作标记` : ''}</span></div>
     {modeDialog && <ModeDialog project={project} onClose={() => setModeDialog(false)} />}
   </div>;
@@ -275,6 +276,7 @@ function TrackRow({ track, tl, project, color, pxh, snap, W, sel, onAdd, onFocus
   track: TargetTrack; tl: TimelineModel; project: Project; color: string; pxh: number; snap: number; W: number; stepPx?: number;
   sel: Selection; onAdd: (e: MouseEvent<HTMLDivElement>) => void; onFocus: (ms: number) => void;
 }) {
+  const readonly = useStore(viewingRuntime);
   const { device, marks } = track;
   const layout = layoutChips(marks, pxh, CHIP_W, 6, CHIP_MIN_W);
   const shown = layout.filter((m) => m.row < MAX_ROWS);
@@ -282,7 +284,7 @@ function TrackRow({ track, tl, project, color, pxh, snap, W, sel, onAdd, onFocus
   const selected = sel?.kind === 'device' && sel.id === device.id;
   return <div className={`trow target-row ${device.enabled === false ? 'dis' : ''} ${selected ? 'rowsel' : ''}`} data-target-id={device.id} style={{ '--target-color': color } as CSSProperties}>
     <div className={`hcell ${selected ? 'sel' : ''}`} style={{ width: LABEL_W, height }} onClick={() => select({ kind: 'device', id: device.id })}>
-      <div className="n"><input type="color" className="track-color" aria-label={`${device.name} 轨道颜色`} title="设置这个目标的颜色"
+      <div className="n"><input type="color" className="track-color" disabled={readonly} aria-label={`${device.name} 轨道颜色`} title="设置这个目标的颜色"
         value={deviceColor(project, device.id)} onClick={(e) => e.stopPropagation()}
         onChange={(e) => edit((p) => { p.devices.find((d) => d.id === device.id)!.color = e.target.value; })} />
         <span className="name">{device.name}</span><span className="tag">{marks.length}</span></div>
@@ -291,7 +293,7 @@ function TrackRow({ track, tl, project, color, pxh, snap, W, sel, onAdd, onFocus
     <div className="track target-track" style={{ width: W, height }} onDoubleClick={onAdd}>
       {shown.map(({ mark, row, flip, w }) => <CueMark key={mark.key} tl={tl} mark={mark} color={color} pxh={pxh} snap={snap} row={row} flip={flip} w={w} sel={sel} />)}
       <MoreBadges layout={layout} onFocus={onFocus} />
-      {!marks.length && <span className="track-empty">双击为 {device.name} 新建事件点</span>}
+      {!marks.length && <span className="track-empty">{readonly ? '运行配置没有目标动作' : `双击为 ${device.name} 新建事件点`}</span>}
     </div>
   </div>;
 }
@@ -316,6 +318,7 @@ function MoreBadges({ layout, onFocus }: { layout: { mark: TargetMark; row: numb
 function CueMark({ tl, mark, color, pxh, snap, row, flip, w, sel, master = false }: {
   tl: TimelineModel; mark: TargetMark; color: string; pxh: number; snap: number; row: number; flip: boolean; w: number; sel: Selection; master?: boolean;
 }) {
+  const readonly = useStore(viewingRuntime);
   const { cue } = mark;
   const [drag, setDrag] = useState<number | null>(null);
   const start = useRef<{ x: number; ms: number; moved: boolean; next: number | null } | null>(null);
@@ -328,13 +331,13 @@ function CueMark({ tl, mark, color, pxh, snap, row, flip, w, sel, master = false
   return <div className={`cue ${master ? 'master-cue' : 'target-cue'} ${selected ? 'sel' : ''} ${mark.disabled ? 'off' : ''} ${mark.pending ? 'pending' : ''} ${ms >= DAY ? 'overflow' : ''} ${flip || clampMs(ms) / HOUR * pxh + w > 24 * pxh ? 'flip' : ''} ${w < 96 ? 'narrow' : ''} ${w < 62 ? 'tiny' : ''}`}
     data-cue-id={cue.id} data-action={mark.actionId} data-time={formatTime(base)} role="button" tabIndex={0}
     aria-label={`${cue.name} ${tickLabel(ms, 1)}${mark.pending ? ' 待配置' : ''}`}
-    title={`${cue.name}\n事件时间：${formatTime(base)}\n${master ? mark.label : `首次发送：${formatTime(ms)} · ${mark.label}${mark.repeat > 1 ? ` · 重复 ${mark.repeat} 次` : ''}`}\n拖动会整体移动此事件的全部动作和关联目标${ms >= DAY ? '\n已超出当天，不会执行' : ''}`}
+    title={`${cue.name}\n事件时间：${formatTime(base)}\n${master ? mark.label : `首次发送：${formatTime(ms)} · ${mark.label}${mark.repeat > 1 ? ` · 重复 ${mark.repeat} 次` : ''}`}\n${readonly ? '引擎配置只读；点击查看详情' : '拖动会整体移动此事件的全部动作和关联目标'}${ms >= DAY ? '\n已超出当天，不会执行' : ''}`}
     style={{ left: (clampMs(ms) / HOUR) * pxh, top: PAD_TOP + row * ROW_H, width: w, '--cue-color': color } as CSSProperties}
     onClick={choose} onKeyDown={(e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(); }
-      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); choose(); commit(base + (e.key === 'ArrowLeft' ? -snap : snap) * (e.shiftKey ? 10 : 1)); }
+      if (!readonly && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) { e.preventDefault(); choose(); commit(base + (e.key === 'ArrowLeft' ? -snap : snap) * (e.shiftKey ? 10 : 1)); }
     }} onPointerDown={(e) => {
-      if (e.button !== 0) return;
+      if (readonly || e.button !== 0) return;
       e.stopPropagation();
       e.currentTarget.setPointerCapture(e.pointerId);
       start.current = { x: e.clientX, ms: base, moved: false, next: null };

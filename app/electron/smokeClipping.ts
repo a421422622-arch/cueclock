@@ -33,6 +33,7 @@ export async function smokeClipping(win: BrowserWindow, outputDir?: string, brea
     checks.push({ name, findings, stress, top });
     if (outputDir) writeFileSync(path.join(outputDir, `${name}.png`), (await win.webContents.capturePage()).toPNG());
   };
+  await click('.viewtabs span', '运行总览');
   // 同一检测器必须能使断言失败；这里真正压坏已渲染的总览卡片。
   await js(`(() => { const s = document.createElement('style'); s.id = 'smoke-broken-css'; s.textContent = '.overview-cards article { height: 8px !important; max-height: 8px !important; padding: 0 !important; overflow: hidden !important; }'; document.head.append(s); })()`);
   await settle();
@@ -56,7 +57,10 @@ export async function smokeClipping(win: BrowserWindow, outputDir?: string, brea
     win.setSize(width, width === 1440 ? 900 : 700); await pause(900); await settle();
     const shot = (name: string) => capture(`${width}-${name}`);
     await click('.viewtabs span', '运行总览'); await shot('overview');
-    await click('.viewtabs span', '模式与时间轴'); await shot('timeline');
+    await click('.viewtabs span', '模式与时间轴');
+    await click('.configuration-switch button', '查看正在运行'); await pause(150); await shot('runtime-timeline');
+    await click('.mode-master .cue'); await shot('runtime-inspector');
+    await click('.configuration-switch button', '编辑草稿'); await shot('timeline');
     await click('.master-label .name'); await shot('inspector-mode');
     await click('button[title="编辑模式组"]'); await shot('inspector-group');
     await click('.mode-master .cue'); await shot('inspector-cue');
@@ -70,10 +74,11 @@ export async function smokeClipping(win: BrowserWindow, outputDir?: string, brea
     if (!await js<boolean>(`!!document.querySelector('.sidebody .dev')`)) await click('button[title="新建触发器"]');
     else await click('.sidebody .dev');
     await shot('inspector-trigger');
-    await click('.viewtabs span', '操作面板'); await shot('pad-operation');
+    await click('.viewtabs span', '操作面板'); await click('.padbar .seg span', '操作'); await shot('pad-operation');
     await click('.padbar .seg span', '编辑'); await click('.padtabs > span'); await shot('inspector-pad');
     for (const kind of ['button', 'toggle', 'slider']) { await click(`.padgrid .padtile.${kind}:not(.add)`); await shot(`inspector-pad-${kind}`); }
     await click('.padbar .seg span', '操作');
+    await click('.configuration-switch button', '编辑草稿');
     await click('.projbtn'); await shot('configuration-files');
     await click('#configuration-software-tab'); await pause(250); await shot('configuration-software');
     await click('.configuration-dialog .mf button', '关闭');

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { formatClock } from '@engine/time.ts';
 import type { LogEntry } from '@engine/engine.ts';
-import { markAlertsSeen, rpc, select, showLogTab, showPadTile, toast, toggleLog, useStore } from '../store.ts';
+import { displayedProject, beginDraft, markAlertsSeen, rpc, select, showLogTab, showPadTile, toast, toggleLog, useStore } from '../store.ts';
 import { ALERT_LABEL, mergeAlerts, unseenCount } from '../lib/alerts.ts';
 import { RESULT_LABEL, RESULT_TONE } from '../lib/labels.ts';
 import { RpcFailure } from '../transport.ts';
@@ -154,6 +154,7 @@ function Alerts() {
 function Issues() {
   const issues = useStore((s) => s.issues);
   const goto = (path: string) => {
+    if (!beginDraft()) return;
     const [kind, a, b] = path.split('/');
     if (kind === 'devices' && a) select({ kind: 'device', id: a });
     else if (kind === 'triggers' && a) select({ kind: 'trigger', id: a });
@@ -173,14 +174,14 @@ function Issues() {
           <span>{i.message}</span>
         </div>
       ))}
-      {issues.some((i) => i.level === 'error') && <div className="empty">有错误时修改不会保存到引擎；修好后会自动保存。</div>}
+      {issues.some((i) => i.level === 'error') && <div className="empty">有错误时无法应用到引擎；修好后请检查并应用。</div>}
     </div>
   );
 }
 
 function TestSend() {
   const locked = useStore((s) => s.lock.enabled && !s.lock.unlocked);
-  const project = useStore((s) => s.project)!;
+  const project = useStore(displayedProject)!;
   const [dev, setDev] = useState<string>('');
   const [ip, setIp] = useState('127.0.0.1');
   const [port, setPort] = useState('5000');

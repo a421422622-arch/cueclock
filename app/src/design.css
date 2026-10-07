@@ -438,3 +438,18 @@ button.link { background: none; border: 0; }
 .fv > .chips { min-width: 0; max-width: 100%; }
 .chips > .chipadd { min-width: 0; max-width: 100%; }
 .chips > .chip { max-width: 100%; overflow-wrap: anywhere; }
+
+/* 配置来源：长名称完整换行，运行与草稿始终可辨。 */
+.configuration-view { display: flex; align-items: center; gap: 12px; padding: 8px 16px; flex-shrink: 0; border-bottom: 1px solid var(--line); background: var(--s1); }
+.configuration-switch { display: flex; flex-shrink: 0; gap: 4px; }
+.configuration-switch button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); border-color: var(--accent); }
+.configuration-source { display: flex; flex: 1; min-width: 0; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; overflow-wrap: anywhere; }
+.configuration-source strong { white-space: nowrap; }
+.configuration-source small { color: var(--muted); }
+.runtime-confirmed { color: var(--ok); }
+.inspector-source { padding: 8px 16px; color: var(--muted); font-size: 12px; }
+.inspector-fields, fieldset.daybtns { min-width: 0; border: 0; margin: 0; padding: 0; }
+.inspector-fields:disabled input, .inspector-fields:disabled select, .inspector-fields:disabled textarea { color: var(--ink); opacity: 1; }
+.configuration-view.runtime ~ .body .cue { cursor: pointer; }
+
+.inspector-fields:disabled .seg { pointer-events: none; }

@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react';
 import { discardDraft, handleEditShortcut, init, lockNow, openSettings, openUnlock, reloadFromEngine, restoreDraft, setView, toast, useStore } from './store.ts';
 import { ApplyDialog } from './components/ApplyDialog.tsx';
 import { Overview } from './components/Overview.tsx';
+import { RuntimeConfiguration } from './components/RuntimeConfiguration.tsx';
 import { TopBar } from './components/TopBar.tsx';
 import { Sidebar } from './components/Sidebar.tsx';
 import { Timeline } from './components/Timeline.tsx';
@@ -85,6 +86,7 @@ export function App() {
     <div className="app">
       <TopBar />
       <EngineVersionBanner />
+      <RuntimeConfiguration />
       {lock.enabled && !lock.unlocked && (
         <div className="banner warn">
           🔒 编辑已锁定，当前只读：可以查看日程、日志，也可以暂停自动日程、操作面板和接管设备；修改配置需要先解锁。

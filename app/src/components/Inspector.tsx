@@ -8,7 +8,7 @@ import { IntervalPicker } from './IntervalPicker.tsx';
 import type { Pad, PadTile } from '@engine/types.ts';
 import { changeKind, duplicateTile, groupNames, moveTile, sliderOutput, sliderRange, sliderSteps } from '../lib/pad.ts';
 import { GROUP_COLORS } from '../lib/colors.ts';
-import { setPadId } from '../store.ts';
+import { displayedProject, viewingRuntime, beginDraft, setPadId } from '../store.ts';
 import { formatTime, parseTime } from '@engine/time.ts';
 import { isDateKey } from '@engine/calendar.ts';
 import { edit, engineNow, openBatchHealth, rpc, select, toast, useStore } from '../store.ts';
@@ -24,10 +24,11 @@ import { Icon } from './Icon.tsx';
 
 export function Inspector() {
   const sel = useStore((s) => s.sel);
+  const readonly = useStore(viewingRuntime);
   const locked = useStore((s) => s.lock.enabled && !s.lock.unlocked);
-  const project = useStore((s) => s.project)!;
+  const project = useStore(displayedProject)!;
   let title = '检查器';
-  let body: React.ReactNode = <div className="empty big">选中模式、目标或事件点进行编辑。双击目标小时间轴可以为该目标新建事件点。</div>;
+  let body: React.ReactNode = <div className="empty big">选中模式、目标或事件点查看详情。切到编辑草稿后可修改；双击目标小时间轴可新建事件点。</div>;
 
   if (sel?.kind === 'cue') {
     const tl = project.timelines.find((t) => t.id === sel.timelineId);
@@ -63,7 +64,8 @@ export function Inspector() {
   return (
     <section className="insp">
       <h3>{title}</h3>
-      <div className="ibody" inert={locked}>{body}</div>
+      {readonly && <div className="inspector-source">引擎配置，只读 <button onClick={beginDraft}>编辑草稿</button></div>}
+      <div className="ibody" inert={locked}><fieldset className="inspector-fields" disabled={readonly}>{body}</fieldset></div>
     </section>
   );
 }
@@ -71,8 +73,8 @@ export function Inspector() {
 // ───────────── 事件点 ─────────────
 
 function CueInspector({ timelineId, cueId }: { timelineId: string; cueId: string }) {
-  const project = useStore((s) => s.project)!;
-  const info = useStore((s) => s.status?.engine?.timelines.find((t) => t.id === timelineId));
+  const project = useStore(displayedProject)!;
+  const info = useStore((s) => s.configurationView === 'runtime' ? s.status?.engine?.timelines.find((t) => t.id === timelineId) : undefined);
   const tl = project.timelines.find((t) => t.id === timelineId)!;
   const cue = tl.cues.find((c) => c.id === cueId)!;
   const sel = useStore((s) => s.sel);
@@ -151,8 +153,8 @@ const WEEK = ['日', '一', '二', '三', '四', '五', '六'];
 const DAY_KINDS: DayKind[] = ['workday', 'makeupWorkday', 'weekend', 'holiday'];
 
 function TimelineInspector({ id }: { id: string }) {
-  const project = useStore((s) => s.project)!;
-  const info = useStore((s) => s.status?.engine?.timelines.find((t) => t.id === id));
+  const project = useStore(displayedProject)!;
+  const info = useStore((s) => s.configurationView === 'runtime' ? s.status?.engine?.timelines.find((t) => t.id === id) : undefined);
   const tl = project.timelines.find((t) => t.id === id)!;
   const group = project.groups.find((g) => g.id === tl.groupId);
   const patch = (fn: (t: Timeline) => void) => edit((p) => { const t = p.timelines.find((x) => x.id === id); if (t) fn(t); });
@@ -251,7 +253,7 @@ function DateList({ label, values, onChange }: { label: string; values?: string[
 }
 
 function GroupInspector({ id }: { id: string }) {
-  const project = useStore((s) => s.project)!;
+  const project = useStore(displayedProject)!;
   const g = project.groups.find((x) => x.id === id)!;
   const patch = (fn: (g: Group) => void) => edit((p) => { const x = p.groups.find((y) => y.id === id); if (x) fn(x); });
   return (
@@ -279,7 +281,7 @@ const IPV4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
 const validIp = (v: string) => { const m = IPV4.exec(v); return m && m.slice(1).every((x) => Number(x) <= 255) ? null : '不是合法的 IPv4 地址'; };
 
 function DeviceInspector({ id }: { id: string }) {
-  const project = useStore((s) => s.project)!;
+  const project = useStore(displayedProject)!;
   const d = project.devices.find((x) => x.id === id)!;
   const patch = (fn: (d: Device) => void) => edit((p) => { const x = p.devices.find((y) => y.id === id); if (x) fn(x); });
   const used =
@@ -348,7 +350,7 @@ function DeviceInspector({ id }: { id: string }) {
 // ───────────── 触发器 ─────────────
 
 function TriggerInspector({ id }: { id: string }) {
-  const project = useStore((s) => s.project)!;
+  const project = useStore(displayedProject)!;
   const t = project.triggers.find((x) => x.id === id)!;
   const patch = (fn: (t: Trigger) => void) => edit((p) => { const x = p.triggers.find((y) => y.id === id); if (x) fn(x); });
   const any = t.allowFrom.includes('*');
@@ -400,7 +402,7 @@ function TriggerInspector({ id }: { id: string }) {
 // ───────────── UDP 指令库 ─────────────
 
 function CommandInspector({ id }: { id: string }) {
-  const project = useStore((s) => s.project)!;
+  const project = useStore(displayedProject)!;
   const cmd = (project.commands ?? []).find((c) => c.id === id)!;
   const patch = (fn: (c: Command) => void) => edit((p) => { const c = p.commands?.find((x) => x.id === id); if (c) fn(c); });
   const params = cmd.params ?? [];
@@ -475,7 +477,7 @@ function CommandInspector({ id }: { id: string }) {
 // ───────────── 场景库 ─────────────
 
 function SceneInspector({ id }: { id: string }) {
-  const project = useStore((s) => s.project)!;
+  const project = useStore(displayedProject)!;
   const scene = (project.scenes ?? []).find((c) => c.id === id)!;
   const patch = (fn: (s: typeof scene) => void) => edit((p) => { const x = p.scenes?.find((y) => y.id === id); if (x) fn(x); });
   const refs = sceneRefCount(project, id);
@@ -559,7 +561,7 @@ function FeedbackSection({ device, patch }: { device: Device; patch: (fn: (d: De
 
 /** 每台设备单独选检测方式：不检测 / Ping（只判网络通不通）/ UDP 探测（发只读查询并校验回包，最准）。 */
 function HealthSection({ device: d, patch }: { device: Device; patch: (fn: (d: Device) => void) => void }) {
-  const project = useStore((s) => s.project)!;
+  const project = useStore(displayedProject)!;
   const info = useStore((s) => s.status?.engine?.devices.find((x) => x.id === d.id));
   const h = d.health;
   const mode: HealthMode = h?.mode ?? 'none';
@@ -638,7 +640,7 @@ function HealthSection({ device: d, patch }: { device: Device; patch: (fn: (d: D
 // ───────────── 操作面板 ─────────────
 
 function PadInspector({ id }: { id: string }) {
-  const project = useStore((s) => s.project)!;
+  const project = useStore(displayedProject)!;
   const pad = (project.pads ?? []).find((p) => p.id === id)!;
   const patch = (fn: (p: Pad) => void) => edit((x) => { const p = x.pads?.find((q) => q.id === id); if (p) fn(p); });
   return (
@@ -683,7 +685,7 @@ function SliderFields({ tile, patch }: { tile: PadTile; patch: (fn: (t: PadTile)
 }
 
 function PadTileInspector({ padId, tileId }: { padId: string; tileId: string }) {
-  const project = useStore((s) => s.project)!;
+  const project = useStore(displayedProject)!;
   const draftPending = useStore((s) => s.saveState !== 'saved');
   const pad = project.pads!.find((p) => p.id === padId)!;
   const tile = pad.tiles.find((t) => t.id === tileId)!;

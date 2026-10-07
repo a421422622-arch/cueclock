@@ -38,7 +38,7 @@ interface Backup { name: string; t: number; size: number; projectName: string; s
 
 /** 从自动备份恢复配置。恢复前会先备份当前版本，所以恢复本身也能撤回。 */
 export function BackupDialog() {
-  const currentName = useStore((s) => s.project?.name);
+  const currentName = useStore((s) => s.runningProject?.name);
   const [list, setList] = useState<Backup[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
