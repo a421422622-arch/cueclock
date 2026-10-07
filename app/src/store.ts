@@ -9,6 +9,7 @@ import { readRuntimeConfig, snapshotCurrent, appliedSnapshotMatches, sameConfigu
 import type { RuntimeConfigSnapshot } from './lib/runtimeConfig.ts';
 import { normalizeEngineStatus } from './lib/status.ts';
 import { diffToday } from './lib/todayDiff.ts';
+import { LOG_BATCH_MS, mergeLogBatch } from './lib/logBuffer.ts';
 import { pauseSummary } from './lib/pauseSummary.ts';
 import type { PauseSummary } from './lib/pauseSummary.ts';
 import type { TodayDiff } from './lib/todayDiff.ts';
@@ -332,6 +333,23 @@ async function resync(): Promise<void> {
   else scheduleSave(0);
 }
 
+// ───────────── 日志批量入库 ─────────────
+// 日志可能一秒来上百条（一个场景发给几十台设备、触发包连发）。逐条写进状态会让界面每条都重算一遍、几乎冻结（实测每秒 100 条时最长卡 13 秒），
+// 所以先攒着，每 200ms 合并成一次更新。顺序不变，数据不丢；上限与原来一致（超过 2000 条留最近 1500 条）。
+let pendingLogs: LogEntry[] = [];
+let logTimer: ReturnType<typeof setTimeout> | undefined;
+function queueLog(e: LogEntry): void {
+  pendingLogs.push(e);
+  logTimer ??= setTimeout(flushLogs, LOG_BATCH_MS);
+}
+export function flushLogs(): void {
+  clearTimeout(logTimer); logTimer = undefined;
+  if (!pendingLogs.length) return;
+  const batch = pendingLogs; pendingLogs = [];
+  const merged = mergeLogBatch(state.logs, batch);
+  set({ logs: merged });
+}
+
 export async function init(): Promise<void> {
   const bridge = appBridge;
   if (bridge) {
@@ -348,8 +366,7 @@ export async function init(): Promise<void> {
   });
   transport.onEvent((event, data) => {
     if (event === 'log') {
-      const logs = state.logs.length >= 2000 ? state.logs.slice(-1500) : state.logs;
-      set({ logs: [...logs, data as LogEntry] });
+      queueLog(data as LogEntry);
     } else if (event === 'status') {
       applyStatus(data as DaemonStatus);
     } else if (event === 'project-changed') {

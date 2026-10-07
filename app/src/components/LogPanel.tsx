@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { logId } from '../lib/logBuffer.ts';
 import { formatClock } from '@engine/time.ts';
 import type { LogEntry } from '@engine/engine.ts';
 import { displayedProject, beginDraft, markAlertsSeen, rpc, select, showLogTab, showPadTile, toast, toggleLog, useStore } from '../store.ts';
@@ -82,13 +83,13 @@ function Logs() {
       </div>
       <div className="logbody" ref={body} onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24; }}>
         {shown.length === 0 && <div className="empty">暂无日志。</div>}
-        {shown.map((l, i) => <LogRow key={`${l.t}-${i}`} l={l} view={view} />)}
+        {shown.map((l) => <LogRow key={logId(l)} l={l} view={view} />)}
       </div>
     </>
   );
 }
 
-function LogRow({ l, view }: { l: LogEntry; view: 'ascii' | 'hex' }) {
+const LogRow = memo(function LogRow({ l, view }: { l: LogEntry; view: 'ascii' | 'hex' }) {
   const tone = RESULT_TONE[l.result] ?? 'dim';
   const content = l.ascii === undefined ? '' : view === 'hex' ? l.hex : l.ascii;
   const [open, setOpen] = useState(false); // 点一下展开整行（内容与说明很长时默认被截断）
@@ -108,7 +109,7 @@ function LogRow({ l, view }: { l: LogEntry; view: 'ascii' | 'hex' }) {
       </span>
     </div>
   );
-}
+});
 
 type AlertFilter = 'all' | 'attention' | 'error';
 

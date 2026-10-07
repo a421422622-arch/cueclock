@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { Action, CommandAction, Project, MatchKind, ReplyCheck, SendFormat, SendProtocol, Terminator, UdpAction } from '@engine/types.ts';
 import { CHECKSUM_ALGOS } from '@engine/checksum.ts';
 import type { ChecksumAlgo, ChecksumSpec } from '@engine/checksum.ts';
@@ -159,6 +160,11 @@ export function SendEditor({
   const term = v.terminator ?? targetDevices[0]?.terminator ?? (pjlink ? 'cr' : 'none');
   const pv = previewPayload(v.format, shown, term, v.checksum);
   const reply = v.reply;
+  // 少用的选项默认收起；只要有任何一项被设置过（非默认值），就自动展开，保证不会「设了却看不见」
+  const advCount = [!!v.sendFrom, !!v.checksum, (v.repeat ?? 1) > 1 || !!v.repeatGapMs, v.chase === true].filter(Boolean).length;
+  const advSet = advCount > 0;
+  const [advOpen, setAdvOpen] = useState(false);
+  const adv = advOpen || advSet;
   const setReply = (r: Partial<ReplyCheck>) => onChange({ reply: { ...(v.reply as ReplyCheck), ...r } });
 
   return (
@@ -228,17 +234,6 @@ export function SendEditor({
       >
         <NumInput value={v.port} min={1} max={65535} width={84} allowEmpty onChange={(port) => onChange({ port })} />
       </Field>
-      {locals.length > 0 && (
-        <Field label="从网卡" hint="默认按目标所在子网自动选；只在需要强制从某块网卡发时才指定">
-          <select value={v.sendFrom ?? ''} onChange={(e) => onChange({ sendFrom: e.target.value || undefined })}>
-            <option value="">自动（按目标子网）</option>
-            {locals.map((a) => (
-              <option key={a} value={a}>{a}</option>
-            ))}
-            {v.sendFrom && !locals.includes(v.sendFrom) && <option value={v.sendFrom}>{v.sendFrom}（未在设置里选中）</option>}
-          </select>
-        </Field>
-      )}
       <Field label="格式">
         <Seg<SendFormat>
           value={v.format}
@@ -266,17 +261,6 @@ export function SendEditor({
           OSC 内容写法：<code>地址 参数 参数…</code>。整数 → int32，小数 → float，其他 → 字符串（带空格用双引号）；<code>i: f: s: b:</code> 指定类型（b: 后跟十六进制），<code>T F N</code> 为真 / 假 / 空。例：<code>/note i:60 f:0.8 s:"hi there"</code>。参数里可写 <code>{'{{参数名}}'}</code>；要保证是小数请写 <code>f:{'{{参数名}}'}</code>。
         </div>
       )}
-      {!pjlink && v.format !== 'osc' && (
-        <Field label="校验和" hint={v.checksum ? `追加 ${CHECKSUM_ALGOS.find((a) => a.value === v.checksum!.algo)?.bytes ?? '?'} 字节（在结束符之前）${v.checksum.skip ? `，不含开头 ${v.checksum.skip} 字节` : ''}。${CHECKSUM_ALGOS.find((a) => a.value === v.checksum!.algo)?.note ?? ''}` : '协议要求在内容末尾带校验字节时选择，软件自动算出并追加'}>
-          <span className="row">
-            <select value={v.checksum?.algo ?? ''} onChange={(e) => onChange({ checksum: e.target.value ? { algo: e.target.value as ChecksumAlgo, ...(v.checksum?.skip ? { skip: v.checksum.skip } : {}) } : undefined })}>
-              <option value="">不追加</option>
-              {CHECKSUM_ALGOS.map((a) => <option key={a.value} value={a.value} title={a.note}>{a.label.split('（')[0]}</option>)}
-            </select>
-            {v.checksum && <>跳过开头 <NumInput value={v.checksum.skip ?? 0} width={44} onChange={(x) => onChange({ checksum: { ...v.checksum!, skip: x || undefined } })} /> 字节</>}
-          </span>
-        </Field>
-      )}
       {testable && (
         <Field label="测试" hint={runtimeOnly(v.payload) ? '内容里有运行时才有的值（$1 捕获或 {{value}} / {{hex}}），不能当场测试' : '真的会发出：目标、端口、内容按上面的设置，偏移不参与'}>
           <span className="testbar inline">
@@ -285,19 +269,11 @@ export function SendEditor({
           </span>
         </Field>
       )}
-      <Field label="时间">
-        <span className="row">
-          {showOffset && (
-            <>偏移 <NumInput value={v.offsetMs ?? 0} onChange={(x) => onChange({ offsetMs: x ?? 0 })} width={58} />ms　</>
-          )}
-          {!reply && (
-            <>
-              重复 <NumInput value={v.repeat ?? 1} min={1} width={40} onChange={(x) => onChange({ repeat: x ?? 1 })} />次
-              间隔 <NumInput value={v.repeatGapMs ?? 0} width={52} onChange={(x) => onChange({ repeatGapMs: x ?? 0 })} />ms
-            </>
-          )}
-        </span>
-      </Field>
+      {showOffset && (
+        <Field label="偏移" hint="相对事件点的时间；整个事件点里的动作可以错开发送">
+          <span className="row"><NumInput value={v.offsetMs ?? 0} onChange={(x) => onChange({ offsetMs: x ?? 0 })} width={64} />ms</span>
+        </Field>
+      )}
       <Field label="回包" hint={reply ? '开启后只发一次，失败按「重试」次数重发；不再按「重复」发送' : '不校验：日志只记「已发送」'}>
         <Seg
           value={reply ? 'on' : 'off'}
@@ -325,9 +301,46 @@ export function SendEditor({
           </div>
         </Field>
       )}
+      <div className="adv-toggle">
+        <button type="button" className="link" aria-expanded={adv} disabled={advSet} onClick={() => setAdvOpen(!advOpen)}>
+          <Icon name="chevron" size={13} style={{ transform: adv ? undefined : 'rotate(-90deg)' }} />高级选项
+        </button>
+        <span className="hint">{advSet ? `已设置 ${advCount} 项，保持展开` : '从网卡、校验和、重复发送、断电恢复'}</span>
+      </div>
+      {adv && <>
+      {locals.length > 0 && (
+        <Field label="从网卡" hint="默认按目标所在子网自动选；只在需要强制从某块网卡发时才指定">
+          <select value={v.sendFrom ?? ''} onChange={(e) => onChange({ sendFrom: e.target.value || undefined })}>
+            <option value="">自动（按目标子网）</option>
+            {locals.map((a) => (
+              <option key={a} value={a}>{a}</option>
+            ))}
+            {v.sendFrom && !locals.includes(v.sendFrom) && <option value={v.sendFrom}>{v.sendFrom}（未在设置里选中）</option>}
+          </select>
+        </Field>
+      )}
+      {!pjlink && v.format !== 'osc' && (
+        <Field label="校验和" hint={v.checksum ? `追加 ${CHECKSUM_ALGOS.find((a) => a.value === v.checksum!.algo)?.bytes ?? '?'} 字节（在结束符之前）${v.checksum.skip ? `，不含开头 ${v.checksum.skip} 字节` : ''}。${CHECKSUM_ALGOS.find((a) => a.value === v.checksum!.algo)?.note ?? ''}` : '协议要求在内容末尾带校验字节时选择，软件自动算出并追加'}>
+          <span className="row">
+            <select value={v.checksum?.algo ?? ''} onChange={(e) => onChange({ checksum: e.target.value ? { algo: e.target.value as ChecksumAlgo, ...(v.checksum?.skip ? { skip: v.checksum.skip } : {}) } : undefined })}>
+              <option value="">不追加</option>
+              {CHECKSUM_ALGOS.map((a) => <option key={a.value} value={a.value} title={a.note}>{a.label.split('（')[0]}</option>)}
+            </select>
+            {v.checksum && <>跳过开头 <NumInput value={v.checksum.skip ?? 0} width={44} onChange={(x) => onChange({ checksum: { ...v.checksum!, skip: x || undefined } })} /> 字节</>}
+          </span>
+        </Field>
+      )}
+      {!reply && (
+        <Field label="重复发送" hint="UDP 不可靠时常用：同一内容连发几次">
+          <span className="row">
+            <NumInput value={v.repeat ?? 1} min={1} width={40} onChange={(x) => onChange({ repeat: x ?? 1 })} />次　间隔 <NumInput value={v.repeatGapMs ?? 0} width={52} onChange={(x) => onChange({ repeatGapMs: x ?? 0 })} />ms
+          </span>
+        </Field>
+      )}
       <Field label="断电恢复" hint="已过去时可作为该目标的恢复状态；未到点动作按原计划继续执行">
         <Check checked={v.chase === true} onChange={(c) => onChange({ chase: c })} label="重启后补发" />
       </Field>
+      </>}
     </>
   );
 }

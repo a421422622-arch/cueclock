@@ -71,8 +71,12 @@ export function CalendarView() {
           <button onClick={() => setMonth(shiftMonth(month, 1))}>▶</button>
           <button onClick={() => { setMonth(todayKey.slice(0, 7)); setSelDate(todayKey); }}>今天</button>
           <span className="grow" />
-          <span className="tb dim">每格显示该配置当天命中的时间线；黄色「无日程」表示该组当天没有任何时间线命中</span>
           <button disabled={readonly} onClick={() => setDialog(true)}>节假日日历…</button>
+        </div>
+        <div className="callegend">
+          <span><i className="hit" />格子里是当天命中的日程模式</span>
+          <span><i className="gap" />黄色「无日程」= 该模式组当天没有任何模式命中，设备当天不会有自动动作</span>
+          <span><i className="today" />今天</span>
         </div>
         <div className="calgrid">
           {WEEK_HEAD.map((w) => <div key={w} className="wkh">周{w}</div>)}
