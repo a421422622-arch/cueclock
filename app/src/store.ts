@@ -63,6 +63,8 @@ export interface AppState {
   deferredApply: { version: number; project: Project; deadline: number; seen: boolean } | null;
   /** 刚恢复自动日程：暂停期间跳过了什么（恢复不补发） */
   resumeSummary: PauseSummary | null;
+  /** 打开着「检测记录」窗口的设备 id */
+  pingMonitorId: string | null;
   logs: LogEntry[];
   sel: Selection;
   modeId: string | null;
@@ -121,6 +123,7 @@ let state: AppState = {
   applyPreview: null,
   deferredApply: null,
   resumeSummary: null,
+  pingMonitorId: null,
   logs: [],
   sel: null,
   modeId: null,
@@ -539,6 +542,8 @@ export async function resumeSchedule(): Promise<void> {
   if (summary.skippedTotal || summary.ignoredPackets) set({ resumeSummary: summary });
   else toast('已恢复自动日程；暂停期间没有跳过任何事件');
 }
+export const openPingMonitor = (id: string) => set({ pingMonitorId: id });
+export const closePingMonitor = () => set({ pingMonitorId: null });
 export const closeResumeSummary = () => set({ resumeSummary: null });
 
 export function showLogTab(tab: AppState['logTab']): void {

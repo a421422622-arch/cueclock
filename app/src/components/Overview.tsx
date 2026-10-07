@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { engineNow, rpc, select, setView, showLogTab, toast, useStore } from '../store.ts';
+import { engineNow, openPingMonitor, rpc, select, setView, showLogTab, toast, useStore } from '../store.ts';
+import { setHealthPaused } from './PingMonitor.tsx';
 import { commandLabel, feedbackLabel, runningModes } from '../lib/operations.ts';
 import { describeDeviceState } from '../lib/deviceState.ts';
 import { Icon } from './Icon.tsx';
@@ -22,6 +23,7 @@ export function Overview() {
   const modes = runningModes(engine?.timelines ?? []);
   const viewed = project.timelines.find((t) => t.id === modeId)?.name;
   const next = engine?.upcoming[0];
+  const checking = project.devices.filter((d) => d.health && d.enabled !== false).length;
   const bad = engine?.devices.filter((d) => d.state === 'offline' || d.state === 'failing').length ?? 0;
   const failures = logs.filter((l) => l.alert && (l.alert.level === 'error' || l.alert.level === 'warn')).slice(-5).reverse();
   const takeover = async (id: string, release: boolean) => {
@@ -36,10 +38,14 @@ export function Overview() {
       <article data-tone={conn !== 'connected' || !engine?.running ? 'bad' : engine.paused ? 'warn' : 'ok'}><header><Icon name="activity" size={15} /><small>自动运行</small></header><strong>{conn !== 'connected' ? '连接中断 · 状态待核实' : !engine?.running ? '引擎未运行' : engine.dryRun ? '模拟模式' : engine.paused ? '已暂停' : '运行中'}</strong><p>暂停自动日程与 UDP 触发，手动操作和在线检测仍可用。</p></article>
       <article data-tone="info"><header><Icon name="calendar" size={15} /><small>今日生效模式</small></header><strong>{modes.join('、') || '无'}</strong><p>{engine?.date} · {engine?.dayKind}{viewed ? `；时间轴查看：${viewed}` : ''}</p></article>
       <article data-tone="info"><header><Icon name="clock" size={15} /><small>下一事件</small></header><strong>{next ? `${next.time} · ${next.cueName}` : '近 8 天没有事件'}</strong><p>{next ? `${next.timelineName} · ${next.date} · ${Math.max(0, Math.ceil((next.epoch - now) / 1000))} 秒后${engine?.paused ? '（暂停中，将跳过）' : ''}` : '可前往模式与时间轴安排日程'}</p></article>
-      <article data-tone={bad ? 'bad' : 'neutral'}><header><Icon name="device" size={15} /><small>设备检测</small></header><strong>{bad ? `${bad} 台异常` : '暂无已检测异常'}</strong><p>{project.devices.filter((d) => d.enabled !== false).length} 台启用设备；未检测不代表在线。</p></article>
+      <article data-tone={engine?.healthPaused ? 'warn' : bad ? 'bad' : 'neutral'}><header><Icon name="device" size={15} /><small>设备检测</small></header><strong>{engine?.healthPaused ? '后台检测已暂停' : bad ? `${bad} 台异常` : '暂无已检测异常'}</strong><p>{engine?.healthPaused ? '不再发 ping / 探测包，状态灯为暂停前的最后结果。' : `${project.devices.filter((d) => d.enabled !== false).length} 台启用设备；未检测不代表在线。`}</p></article>
     </div>
     <div className="overview-heading"><h3>设备与手动接管</h3><label>接管期限 <select value={duration} onChange={(e) => setDuration(Number(e.target.value))}><option value={300000}>5 分钟</option><option value={900000}>15 分钟</option><option value={3600000}>1 小时</option></select></label></div>
     <p className="hint">接管期间该设备的自动日程、UDP 触发和恢复动作跳过；到期恢复后续动作。面板亮灭表示操作记录。</p>
+    {(checking > 0 || engine?.healthPaused) && <div className="health-bar" data-paused={engine?.healthPaused ? 'true' : 'false'}>
+      <span>{engine?.healthPaused ? `后台在线检测已暂停（${checking} 台设备设置了检测）` : `后台正在检测 ${checking} 台设备（Ping / UDP 探测，按各自间隔）`}</span>
+      <button disabled={conn !== 'connected' || !engine?.running} onClick={() => void setHealthPaused(!engine?.healthPaused)} title="暂停后不再自动发 ping / 探测包，省网络和 CPU；手动检测不受影响，设置会保存">{engine?.healthPaused ? '恢复检测' : '暂停全部检测'}</button>
+    </div>}
     <div className="overview-table"><table><thead><tr><th>设备</th><th>网络 / 回包检测</th><th>最后控制操作</th><th>设备状态回读</th><th>控制归属</th></tr></thead><tbody>
       {project.devices.map((d) => {
         const info = engine?.devices.find((x) => x.id === d.id);
@@ -49,7 +55,7 @@ export function Overview() {
         const override = info?.override && info.override.until > now ? info.override : undefined;
         return <tr key={d.id} data-device-id={d.id}>
           <td><button className="link" onClick={() => select({ kind: 'device', id: d.id })}>{d.name}</button><small>{d.ip}:{d.port ?? '指令指定'}</small></td>
-          <td title={light.title}><span className={`devlight ${light.light}`} />{d.enabled === false ? '禁用' : light.label || '未知'}<small>{info?.lastCheckAt ? time(info.lastCheckAt) : '尚无检测结果'}</small></td>
+          <td title={light.title}><span className={`devlight ${light.light}`} />{d.enabled === false ? '禁用' : light.label || '未知'}<small>{info?.lastCheckAt ? time(info.lastCheckAt) : '尚无检测结果'}{d.health && <> · <button className="link" onClick={() => openPingMonitor(d.id)}>检测记录</button></>}{engine?.healthPaused && d.health ? ' · 已暂停' : ''}</small></td>
           <td>{commandLabel(info?.lastCommand)}<small>{info?.lastCommand ? `${time(info.lastCommand.at)} · ${info.lastCommand.source}` : ''}</small></td>
           <td className={feedback?.stale ? 'warnc' : ''}>{feedbackLabel(feedback)}<small>{feedback ? `${time(feedback.at)} · 来自已校验回包` : '需配置状态查询与解析规则'}</small></td>
           <td>{override ? `手动接管至 ${time(override.until)}` : '自动日程'}<small><button disabled={busy === d.id || conn !== 'connected' || !engine?.running || d.enabled === false} onClick={() => void takeover(d.id, !!override)}>{override ? '交回自动' : '接管设备'}</button></small></td>

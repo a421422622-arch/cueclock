@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { PROTOCOL_VERSION } from './protocol.ts';
 
 declare const __CUECLOCK_ENGINE_BUILD__: string;
-export const ENGINE_VERSION = '0.6.0';
+export const ENGINE_VERSION = '0.7.0';
 function sourceBuild(): string {
   const dir = path.dirname(fileURLToPath(import.meta.url));
   const hash = createHash('sha256');
@@ -16,7 +16,7 @@ function sourceBuild(): string {
 }
 export const ENGINE_BUILD = typeof __CUECLOCK_ENGINE_BUILD__ === 'undefined' ? sourceBuild() : __CUECLOCK_ENGINE_BUILD__;
 export interface EngineHello { protocol: number; engineVersion?: string; engineBuild?: string; capabilities?: string[] }
-export const ENGINE_CAPABILITIES = ['wall-clock-pending-actions', 'regex-trigger-parameters', 'network-missing', 'operation-status', 'device-override', 'device-feedback', 'sequenced-scenes', 'configuration-apply', 'slider-mapping', 'runtime-options', 'tcp-send', 'pjlink', 'checksum', 'osc', 'in-flight-runs', 'deferred-apply'];
+export const ENGINE_CAPABILITIES = ['wall-clock-pending-actions', 'regex-trigger-parameters', 'network-missing', 'operation-status', 'device-override', 'device-feedback', 'sequenced-scenes', 'configuration-apply', 'slider-mapping', 'runtime-options', 'tcp-send', 'pjlink', 'checksum', 'osc', 'in-flight-runs', 'deferred-apply', 'probe-history', 'health-pause'];
 export const engineHello = (): EngineHello => ({ protocol: PROTOCOL_VERSION, engineVersion: ENGINE_VERSION, engineBuild: ENGINE_BUILD, capabilities: [...ENGINE_CAPABILITIES] });
 export interface EngineUpdate {
   runningVersion: string | null;

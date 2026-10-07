@@ -50,6 +50,8 @@ export interface DaemonSettings {
   /** 急停状态。急停是安全开关，引擎重启（崩溃、断电）后必须保持，不能悄悄恢复调度 */
   paused?: boolean;
   preventSleep?: boolean;
+  /** 后台在线检测（ping / 探测）整体暂停，用来省资源。机器级，重启后保持 */
+  healthPaused?: boolean;
   /** 编辑锁的密码记录（加盐哈希）。机器级，不进配置文件 */
   lock?: LockRecord;
   /** 面板按钮的亮灯状态，按配置文件区分：{ 配置文件路径: { '面板id/按钮id': 是否亮 } } */
@@ -142,6 +144,7 @@ export class Daemon {
         network,
         paused: raw.paused === true,
         preventSleep: raw.preventSleep === true,
+        healthPaused: raw.healthPaused === true,
         overrides: raw.overrides && typeof raw.overrides === 'object' && !Array.isArray(raw.overrides) ? raw.overrides : undefined,
         lock: isLockRecord(raw.lock) ? raw.lock : undefined,
         padState: typeof raw.padState === 'object' && raw.padState !== null && !Array.isArray(raw.padState) ? (raw.padState as Record<string, Record<string, boolean | number>>) : undefined,
@@ -282,7 +285,7 @@ export class Daemon {
   private async startEngine(): Promise<void> {
     this.clearRetry();
     const file = this.store!.file;
-    const engine = new Engine(this.project!, { dryRun: this.opts.dryRun, network: this.settings.network, startPaused: this.pausedBeforeStart, padState: this.settings.padState?.[file], overrides: this.settings.overrides?.[file] });
+    const engine = new Engine(this.project!, { dryRun: this.opts.dryRun, network: this.settings.network, startPaused: this.pausedBeforeStart, healthPaused: this.settings.healthPaused === true, padState: this.settings.padState?.[file], overrides: this.settings.overrides?.[file] });
     engine.on('log', (e: LogEntry) => this.broadcast({ event: 'log', data: e }));
     engine.on('overrides', (st: Record<string, import('./engine.ts').DeviceOverride>) => {
       this.settings = { ...this.settings, overrides: { ...this.settings.overrides, [file]: st } };
@@ -636,6 +639,27 @@ export class Daemon {
           this.settings = { ...this.settings, preventSleep };
           await this.persistSettings();
           return { preventSleep, sleepSupported: this.sleepGuard.supported, sleepActive: this.sleepGuard.active };
+        });
+      }
+
+      case 'getProbeHistory': {
+        const p = obj(params);
+        if (typeof p.deviceId !== 'string') throw new RpcError('bad-request', '缺少 deviceId');
+        return { records: this.engine?.getProbeHistory(p.deviceId, Math.min(200, Math.max(1, Number(p.limit ?? 200)))) ?? [], healthPaused: this.engine?.healthPaused ?? this.settings.healthPaused === true };
+      }
+
+      case 'setHealthPaused': {
+        const p = obj(params);
+        if (typeof p.paused !== 'boolean') throw new RpcError('bad-request', 'paused 必须是布尔值');
+        const paused = p.paused;
+        return this.serialize(async () => {
+          const previous = this.settings.healthPaused === true;
+          this.settings = { ...this.settings, healthPaused: paused };
+          this.engine?.setHealthPaused(paused);
+          this.broadcast({ event: 'status', data: this.statusPayload() });
+          try { await this.persistSettings(true); }
+          catch (e) { throw new RpcError('settings-write-failed', `${paused ? '暂停' : '恢复'}已生效，但重启持久化失败（上次为${previous ? '暂停' : '运行'}）：${(e as Error).message}`); }
+          return { healthPaused: paused };
         });
       }
 

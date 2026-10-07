@@ -117,6 +117,8 @@ export interface EngineOptions {
   network?: NetworkSettings;
   /** 以急停状态启动：连启动时的断电恢复也不执行 */
   startPaused?: boolean;
+  /** 以「在线检测已暂停」启动（机器设置里记着，重启后不悄悄恢复） */
+  healthPaused?: boolean;
   /** 面板按钮的亮灯状态（键为 `面板id/按钮id`），启动时从上次恢复。亮灯是推测的，不是设备真实状态 */
   padState?: Record<string, boolean | number>;
   overrides?: Record<string, DeviceOverride>;
@@ -157,12 +159,18 @@ export interface SceneRunStatus { id: string; name: string; source: string; star
  * 应用新配置（热更新）会取消它们，所以应用前要能列出来，也能「等它们结束再应用」。
  * 时间轴事件本身的定时动作不在其中——热更新会按新配置重排，不会丢。
  */
+/** 一次在线检测的结果（自动 = 后台按间隔检测，手动 = 界面点「检测」或持续检测）。每台设备只留最近 PROBE_HISTORY_MAX 条。 */
+export interface ProbeRecord { t: number; ok: boolean; method: 'ping' | 'udp'; rttMs?: number; detail: string; source: 'auto' | 'manual' }
+export const PROBE_HISTORY_MAX = 200;
+
 export interface InFlightRun { id: string; kind: 'scene' | 'actions'; name: string; source: string; remaining: number; nextAt: number | null; manual: boolean }
 
 export interface EngineStatus {
   devices: DeviceHealthInfo[];
   sceneRuns: SceneRunStatus[];
   inFlight: InFlightRun[];
+  /** 后台在线检测是否被整体暂停（0.7.0 起）。暂停期间不发任何 ping / 探测包 */
+  healthPaused: boolean;
   /** 面板按钮亮灯状态 */
   pads: Record<string, boolean | number>;
   running: boolean;
@@ -226,6 +234,8 @@ export class Engine extends EventEmitter {
   private health = new Map<string, HealthEntry>();
   /** 在线检测的后台循环：设备 id → 配置签名 + 取消器。热更新时只重启配置变了的 */
   private healthLoops = new Map<string, { sig: string; ctl: AbortController }>();
+  private healthPausedFlag = false;
+  private probeHistory = new Map<string, ProbeRecord[]>();
   private startedAt: number | null = null;
   private latestDispatch = new Map<string, number>();
   private overrides = new Map<string, DeviceOverride>();
@@ -410,8 +420,42 @@ export class Engine extends EventEmitter {
 
   // ───────────── 设备在线检测 ─────────────
 
-  /** 探测一次，不改变状态、不记告警。ping 或 UDP 探测；UDP 探测是后台监控，不写发送日志。 */
-  async probeDevice(device: Device): Promise<{ ok: boolean; method: 'ping' | 'udp'; rttMs?: number; detail: string }> {
+  /** 探测一次，不改变设备状态、不记告警，但会进该设备的检测记录。 */
+  async probeDevice(device: Device, source: 'auto' | 'manual' = 'manual'): Promise<{ ok: boolean; method: 'ping' | 'udp'; rttMs?: number; detail: string }> {
+    const method = device.health?.mode === 'udp' ? 'udp' : 'ping';
+    try {
+      const r = await this.probeOnce(device);
+      this.recordProbe(device.id, { t: this.clock.now(), ok: r.ok, method: r.method, ...(r.rttMs !== undefined ? { rttMs: r.rttMs } : {}), detail: r.detail, source });
+      return r;
+    } catch (e) {
+      this.recordProbe(device.id, { t: this.clock.now(), ok: false, method, detail: (e as Error).message, source });
+      throw e;
+    }
+  }
+
+  private recordProbe(deviceId: string, rec: ProbeRecord): void {
+    if (!this.project.devices.some((d) => d.id === deviceId)) return; // 界面里还没应用的新设备：不记
+    const list = this.probeHistory.get(deviceId) ?? [];
+    list.push(rec);
+    if (list.length > PROBE_HISTORY_MAX) list.splice(0, list.length - PROBE_HISTORY_MAX);
+    this.probeHistory.set(deviceId, list);
+  }
+
+  getProbeHistory(deviceId: string, limit = PROBE_HISTORY_MAX): ProbeRecord[] {
+    return (this.probeHistory.get(deviceId) ?? []).slice(-limit);
+  }
+
+  get healthPaused(): boolean { return this.healthPausedFlag; }
+
+  /** 整体暂停 / 恢复后台在线检测：暂停时立刻停掉所有检测循环，不再发 ping / 探测包；恢复后各设备重新排期。手动检测不受影响。 */
+  setHealthPaused(paused: boolean): void {
+    if (this.healthPausedFlag === paused) return;
+    this.healthPausedFlag = paused;
+    this.syncHealth();
+    this.log({ dir: 'SYS', result: 'info', detail: paused ? '后台在线检测已暂停：不再发送 ping / 探测包（设备状态保留最后一次结果）' : '后台在线检测已恢复' });
+  }
+
+  private async probeOnce(device: Device): Promise<{ ok: boolean; method: 'ping' | 'udp'; rttMs?: number; detail: string }> {
     const h = device.health;
     if (!h) throw new Error('这台设备没有设置检测方式');
     if (h.mode === 'ping') {
@@ -459,7 +503,7 @@ export class Engine extends EventEmitter {
   /** 让后台检测循环与当前项目一致：没变的设备不动（不重置节奏），变了/删了的重启或停止，新增的启动。 */
   private syncHealth(): void {
     const want = new Map<string, Device>();
-    if (this.running && !this.opts.dryRun) for (const d of this.project.devices) if (d.health && d.enabled !== false) want.set(d.id, d);
+    if (this.running && !this.opts.dryRun && !this.healthPausedFlag) for (const d of this.project.devices) if (d.health && d.enabled !== false) want.set(d.id, d);
     for (const [id, loop] of [...this.healthLoops]) {
       const d = want.get(id);
       if (!d || this.healthSig(d) !== loop.sig) {
@@ -487,7 +531,7 @@ export class Engine extends EventEmitter {
       const device = this.project.devices.find((d) => d.id === id);
       if (!device?.health) return;
       try {
-        const r = await this.probeDevice(device);
+        const r = await this.probeDevice(device, 'auto');
         if (signal.aborted) return;
         if (r.ok) this.noteDeviceSuccess(device, r.method, r.rttMs);
         else this.noteDeviceFailure(device, r.method);
@@ -594,6 +638,7 @@ export class Engine extends EventEmitter {
     );
     this.running = true;
     this.closed = false;
+    this.healthPausedFlag = this.opts.healthPaused === true;
     if (this.opts.startPaused) {
       this.pausedFlag = true;
       this.alert('paused', 'warn', undefined, '引擎以暂停状态启动（上次暂停后重启，需手动恢复）：定时事件、触发和断电恢复都不会执行');
@@ -647,7 +692,7 @@ export class Engine extends EventEmitter {
     for (const d of this.project.devices) {
       const next = project.devices.find((x) => x.id === d.id);
       if (!next || next.ip !== d.ip || next.port !== d.port) {
-        this.commands.delete(d.id); this.feedback.delete(d.id); this.health.delete(d.id); this.overrides.delete(d.id);
+        this.commands.delete(d.id); this.feedback.delete(d.id); this.health.delete(d.id); this.overrides.delete(d.id); this.probeHistory.delete(d.id);
       } else if (JSON.stringify(next.feedback) !== JSON.stringify(d.feedback)) this.feedback.delete(d.id);
     }
     this.project = project;
@@ -1296,6 +1341,7 @@ export class Engine extends EventEmitter {
       devices,
       sceneRuns: [...this.sceneRuns.values()].slice(-20).reverse(),
       inFlight: this.inFlight(),
+      healthPaused: this.healthPausedFlag,
       pads: Object.fromEntries(this.padState),
       running: this.running,
       paused: this.pausedFlag,

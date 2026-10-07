@@ -12,7 +12,7 @@ export interface TextClipping {
 export const CLIPPING_PAGES = ['overview', 'runtime-timeline', 'runtime-inspector', 'timeline', 'inspector-mode', 'inspector-group', 'inspector-cue', 'inspector-device', 'calendar',
   'inspector-command-0', 'inspector-command-1', 'inspector-command-2', 'inspector-command-3', 'inspector-scene', 'inspector-trigger',
   'pad-operation', 'inspector-pad', 'inspector-pad-button', 'inspector-pad-toggle', 'inspector-pad-slider',
-  'configuration-files', 'configuration-software', 'apply-dialog', 'mode-dialog'];
+  'configuration-files', 'configuration-software', 'apply-dialog', 'mode-dialog', 'ping-monitor'];
 
 export function assertClippingCoverage(names: string[]): void {
   const expected = [1440, 1100].flatMap((width) => CLIPPING_PAGES.map((page) => `${width}-${page}`));

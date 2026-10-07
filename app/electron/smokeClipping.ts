@@ -53,6 +53,8 @@ export async function smokeClipping(win: BrowserWindow, outputDir?: string, brea
   await js(`document.getElementById('smoke-vertical-css').remove()`);
   if (!verticalRejected) throw new Error('负对照失败：胶囊省略号白名单掩盖了垂直裁切');
 
+  // 给检测记录窗口造几条真实记录：设备已禁用，后台不会检测；手动检测只 ping 本机 127.0.0.1。
+  for (let i = 0; i < 3; i++) await js(`window.cueclock.rpc('probeNow', { device: { id: 'device', name: 'x', ip: '127.0.0.1', health: { mode: 'ping', intervalSec: 30 } } }).then((r) => { if (!r.ok) throw Error(r.error.message); })`);
   for (const width of [1440, 1100]) {
     win.setSize(width, width === 1440 ? 900 : 700); await pause(900); await settle();
     const shot = (name: string) => capture(`${width}-${name}`);
@@ -85,6 +87,9 @@ export async function smokeClipping(win: BrowserWindow, outputDir?: string, brea
     await click('.apply-open'); await pause(200); await shot('apply-dialog'); await click('.apply-dialog .mf button', '返回编辑');
     await click('.viewtabs span', '模式与时间轴'); await click('.mode-actions .primary'); await shot('mode-dialog');
     await click('.modal .mf button', '取消');
+    await click('.viewtabs span', '运行总览'); await click('.overview-table button.link', '检测记录'); await pause(1300); await shot('ping-monitor');
+    if (!await js<boolean>(`document.querySelectorAll('.ping-list > div').length >= 3 && !!document.querySelector('.ping-chart rect.ok')`)) throw new Error('检测记录窗口没有显示真实记录');
+    await click('.ping-monitor .mf button', '关闭');
   }
   const result = { passed: false, negativeControl: { rejected, findings: broken, verticalRejected, verticalFindings: vertical }, checks, error: '' };
   try { assertClippingCoverage(checks.map((x) => x.name)); assertNoTextClipping(checks); if (checks.some((x) => x.top.overflow || x.top.overlap)) throw new Error('最长状态顶栏超出或重叠'); result.passed = true; } catch (e) { result.error = (e as Error).message; }

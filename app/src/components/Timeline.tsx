@@ -221,7 +221,7 @@ export function Timeline() {
         <span className="mode-current"><i style={{ background: color }} /><b>{tl?.name ?? '开始安排日程'}</b></span>
         <span className="hint">{tl ? ruleText(tl.rule) : '工作日、周末、节假日按日期自动切换'}</span>
         {tl && <span className={`mode-status ${info?.active && !info.runtimeDisabled ? 'active' : ''}`}>{info?.runtimeDisabled ? '临时禁用' : info?.active ? '实际运行' : '查看 / 编辑'}</span>}
-        {pendingEnable > 0 && <button className="enable-all" onClick={enableAll} title="把本模式里已经有动作、但还没勾「参与调度」的事件一次性启用；没有动作的空事件保持禁用。可以撤销。"><Icon name="check" size={13} />启用 {pendingEnable} 个事件</button>}
+        {tl && !readonly && <button className="enable-all" disabled={pendingEnable === 0} onClick={enableAll} title={pendingEnable ? '把本模式里已经有动作、但还没勾「参与调度」的事件一次性启用；没有动作的空事件保持禁用。可以撤销。' : '没有可启用的事件：本模式里没有「已配好动作但未启用」的事件（没有动作的空事件不会被启用）'}><Icon name="check" size={13} />{pendingEnable ? `启用 ${pendingEnable} 个事件` : '启用事件'}</button>}
         {group && <button className="ico" onClick={() => select({ kind: 'group', id: group.id })} title="编辑模式组">{group.name} · {group.mode === 'exclusive' ? '互斥' : '并行'}</button>}
       </div>
       <span className="grow" />

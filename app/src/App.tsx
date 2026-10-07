@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { cancelDeferredApply, closeResumeSummary, showLogTab, discardDraft, handleEditShortcut, init, keepDraftOverEngine, lockNow, openSettings, openUnlock, reloadFromEngine, restoreDraft, setView, toast, useStore } from './store.ts';
 import { ApplyDialog } from './components/ApplyDialog.tsx';
+import { PingMonitor } from './components/PingMonitor.tsx';
 import { Overview } from './components/Overview.tsx';
 import { RuntimeConfiguration } from './components/RuntimeConfiguration.tsx';
 import { TopBar } from './components/TopBar.tsx';
@@ -156,6 +157,7 @@ export function App() {
         {!logCollapsed && <Splitter k="logH" orientation="horizontal" className="log-split" label="日志高度" step={-1} measure={(e, r) => r.bottom - e.clientY} />}
       </div>
       <ApplyDialog />
+      <PingMonitor />
       {settingsOpen && <SettingsDialog />}
       {unlockOpen && <UnlockDialog />}
       {backupOpen && <BackupDialog />}

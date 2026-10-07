@@ -8,7 +8,7 @@ import { IntervalPicker } from './IntervalPicker.tsx';
 import type { Pad, PadTile } from '@engine/types.ts';
 import { changeKind, duplicateTile, groupNames, moveTile, sliderOutput, sliderRange, sliderSteps } from '../lib/pad.ts';
 import { GROUP_COLORS } from '../lib/colors.ts';
-import { displayedProject, viewingRuntime, beginDraft, setPadId } from '../store.ts';
+import { displayedProject, viewingRuntime, beginDraft, openPingMonitor, setPadId } from '../store.ts';
 import { formatTime, parseTime } from '@engine/time.ts';
 import { isDateKey } from '@engine/calendar.ts';
 import { edit, engineNow, openBatchHealth, rpc, select, toast, useStore } from '../store.ts';
@@ -563,6 +563,7 @@ function FeedbackSection({ device, patch }: { device: Device; patch: (fn: (d: De
 function HealthSection({ device: d, patch }: { device: Device; patch: (fn: (d: Device) => void) => void }) {
   const project = useStore(displayedProject)!;
   const info = useStore((s) => s.status?.engine?.devices.find((x) => x.id === d.id));
+  const inRunning = useStore((s) => !!s.runningProject?.devices.some((x) => x.id === d.id && x.health));
   const h = d.health;
   const mode: HealthMode = h?.mode ?? 'none';
   const probeCmds = (project.commands ?? []).filter((c) => c.reply);
@@ -626,6 +627,7 @@ function HealthSection({ device: d, patch }: { device: Device; patch: (fn: (d: D
           <Field label="">
             <span className="row">
               <button onClick={probe} disabled={busy || (h.mode === 'udp' && !h.probe?.commandId)}>{busy ? '检测中…' : '立即检测一次'}</button>
+              <button title={inRunning ? '查看这台设备的检测结果、持续检测，或暂停全部后台检测' : '这台设备的检测设置还没有应用到引擎，应用后才有检测记录'} disabled={!inRunning} onClick={() => openPingMonitor(d.id)}>检测记录…</button>
               <button title="把这台设备的检测设置应用到其他设备" onClick={() => openBatchHealth(h)}>应用到其他设备…</button>
               {res && <span className={`hint ${res.ok ? 'okc' : 'err'}`}>{res.ok ? '✓ ' : '✗ '}{res.text}</span>}
             </span>

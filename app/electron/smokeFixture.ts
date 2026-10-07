@@ -5,7 +5,7 @@ export function clippingFixture(): Project {
   const action: UdpAction = { id: 'send', type: 'udp', targets: ['device'], format: 'ascii', payload: 'STATE QUERY', reply: { kind: 'prefix', format: 'ascii', pattern: 'STATE=', timeoutMs: 1000, retries: 2 }, checksum: { algo: 'crc16-modbus' } };
   return {
     name: '东侧展厅灯光投影与媒体播放设备联动运行配置（长名称验收）',
-    devices: [{ id: 'device', name: '东侧展厅投影与灯光联动设备', ip: '127.0.0.1', port: 65534, enabled: false, tag: '东侧展厅',
+    devices: [{ id: 'device', name: '东侧展厅投影与灯光联动设备', ip: '127.0.0.1', port: 65534, enabled: false, tag: '东侧展厅', health: { mode: 'ping', intervalSec: 30 },
       feedback: { format: 'ascii', pattern: '^STATE=(.+)$', fields: [{ label: '设备运行状态', group: 1 }], staleMs: 60000 } }],
     commands: [
       { ...action, id: 'udp', name: 'UDP灯光场景与状态查询指令', params: [] },
