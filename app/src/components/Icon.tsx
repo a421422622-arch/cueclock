@@ -33,6 +33,10 @@ const PATHS = {
   redo: <><path d="m15 14 5-5-5-5" /><path d="M20 9h-9.5a6 6 0 0 0 0 12H13" /></>,
   hand: <path d="M8 12V6.5a1.5 1.5 0 0 1 3 0V11m0-5.5a1.5 1.5 0 0 1 3 0V11m0-3.5a1.5 1.5 0 0 1 3 0V14a7 7 0 0 1-7 7h-.5a6 6 0 0 1-5-2.7L4 15.5a1.6 1.6 0 0 1 2.7-1.6L8 15.5V12z" />,
   pad: <><rect x="3" y="3" width="18" height="18" rx="3.5" /><path d="M3 9h18M3 15h18M9 3v18M15 3v18" /></>,
+  minus: <path d="M5 12h14" />,
+  locate: <><circle cx="12" cy="12" r="3" /><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4" /></>,
+  fit: <path d="M4 9V4.5h4.5M20 9V4.5h-4.5M4 15v4.5h4.5M20 15v4.5h-4.5" />,
+  link: <><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" /><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" /></>,
   more: <><circle cx="5" cy="12" r="1.1" /><circle cx="12" cy="12" r="1.1" /><circle cx="19" cy="12" r="1.1" /></>,
 } as const;
 

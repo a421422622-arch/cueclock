@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cloneMode, layoutMarks, targetTracks } from '../src/lib/timeline.ts';
+import { cloneMode, layoutChips, layoutMarks, targetTracks } from '../src/lib/timeline.ts';
 import { EditHistory } from '../src/lib/history.ts';
 import type { Project } from '../../engine/src/types.ts';
 
@@ -114,4 +114,20 @@ test('用法统计：场景里的动作也算引用；场景被引用次数正�
   assert.equal(allActions(project).length, 3);
   assert.equal(sceneRefCount(project, 'sc'), 2);
   assert.equal(sceneRefCount(project, 'none'), 0);
+});
+
+test('胶囊分行：左边缘对齐时间，放不下的下移，靠右边缘的整体翻转，不丢任何事件', () => {
+  const H = 3_600_000;
+  // 24 小时 × 100px = 2400px；胶囊宽 140
+  const a = layoutChips([{ atMs: 1 * H }, { atMs: 1 * H + 60_000 }, { atMs: 3 * H }], 100, 140);
+  assert.deepEqual(a.map((m) => m.row), [0, 1, 0]); // 第二个与第一个重叠 → 下移；第三个远 → 回到第 0 行
+  assert.deepEqual(a.map((m) => Math.round(m.left)), [100, 102, 300]);
+  const edge = layoutChips([{ atMs: 24 * H - 1000 }], 100, 140);
+  assert.equal(edge[0]!.flip, true);
+  assert.ok(edge[0]!.left + 140 <= 2400 + 1);
+  assert.equal(layoutChips([{ atMs: 5 * H }], 100, 140)[0]!.flip, false);
+  // 三个同一毫秒 → 三行
+  assert.deepEqual(layoutChips([{ atMs: 0 }, { atMs: 0 }, { atMs: 0 }], 100, 140).map((m) => m.row), [0, 1, 2]);
+  // 刚好首尾相接留出间隙：不下移
+  assert.deepEqual(layoutChips([{ atMs: 0 }, { atMs: 1.46 * H }], 100, 140).map((m) => m.row), [0, 0]);
 });

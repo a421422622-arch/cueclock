@@ -6,14 +6,20 @@ import { edit, engineNow, followMode, redo, select, setMode, syncActiveMode, und
 import type { Selection } from '../store.ts';
 import { genId, ruleText } from '../lib/labels.ts';
 import { deviceColor, GROUP_COLORS, modeColor } from '../lib/colors.ts';
-import { cloneMode, layoutMarks, targetTracks } from '../lib/timeline.ts';
+import { cloneMode, layoutChips, targetTracks } from '../lib/timeline.ts';
 import type { TargetMark, TargetTrack } from '../lib/timeline.ts';
 import { Check, ColorField, Field } from './fields.tsx';
 import { Icon } from './Icon.tsx';
 
 const HOUR = 3_600_000;
 const DAY = 86_400_000;
-const LABEL_W = 224;
+const LABEL_W = 232;
+/** 事件点胶囊：宽度、行高、轨道上下留白 */
+const CHIP_W = 140;
+const MASTER_CHIP_W = 128;
+const ROW_H = 34;
+const PAD_TOP = 9;
+const RULER_H = 34;
 const TICK_STEPS = [12 * HOUR, 6 * HOUR, 3 * HOUR, HOUR, 1_800_000, 600_000, 300_000, 60_000, 30_000, 10_000, 5_000, 1_000, 500, 100];
 const SNAPS = [{ ms: 60_000, label: '1 分钟' }, { ms: 10_000, label: '10 秒' }, { ms: 1_000, label: '1 秒' },
   { ms: 100, label: '100 毫秒' }, { ms: 10, label: '10 毫秒' }, { ms: 1, label: '1 毫秒' }];
@@ -140,26 +146,18 @@ export function Timeline() {
   };
   const mainMarks: TargetMark[] = tl?.cues.map((cue) => ({ key: cue.id, cue, atMs: parseTime(cue.time) ?? 0, relMs: 0,
     label: `${cue.actions.length} 个动作`, disabled: cue.enabled === false, pending: cue.actions.length === 0, repeat: 1 })) ?? [];
-  const mainLayout = layoutMarks(mainMarks, pxh, 100);
-  const masterHeight = Math.max(76, (Math.max(0, ...mainLayout.map((m) => m.row)) + 1) * 42 + 20);
+  const mainLayout = layoutChips(mainMarks, pxh, MASTER_CHIP_W);
+  const masterHeight = Math.max(64, (Math.max(0, ...mainLayout.map((m) => m.row)) + 1) * ROW_H + PAD_TOP * 2);
 
   return <div className="main" style={{ '--mode-color': color } as CSSProperties}>
     <div className="modebar">
-      <div className="modebar-heading"><span>日程模式</span><span className="hint">每个模式一条主时间轴 · 每个目标一条小时间轴</span>
-        <div className="grow" /><button className="primary" onClick={() => setModeDialog(true)}><Icon name="plus" size={14} />模式</button>
-        <button onClick={copy} disabled={!tl}>复制模式</button>
-        <button onClick={() => {
-          const id = genId('g');
-          edit((p) => p.groups.push({ id, name: '新模式组', mode: 'exclusive' }));
-          select({ kind: 'group', id });
-        }}><Icon name="plus" size={14} />模式组</button>
-      </div>
       <div className="mode-tabs" role="tablist" aria-label="日程模式">
         {project.timelines.map((mode) => {
           const active = engine?.timelines.find((e) => e.id === mode.id)?.active;
           const g = project.groups.find((x) => x.id === mode.groupId);
           return <button key={mode.id} role="tab" aria-selected={tl?.id === mode.id} data-mode-id={mode.id}
             className={`mode-tab ${tl?.id === mode.id ? 'on' : ''}`} style={{ '--tab-color': modeColor(project, mode.id) } as CSSProperties}
+            title={`${g?.name ?? '未分组'} · ${mode.cues.length} 个事件点`}
             onClick={() => setMode(mode.id)}>
             <span className="mode-tab-title"><i />{mode.name}<span className={`mode-status ${active ? 'active' : ''}`}>{mode.enabled === false ? '已禁用' : active ? '今日生效' : '待命'}</span></span>
             <span className="mode-tab-meta">{g?.name ?? '未分组'} · {mode.cues.length} 个事件</span>
@@ -167,53 +165,66 @@ export function Timeline() {
         })}
         {!project.timelines.length && <div className="empty">还没有模式。新建模式，或使用下面的常用日程模板。</div>}
       </div>
-    </div>
-    <div className="mode-context">
-      <span className="mode-current"><i style={{ background: color }} /><b>{tl?.name ?? '开始安排日程'}</b></span>
-      <span className="hint">{tl ? ruleText(tl.rule) : '工作日、周末、节假日按日期自动切换'}</span>
-      {tl && <span className={`mode-status ${info?.active && !info.runtimeDisabled ? 'active' : ''}`}>{info?.runtimeDisabled ? '临时禁用' : info?.active ? '实际运行' : '查看 / 编辑'}</span>}
-      <span className="grow" />
-      {group && <button className="ico" onClick={() => select({ kind: 'group', id: group.id })}>{group.name} · {group.mode === 'exclusive' ? '互斥自动切换' : '并行'} ⚙</button>}
-      <button className={`follow-button ${following ? 'on' : ''}`} aria-pressed={following} onClick={followMode}>跟随今日生效模式</button>
+      <div className="mode-actions">
+          <button className="primary" onClick={() => setModeDialog(true)}><Icon name="plus" size={14} />模式</button>
+          <button onClick={copy} disabled={!tl} title="复制当前模式（副本默认禁用）"><Icon name="copy" size={14} />复制</button>
+          <button title="新建模式组" onClick={() => {
+            const id = genId('g');
+            edit((p) => p.groups.push({ id, name: '新模式组', mode: 'exclusive' }));
+            select({ kind: 'group', id });
+          }}><Icon name="plus" size={14} />模式组</button>
+      </div>
     </div>
     <div className="toolbar timeline-toolbar">
-      <button disabled={!canUndo} onClick={undo} title="撤销编辑（Ctrl / Cmd+Z）"><Icon name="undo" size={14} />撤销</button>
-      <button disabled={!canRedo} onClick={redo} title="重做编辑（Ctrl / Cmd+Shift+Z）"><Icon name="redo" size={14} />重做</button>
+      <div className="tbgroup">
+        <button className="ico" disabled={!canUndo} onClick={undo} title="撤销编辑（Ctrl / Cmd+Z）"><Icon name="undo" size={15} /></button>
+        <button className="ico" disabled={!canRedo} onClick={redo} title="重做编辑（Ctrl / Cmd+Shift+Z）"><Icon name="redo" size={15} /></button>
+      </div>
       <span className="sep" />
-      <label className="tb">缩放<input aria-label="时间轴缩放" type="range" min={0} max={100}
-        value={Math.round((Math.log(pxh / 6) / Math.log(10_000)) * 100)} onChange={(e) => zoomTo(6 * Math.pow(10_000, Number(e.target.value) / 100))} /></label>
-      <button onClick={() => zoomTo(Math.max(6, ((scroller.current?.clientWidth ?? 1200) - LABEL_W - 6) / 24))}>一整天</button>
-      <button onClick={() => goTo(msOfDay(engineNow()))}>定位现在</button>
+      <div className="tbgroup zoomgroup">
+        <button className="ico" onClick={() => zoomTo(pxh * 0.8)} title="缩小"><Icon name="minus" size={14} /></button>
+        <input aria-label="时间轴缩放" type="range" min={0} max={100}
+          value={Math.round((Math.log(pxh / 6) / Math.log(10_000)) * 100)} onChange={(e) => zoomTo(6 * Math.pow(10_000, Number(e.target.value) / 100))} />
+        <button className="ico" onClick={() => zoomTo(pxh * 1.25)} title="放大"><Icon name="plus" size={14} /></button>
+        <button onClick={() => zoomTo(Math.max(6, ((scroller.current?.clientWidth ?? 1200) - LABEL_W - 6) / 24))} title="缩放到一整天"><Icon name="fit" size={14} />一整天</button>
+        <button onClick={() => goTo(msOfDay(engineNow()))} title="滚动到当前时间"><Icon name="locate" size={14} />现在</button>
+      </div>
+      <span className="sep" />
+      <div className="mode-context">
+        <span className="mode-current"><i style={{ background: color }} /><b>{tl?.name ?? '开始安排日程'}</b></span>
+        <span className="hint">{tl ? ruleText(tl.rule) : '工作日、周末、节假日按日期自动切换'}</span>
+        {tl && <span className={`mode-status ${info?.active && !info.runtimeDisabled ? 'active' : ''}`}>{info?.runtimeDisabled ? '临时禁用' : info?.active ? '实际运行' : '查看 / 编辑'}</span>}
+        {group && <button className="ico" onClick={() => select({ kind: 'group', id: group.id })} title="编辑模式组">{group.name} · {group.mode === 'exclusive' ? '互斥' : '并行'}</button>}
+      </div>
       <span className="grow" />
-      <label className="tb">吸附<select aria-label="拖动吸附" value={snap} onChange={(e) => setSnap(Number(e.target.value))}>
-        {SNAPS.map((s) => <option key={s.ms} value={s.ms}>{s.label}</option>)}
-      </select></label>
-    </div>
-    <div className="target-tools">
-      <input aria-label="筛选目标" placeholder="筛选目标名称、IP 或标签…" value={search} onChange={(e) => setSearch(e.target.value)} />
-      <Check checked={hideEmpty} onChange={setHideEmpty} label="隐藏空轨" />
-      <span className="hint">{filtered.length} 个目标</span><span className="grow" />
-      <span className="hint">切换查看不改变实际调度</span>
+      <div className="tbgroup target-tools">
+        <label className="searchbox"><Icon name="search" size={14} /><input aria-label="筛选目标" placeholder="筛选目标…" value={search} onChange={(e) => setSearch(e.target.value)} /></label>
+        <Check checked={hideEmpty} onChange={setHideEmpty} label="隐藏空轨" />
+        <label className="tb">吸附<select aria-label="拖动吸附" value={snap} onChange={(e) => setSnap(Number(e.target.value))}>
+          {SNAPS.map((s) => <option key={s.ms} value={s.ms}>{s.label}</option>)}
+        </select></label>
+        <button className={`follow-button ${following ? 'on' : ''}`} aria-pressed={following} onClick={followMode} title="时间轴始终显示今天实际生效的模式（查看，不改变调度）"><Icon name="link" size={14} />跟随今日</button>
+      </div>
     </div>
     <div className="tl" ref={scroller} onScroll={syncView} onWheel={(e) => {
       if (!(e.ctrlKey || e.metaKey)) return;
       e.preventDefault();
       zoomTo(pxh * (e.deltaY < 0 ? 1.25 : 0.8), e.clientX - scroller.current!.getBoundingClientRect().left - LABEL_W);
     }}>
-      <div className="tlinner" style={{ width: LABEL_W + W }}>
-        <div className="ruler"><div className="corner" style={{ width: LABEL_W }}>模式总览 / 目标</div>
+      <div className="tlinner" style={{ width: LABEL_W + W, '--step': `${step / HOUR * pxh}px` } as CSSProperties}>
+        <div className="ruler"><div className="corner" style={{ width: LABEL_W }}><span>目标</span><span className="dim">{tl ? `${tracks.length} 个` : ''}</span></div>
           <div className="rtrack" style={{ width: W }}>{ticks.map((t) => <div key={t} className={`tk ${t === DAY ? 'end' : ''}`} style={{ left: (t / HOUR) * pxh }}>{tickLabel(t, step)}</div>)}</div>
         </div>
         {tl ? <>
           <div className="trow mode-master" data-master-mode={tl.id} style={{ position: masterHeight > 160 ? 'relative' : 'sticky' }}>
             <div className="hcell master-label" style={{ width: LABEL_W, height: masterHeight }}>
-              <div className="n"><button className="ico" aria-label={expanded ? '收起目标时间轴' : '展开目标时间轴'} onClick={() => setExpanded(!expanded)}>{expanded ? '▾' : '▸'}</button>
-                <span className="name" onClick={() => select({ kind: 'timeline', id: tl.id })}>{tl.name}</span></div>
-              <div className="rule">主时间轴 · {tl.cues.length} 个事件点</div>
-              <button className="ico master-edit" onClick={() => select({ kind: 'timeline', id: tl.id })}>编辑模式 / 颜色 ↗</button>
+              <div className="n"><button className="ico caret" aria-label={expanded ? '收起目标时间轴' : '展开目标时间轴'} onClick={() => setExpanded(!expanded)}><Icon name="chevron" size={14} style={{ transform: expanded ? undefined : 'rotate(-90deg)' }} /></button>
+                <span className="name" onClick={() => select({ kind: 'timeline', id: tl.id })}>{tl.name}</span><span className="tag">{tl.cues.length}</span></div>
+              <div className="rule">主时间轴 · 全部目标的事件点</div>
+              <button className="ico master-edit" onClick={() => select({ kind: 'timeline', id: tl.id })}><Icon name="edit" size={12} />编辑模式 / 颜色</button>
             </div>
-            <div className="track master-track" style={{ width: W, height: masterHeight, backgroundSize: `${step / HOUR * pxh}px 100%` }} onDoubleClick={(e) => addCue(e)}>
-              {mainLayout.map(({ mark, row }) => <CueMark key={mark.key} tl={tl} mark={mark} color={color} pxh={pxh} snap={snap} row={row} sel={sel} master />)}
+            <div className="track master-track" style={{ width: W, height: masterHeight }} onDoubleClick={(e) => addCue(e)}>
+              {mainLayout.map(({ mark, row, flip }) => <CueMark key={mark.key} tl={tl} mark={mark} color={color} pxh={pxh} snap={snap} row={row} flip={flip} sel={sel} master />)}
               {!tl.cues.length && <span className="track-empty">双击主时间轴新建多目标事件，或双击下面的目标小时间轴</span>}
             </div>
           </div>
@@ -221,7 +232,7 @@ export function Timeline() {
             color={deviceColor(project, track.device.id)} pxh={pxh} snap={snap} W={W} stepPx={step / HOUR * pxh} sel={sel}
             onAdd={(e) => addCue(e, track.device.id)} />)}
           {expanded && filtered.length === 0 && <div className="empty big">{project.devices.length ? '没有匹配的目标，调整筛选或关闭「隐藏空轨」。' : '先在左侧添加设备，每个设备会自动出现一条目标小时间轴。'}</div>}
-          <Playhead pxh={pxh} />
+          <Playhead pxh={pxh} width={W} />
         </> : <div className="timeline-welcome"><b>一个模式，管理所有目标的日程</b><p>主时间轴汇总事件；目标小时间轴按设备展示。同组模式根据日期自动切换。</p>
           <button className="primary" onClick={bootstrap}>创建工作日 / 周末 / 节假日模式</button><button onClick={() => setModeDialog(true)}>从空模式开始</button></div>}
       </div>
@@ -232,36 +243,41 @@ export function Timeline() {
   </div>;
 }
 
-function Playhead({ pxh }: { pxh: number }) {
+function Playhead({ pxh, width }: { pxh: number; width: number }) {
   const [now, setNow] = useState(() => msOfDay(engineNow()));
   useEffect(() => { const t = setInterval(() => setNow(msOfDay(engineNow())), 200); return () => clearInterval(t); }, []);
-  return <div className="playhead" style={{ left: LABEL_W + (now / HOUR) * pxh }} />;
+  const x = (now / HOUR) * pxh;
+  return <>
+    <div className="past" style={{ left: LABEL_W, width: Math.min(width, x), top: RULER_H }} />
+    <div className="playhead" style={{ left: LABEL_W + x }}><span className="now-pill">{formatTime(now).slice(0, 8)}</span></div>
+  </>;
 }
 
-function TrackRow({ track, tl, project, color, pxh, snap, W, stepPx, sel, onAdd }: {
-  track: TargetTrack; tl: TimelineModel; project: Project; color: string; pxh: number; snap: number; W: number; stepPx: number;
+function TrackRow({ track, tl, project, color, pxh, snap, W, sel, onAdd }: {
+  track: TargetTrack; tl: TimelineModel; project: Project; color: string; pxh: number; snap: number; W: number; stepPx?: number;
   sel: Selection; onAdd: (e: MouseEvent<HTMLDivElement>) => void;
 }) {
   const { device, marks } = track;
-  const layout = layoutMarks(marks, pxh);
-  const height = Math.max(64, (Math.max(0, ...layout.map((m) => m.row)) + 1) * 42 + 16);
-  return <div className={`trow target-row ${device.enabled === false ? 'dis' : ''}`} data-target-id={device.id}>
-    <div className={`hcell ${sel?.kind === 'device' && sel.id === device.id ? 'sel' : ''}`} style={{ width: LABEL_W, height }} onClick={() => select({ kind: 'device', id: device.id })}>
+  const layout = layoutChips(marks, pxh, CHIP_W);
+  const height = Math.max(52, (Math.max(0, ...layout.map((m) => m.row)) + 1) * ROW_H + PAD_TOP * 2);
+  const selected = sel?.kind === 'device' && sel.id === device.id;
+  return <div className={`trow target-row ${device.enabled === false ? 'dis' : ''} ${selected ? 'rowsel' : ''}`} data-target-id={device.id} style={{ '--target-color': color } as CSSProperties}>
+    <div className={`hcell ${selected ? 'sel' : ''}`} style={{ width: LABEL_W, height }} onClick={() => select({ kind: 'device', id: device.id })}>
       <div className="n"><input type="color" className="track-color" aria-label={`${device.name} 轨道颜色`} title="设置这个目标的颜色"
         value={deviceColor(project, device.id)} onClick={(e) => e.stopPropagation()}
         onChange={(e) => edit((p) => { p.devices.find((d) => d.id === device.id)!.color = e.target.value; })} />
         <span className="name">{device.name}</span><span className="tag">{marks.length}</span></div>
       <div className="rule mono">{device.ip}{device.port ? `:${device.port}` : ''}{device.tag ? ` · ${device.tag}` : ''}{device.enabled === false ? ' · 已禁用' : ''}</div>
     </div>
-    <div className="track target-track" style={{ width: W, height, backgroundSize: `${stepPx}px 100%`, '--target-color': color } as CSSProperties} onDoubleClick={onAdd}>
-      {layout.map(({ mark, row }) => <CueMark key={mark.key} tl={tl} mark={mark} color={color} pxh={pxh} snap={snap} row={row} sel={sel} />)}
+    <div className="track target-track" style={{ width: W, height }} onDoubleClick={onAdd}>
+      {layout.map(({ mark, row, flip }) => <CueMark key={mark.key} tl={tl} mark={mark} color={color} pxh={pxh} snap={snap} row={row} flip={flip} sel={sel} />)}
       {!marks.length && <span className="track-empty">双击为 {device.name} 新建事件点</span>}
     </div>
   </div>;
 }
 
-function CueMark({ tl, mark, color, pxh, snap, row, sel, master = false }: {
-  tl: TimelineModel; mark: TargetMark; color: string; pxh: number; snap: number; row: number; sel: Selection; master?: boolean;
+function CueMark({ tl, mark, color, pxh, snap, row, flip, sel, master = false }: {
+  tl: TimelineModel; mark: TargetMark; color: string; pxh: number; snap: number; row: number; flip: boolean; sel: Selection; master?: boolean;
 }) {
   const { cue } = mark;
   const [drag, setDrag] = useState<number | null>(null);
@@ -269,16 +285,14 @@ function CueMark({ tl, mark, color, pxh, snap, row, sel, master = false }: {
   const base = parseTime(cue.time) ?? 0;
   const ms = drag === null ? mark.atMs : drag + mark.relMs;
   const x = clampMs(ms) / HOUR * pxh;
-  const labelWidth = master ? 84 : 134;
-  const labelLeft = Math.max(0, Math.min(24 * pxh - labelWidth, x - labelWidth / 2));
   const selected = sel?.kind === 'cue' && sel.timelineId === tl.id && sel.cueId === cue.id && (master || !sel.actionId || sel.actionId === mark.actionId);
   const choose = () => select({ kind: 'cue', timelineId: tl.id, cueId: cue.id, actionId: mark.actionId });
   const commit = (at: number) => edit((p) => { const c = p.timelines.find((t) => t.id === tl.id)?.cues.find((c) => c.id === cue.id); if (c) c.time = formatTime(clampMs(at)); });
-  return <div className={`cue ${master ? 'master-cue' : 'target-cue'} ${selected ? 'sel' : ''} ${mark.disabled ? 'off' : ''} ${mark.pending ? 'pending' : ''} ${ms >= DAY ? 'overflow' : ''} ${clampMs(ms) / HOUR * pxh > 24 * pxh - 150 ? 'flip' : ''}`}
+  return <div className={`cue ${master ? 'master-cue' : 'target-cue'} ${selected ? 'sel' : ''} ${mark.disabled ? 'off' : ''} ${mark.pending ? 'pending' : ''} ${ms >= DAY ? 'overflow' : ''} ${flip || clampMs(ms) / HOUR * pxh + (master ? MASTER_CHIP_W : CHIP_W) > 24 * pxh ? 'flip' : ''}`}
     data-cue-id={cue.id} data-action={mark.actionId} data-time={formatTime(base)} role="button" tabIndex={0}
     aria-label={`${cue.name} ${tickLabel(ms, 1)}${mark.pending ? ' 待配置' : ''}`}
     title={`${cue.name}\n事件时间：${formatTime(base)}\n${master ? mark.label : `首次发送：${formatTime(ms)} · ${mark.label}${mark.repeat > 1 ? ` · 重复 ${mark.repeat} 次` : ''}`}\n拖动会整体移动此事件的全部动作和关联目标${ms >= DAY ? '\n已超出当天，不会执行' : ''}`}
-    style={{ left: (clampMs(ms) / HOUR) * pxh, top: 22 + row * 42, '--cue-color': color } as CSSProperties}
+    style={{ left: (clampMs(ms) / HOUR) * pxh, top: PAD_TOP + row * ROW_H, width: master ? MASTER_CHIP_W : CHIP_W, '--cue-color': color } as CSSProperties}
     onClick={choose} onKeyDown={(e) => {
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(); }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); choose(); commit(base + (e.key === 'ArrowLeft' ? -snap : snap) * (e.shiftKey ? 10 : 1)); }
@@ -302,7 +316,7 @@ function CueMark({ tl, mark, color, pxh, snap, row, sel, master = false }: {
       if (s?.moved && s.next !== null) commit(s.next);
       setDrag(null);
     }} onPointerCancel={() => { start.current = null; setDrag(null); }}>
-    <div className="dm" /><div className="lb" style={{ left: labelLeft - x + (master ? 6.5 : 5), width: labelWidth }}><b>{cue.name}</b><small>{tickLabel(ms, 1)}{!master && mark.repeat > 1 ? ` ×${mark.repeat}` : ''}{mark.pending ? ' · 待配置' : ''}</small></div>
+    <span className="dm" /><span className="lb"><b>{cue.name}</b><small>{tickLabel(ms, 1)}{!master && mark.repeat > 1 ? ` ×${mark.repeat}` : ''}{mark.pending ? ' · 待配置' : ''}</small></span>
   </div>;
 }
 

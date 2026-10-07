@@ -98,6 +98,24 @@ export function layoutMarks<T extends { atMs: number }>(marks: T[], pxh: number,
   });
 }
 
+/**
+ * 事件点「胶囊」的分行：胶囊左边缘对齐事件时间（靠右边缘时整体向左翻转），宽度固定；
+ * 横向放不下的下移一行，不隐藏任何事件。返回每个标记所在行与是否翻转。
+ */
+export function layoutChips<T extends { atMs: number }>(marks: T[], pxh: number, width: number, gap = 6): { mark: T; row: number; flip: boolean; left: number }[] {
+  const ends: number[] = [];
+  const total = 24 * pxh;
+  return [...marks].sort((a, b) => a.atMs - b.atMs).map((mark) => {
+    const x = Math.min(DAY_MS - 1, mark.atMs) / 3_600_000 * pxh;
+    const flip = x + width > total;
+    const left = flip ? Math.max(0, x - width) : x;
+    let row = ends.findIndex((end) => left >= end + gap);
+    if (row < 0) row = ends.length;
+    ends[row] = left + width;
+    return { mark, row, flip, left };
+  });
+}
+
 /** 复制模式并重新分配事件/动作 id；模式内部对自己的控制引用也指向新模式。 */
 export function cloneMode(source: Timeline, id: string, newId: (prefix: string) => string): Timeline {
   const next = structuredClone(source);
