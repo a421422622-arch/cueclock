@@ -46,10 +46,28 @@ jobs:
           npm run typecheck
           npm test
 
-      - name: 打包 Windows 版
+      - name: 打包 Windows 版（有签名证书 Secret 时会把 CueClock.exe 签名为 Fawen）
         working-directory: app
         shell: bash
+        env:
+          CUECLOCK_SIGN_PFX_BASE64: ${{ secrets.CUECLOCK_SIGN_PFX_BASE64 }}
+          CUECLOCK_SIGN_PFX_PASSWORD: ${{ secrets.CUECLOCK_SIGN_PFX_PASSWORD }}
         run: node ../windows/build-windows.mjs
+
+      - name: 验证数字签名与文件信息（真实 Windows：信任 Fawen 证书后签名应为有效）
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD 'windows/dist/pkg/CueClock-win32-x64/CueClock.exe'
+          $before = Get-AuthenticodeSignature $exe
+          Write-Host "未信任时：$($before.Status) 发布者：$($before.SignerCertificate.Subject)"
+          $cer = Join-Path $PWD 'windows/Fawen-CodeSigning.cer'
+          foreach ($store in 'Root','TrustedPublisher') { Import-Certificate -FilePath $cer -CertStoreLocation "Cert:\LocalMachine\$store" | Out-Null }
+          $sig = Get-AuthenticodeSignature $exe
+          Write-Host "信任 Fawen 证书后：$($sig.Status) 发布者：$($sig.SignerCertificate.Subject) 时间戳：$($sig.TimeStamperCertificate.Subject)"
+          $info = (Get-Item $exe).VersionInfo
+          Write-Host "文件信息：公司=$($info.CompanyName) 产品=$($info.ProductName) 说明=$($info.FileDescription) 版权=$($info.LegalCopyright)"
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'CN=Fawen') { throw '签名验证失败（需要仓库 Secret：CUECLOCK_SIGN_PFX_BASE64 / CUECLOCK_SIGN_PFX_PASSWORD）' }
+          if ($info.CompanyName -ne 'Fawen') { throw 'exe 文件信息里的公司不是 Fawen' }
 
       - name: 打包产物自检（真实 Windows：CueClock.exe 启动引擎并连接）
         shell: pwsh

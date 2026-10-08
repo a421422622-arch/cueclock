@@ -6,8 +6,8 @@
 // 产物：windows/dist/CueClock-<引擎版本>-win-x64.zip（解压后双击 CueClock.exe）。
 // 做了什么：构建界面与引擎（esbuild + vite，和 macOS 同一份代码）→ 只挑运行需要的文件放进暂存目录 →
 //           用 @electron/packager 套上 Windows 版 Electron 运行时 → 补上使用说明 → 压成 zip。
-// 说明：不依赖 wine，也不修改 exe 的图标 / 版本信息（那需要 Windows 上的 rcedit）；窗口 / 任务栏图标由程序在运行时设置。
-//       没有代码签名，Windows SmartScreen 第一次运行会提示「未知发布者」，见 windows/README.md。
+// 说明：在 Windows 上构建时（GitHub Actions）会写入 exe 的图标和版本信息（公司 / 版权 = Fawen）；在 macOS / Linux 上交叉打包则跳过这一步（需要 wine）。
+//       环境变量 CUECLOCK_SIGN_PFX_BASE64 + CUECLOCK_SIGN_PFX_PASSWORD 都设置且在 Windows 上构建时，会用 windows/sign.ps1 把 CueClock.exe 签名为「Fawen」（自签名证书，见 windows/README.md）。
 import { execFileSync, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -22,8 +22,10 @@ const isWin = process.platform === 'win32';
 const npm = isWin ? 'npm.cmd' : 'npm';
 const npx = isWin ? 'npx.cmd' : 'npx';
 const fail = (msg) => { console.error(`✗ ${msg}`); process.exit(1); };
+// Windows 上经 shell 启动（npm.cmd / npx.cmd），含空格或特殊字符的参数必须自己加引号
+const quote = (a) => (isWin && /[\s"&|<>^]/.test(a) ? `"${a.replace(/"/g, '\\"')}"` : a);
 const run = (cmd, args, opts = {}) => {
-  const r = spawnSync(cmd, args, { stdio: 'inherit', shell: isWin, ...opts });
+  const r = spawnSync(cmd, isWin ? args.map(quote) : args, { stdio: 'inherit', shell: isWin, ...opts });
   if (r.status !== 0) fail(`${cmd} ${args.join(' ')} 失败（退出 ${r.status}）`);
 };
 
@@ -61,19 +63,31 @@ writeFileSync(path.join(stage, 'package.json'), JSON.stringify({
   name: 'cueclock', productName: 'CueClock', version: '0.1.0', description: 'CueClock 中控时间线（UDP / TCP 定时与触发）',
   main: 'dist/electron/main.cjs', private: true,
 }, null, 2));
-writeFileSync(path.join(stage, 'release.json'), JSON.stringify({ engineVersion, electronVersion, platform: 'win32', arch, commit, builtAt: new Date().toISOString() }, null, 2));
+writeFileSync(path.join(stage, 'release.json'), JSON.stringify({ engineVersion, electronVersion, platform: 'win32', arch, commit, publisher: 'Fawen', builtAt: new Date().toISOString() }, null, 2));
 
 // 3. 套上 Windows 版 Electron 运行时（首次会从 GitHub 下载约 100MB 的 Electron，之后走缓存）
+// 图标与版本信息要用 rcedit（只能在 Windows 上跑）；交叉打包时不带这些参数
+const native = isWin;
 run(npx, ['--yes', '@electron/packager', stage, 'CueClock', '--platform=win32', `--arch=${arch}`, `--electron-version=${electronVersion}`,
-  `--out=${path.join(out, 'pkg')}`, '--overwrite', '--asar=false', '--no-prune', '--app-copyright=CueClock']);
+  `--out=${path.join(out, 'pkg')}`, '--overwrite', '--asar=false', '--no-prune', '--app-copyright=Copyright (c) 2026 Fawen',
+  ...(native ? [`--icon=${path.join(app, 'assets/icon.ico')}`, '--win32metadata.CompanyName=Fawen', '--win32metadata.ProductName=CueClock',
+    '--win32metadata.FileDescription=CueClock 中控时间线', '--win32metadata.OriginalFilename=CueClock.exe'] : [])]);
 const pkgDir = path.join(out, 'pkg', `CueClock-win32-${arch}`);
 if (!existsSync(path.join(pkgDir, 'CueClock.exe'))) fail('没有生成 CueClock.exe');
 if (!existsSync(path.join(pkgDir, 'resources/app/dist/electron/main.cjs'))) fail('resources/app 里没有主进程文件');
 
-// 4. 使用说明放在 exe 旁边
-cpSync(path.join(here, '使用说明.txt'), path.join(pkgDir, '使用说明.txt'));
+// 4. 数字签名（可选）：自签名证书，发布者显示为 Fawen
+const canSign = isWin && process.env.CUECLOCK_SIGN_PFX_BASE64 && process.env.CUECLOCK_SIGN_PFX_PASSWORD;
+if (canSign) {
+  run('powershell', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(here, 'sign.ps1'), '-File', path.join(pkgDir, 'CueClock.exe')]);
+} else {
+  console.log('· 未签名（' + (isWin ? '没有设置签名证书环境变量' : '只有在 Windows 上构建才能签名') + '）');
+}
 
-// 5. zip
+// 5. 使用说明、证书（公钥）和信任脚本放在 exe 旁边
+for (const f of ['使用说明.txt', 'Fawen-CodeSigning.cer', 'trust-fawen-certificate.ps1']) cpSync(path.join(here, f), path.join(pkgDir, f));
+
+// 6. zip（签名之后再压，否则 zip 里是未签名的 exe）
 const zipName = `CueClock-${engineVersion}-win-${arch}.zip`;
 const zipPath = path.join(out, zipName);
 const folderName = path.basename(pkgDir);
