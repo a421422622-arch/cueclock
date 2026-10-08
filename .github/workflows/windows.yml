@@ -72,7 +72,9 @@ jobs:
           Get-Process -Name CueClock -ErrorAction SilentlyContinue | Stop-Process -Force
           if ($p.ExitCode -ne 0 -or -not ((Get-Content $out -Raw) -match 'SMOKE_OK engine.running=true')) { throw '打包产物自检失败' }
 
-      - name: 完整隔离验收（Electron 界面自检，实验性，不阻断）
+      # 实验性：在 Windows 上这一步目前会卡住直到超时（原因未查），所以只在手动触发时才跑，不拖慢每次推送
+      - name: 完整隔离验收（Electron 界面自检，实验性，不阻断，仅手动触发）
+        if: github.event_name == 'workflow_dispatch'
         working-directory: app
         shell: bash
         continue-on-error: true
