@@ -1,7 +1,7 @@
 import net from 'node:net';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Command, Device, Project, Scene } from './types.ts';
 import { SleepGuard } from './sleepguard.ts';
@@ -24,6 +24,7 @@ import { DEFAULT_PORT, LineReader, PROTOCOL_VERSION, RpcError } from './protocol
 import type { DaemonInfo, EventMessage, Request, Response } from './protocol.ts';
 import { engineHello } from './version.ts';
 import { appendAudit, readAudit } from './audit.ts';
+import { renameReplace } from './atomic.ts';
 import type { AuditEntry } from './audit.ts';
 import { BUNDLE_FORMAT, BUNDLE_VERSION, BundleError, countProject, parseBundle } from './bundle.ts';
 import type { Bundle } from './bundle.ts';
@@ -175,7 +176,7 @@ export class Daemon {
       const temporary = `${this.settingsFile}.${randomBytes(8).toString('hex')}.tmp`;
       try {
         await writeFile(temporary, snapshot, { mode: 0o600, flag: 'wx' });
-        await rename(temporary, this.settingsFile);
+        await renameReplace(temporary, this.settingsFile);
       } finally { await rm(temporary, { force: true }).catch(() => {}); }
     });
     this.settingsWrites = run.catch(() => {});

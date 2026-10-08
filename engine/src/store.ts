@@ -1,7 +1,8 @@
 import { constants } from 'node:fs';
-import { copyFile, mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Project } from './types.ts';
+import { renameReplace } from './atomic.ts';
 
 /** 把任意 JSON 收拾成 Project：缺的数组补空，明显不是项目则抛错。类型细节交给 validateProject。 */
 export function normalizeProject(raw: unknown): Project {
@@ -61,7 +62,7 @@ export class ProjectStore {
     await mkdir(path.dirname(this.file), { recursive: true });
     await this.backupCurrent(opts.forceBackup === true);
     await writeFile(tmp, JSON.stringify(project, null, 2) + '\n', 'utf8');
-    await rename(tmp, this.file);
+    await renameReplace(tmp, this.file);
   }
 
   private async backupCurrent(force = false): Promise<void> {
