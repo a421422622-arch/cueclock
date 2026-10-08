@@ -61,11 +61,15 @@ let success = false;
 try {
   // Windows 默认仍拒绝（尚未在用户的现场电脑上验证）；GitHub Actions 的 windows 工作流设置 CUECLOCK_WINDOWS_VERIFY=1 才放行，用来在真实 Windows 上摸底
   if (process.platform === 'win32' && process.env.CUECLOCK_WINDOWS_VERIFY !== '1') throw new Error('此自动验收入口尚未在Windows验证；请按交接手册进行Windows现场验收（或设置 CUECLOCK_WINDOWS_VERIFY=1 自担风险试跑）');
-  await execute('engine-test', 'npm', ['test'], path.join(root, 'engine'));
-  await execute('engine-types', 'npm', ['run', 'typecheck'], path.join(root, 'engine'));
-  await execute('app-test', 'npm', ['test'], path.join(root, 'app'));
-  await execute('app-types', 'npm', ['run', 'typecheck'], path.join(root, 'app'));
-  await execute('build', 'npm', ['run', 'build'], path.join(root, 'app'));
+  // CUECLOCK_VERIFY_ONLY_SMOKE=1：只跑三个 Electron 自检（测试 / 类型 / 构建已在别处跑过，例如 CI 的前几步）。
+  // 注意：Windows 上经 shell 启动的 npm 超时后 child.kill() 只杀得掉 cmd，杀不掉里面的 node，会一直等——所以 CI 里用这个开关。
+  if (process.env.CUECLOCK_VERIFY_ONLY_SMOKE !== '1') {
+    await execute('engine-test', 'npm', ['test'], path.join(root, 'engine'));
+    await execute('engine-types', 'npm', ['run', 'typecheck'], path.join(root, 'engine'));
+    await execute('app-test', 'npm', ['test'], path.join(root, 'app'));
+    await execute('app-types', 'npm', ['run', 'typecheck'], path.join(root, 'app'));
+    await execute('build', 'npm', ['run', 'build'], path.join(root, 'app'));
+  }
   const binary = process.platform === 'darwin' ? path.join(root, 'app/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron') : path.join(root, process.platform === 'win32' ? 'app/node_modules/electron/dist/electron.exe' : 'app/node_modules/electron/dist/electron');
   for (const mode of ['smoke-test', 'smoke-ui', 'smoke-app']) {
     const folder = path.join(temporary, mode), state = path.join(folder, 'state'), port = await freePort();

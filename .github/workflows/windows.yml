@@ -76,8 +76,10 @@ jobs:
         working-directory: app
         shell: bash
         continue-on-error: true
+        timeout-minutes: 12
         env:
           CUECLOCK_WINDOWS_VERIFY: '1'
+          CUECLOCK_VERIFY_ONLY_SMOKE: '1'
         run: npm run verify:isolated
 
       - name: 上传验收证据（截图、日志、JSON）
