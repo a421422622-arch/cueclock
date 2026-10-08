@@ -59,7 +59,10 @@ jobs:
           $project = Join-Path $state 'project.json'
           '{"name":"CI 冒烟","devices":[],"groups":[],"timelines":[],"triggers":[],"settings":{"recovery":{"enabled":false}}}' | Set-Content -Encoding utf8 $project
           $out = Join-Path $state 'smoke.out.txt'; $err = Join-Path $state 'smoke.err.txt'
-          $p = Start-Process -FilePath $exe -ArgumentList @('--smoke-test','--daemon-port','47955','--state-dir',$state,'--project',$project) -PassThru -Wait -RedirectStandardOutput $out -RedirectStandardError $err
+          # 不能用 -Wait：它会连后台常驻的引擎子进程一起等，永远等不完。只等主进程，最多 120 秒。
+          $p = Start-Process -FilePath $exe -ArgumentList @('--smoke-test','--daemon-port','47955','--state-dir',$state,'--project',$project) -PassThru -RedirectStandardOutput $out -RedirectStandardError $err
+          if (-not $p.WaitForExit(120000)) { Write-Host '主进程 120 秒内没有退出'; $p.Kill() }
+          $p.WaitForExit()
           Write-Host "退出码: $($p.ExitCode)"
           Write-Host '--- stdout ---'; Get-Content $out -ErrorAction SilentlyContinue
           Write-Host '--- stderr ---'; Get-Content $err -ErrorAction SilentlyContinue
