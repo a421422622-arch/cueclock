@@ -74,7 +74,18 @@ jobs:
         working-directory: app
         shell: bash
         continue-on-error: true
+        env:
+          CUECLOCK_WINDOWS_VERIFY: '1'
         run: npm run verify:isolated
+
+      - name: 上传验收证据（截图、日志、JSON）
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-verify-evidence
+          path: .codex-work/
+          if-no-files-found: ignore
+          retention-days: 14
 
       - uses: actions/upload-artifact@v4
         with:

@@ -21,7 +21,8 @@ try { protectedPid = JSON.parse(await readFile(path.join(defaultStateDir(true), 
 
 function execute(name, binary, args, cwd, overrides = {}, timeout = 90000) {
   return new Promise((resolve, reject) => {
-    const child = spawn(binary, args, { cwd, env: { ...env, ...overrides }, windowsHide: true });
+    // Windows 上 npm 是 npm.cmd，需要经过 shell；其他可执行文件（Electron）直接启动
+    const child = spawn(binary, args, { cwd, env: { ...env, ...overrides }, windowsHide: true, shell: process.platform === 'win32' && binary === 'npm' });
     let output = '';
     child.stdout.on('data', (s) => { output += s; }); child.stderr.on('data', (s) => { output += s; });
     const timer = setTimeout(() => child.kill(), timeout);
@@ -58,13 +59,14 @@ async function cleanup({ state, port }) {
 
 let success = false;
 try {
-  if (process.platform === 'win32') throw new Error('此自动验收入口尚未在Windows验证；请按交接手册进行Windows现场验收');
+  // Windows 默认仍拒绝（尚未在用户的现场电脑上验证）；GitHub Actions 的 windows 工作流设置 CUECLOCK_WINDOWS_VERIFY=1 才放行，用来在真实 Windows 上摸底
+  if (process.platform === 'win32' && process.env.CUECLOCK_WINDOWS_VERIFY !== '1') throw new Error('此自动验收入口尚未在Windows验证；请按交接手册进行Windows现场验收（或设置 CUECLOCK_WINDOWS_VERIFY=1 自担风险试跑）');
   await execute('engine-test', 'npm', ['test'], path.join(root, 'engine'));
   await execute('engine-types', 'npm', ['run', 'typecheck'], path.join(root, 'engine'));
   await execute('app-test', 'npm', ['test'], path.join(root, 'app'));
   await execute('app-types', 'npm', ['run', 'typecheck'], path.join(root, 'app'));
   await execute('build', 'npm', ['run', 'build'], path.join(root, 'app'));
-  const binary = process.platform === 'darwin' ? path.join(root, 'app/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron') : path.join(root, 'app/node_modules/electron/dist/electron');
+  const binary = process.platform === 'darwin' ? path.join(root, 'app/node_modules/electron/dist/Electron.app/Contents/MacOS/Electron') : path.join(root, process.platform === 'win32' ? 'app/node_modules/electron/dist/electron.exe' : 'app/node_modules/electron/dist/electron');
   for (const mode of ['smoke-test', 'smoke-ui', 'smoke-app']) {
     const folder = path.join(temporary, mode), state = path.join(folder, 'state'), port = await freePort();
     await mkdir(folder, { recursive: true });
