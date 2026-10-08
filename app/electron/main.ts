@@ -40,6 +40,8 @@ const argValue = (name: string) => {
 };
 
 const isMac = process.platform === 'darwin';
+// Windows：固定应用标识，任务栏分组、通知和「开机启动」条目显示成 CueClock，而不是 electron.exe
+if (process.platform === 'win32') app.setAppUserModelId('com.cueclock.app');
 const stateDir = argValue('--state-dir') ?? defaultStateDir();
 if (ANY_SMOKE) {
   try {
@@ -328,6 +330,7 @@ function createWindow(show: boolean): void {
     title: 'CueClock',
     show,
     autoHideMenuBar: !isMac,
+    ...(isMac ? {} : { icon: path.join(assets, 'icon.png') }), // Windows / Linux 任务栏与窗口图标（macOS 用应用包图标）
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
