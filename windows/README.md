@@ -7,7 +7,7 @@
 两种来源，任选：
 
 1. **GitHub Actions 产物**（在 Windows 机器上构建，推荐）：仓库 → Actions → `windows` → 最近一次成功的运行 → 页面底部 Artifacts → `CueClock-windows-x64`（zip，约 150 MB，保留 30 天）。仓库是私有的，需要登录有权限的账号下载。
-2. **自己打包**（macOS / Linux / Windows 都行，需要 Node ≥ 22.18 和网络）：
+2. **自己打包**（macOS / Linux / Windows 都行，需要 Node ≥ 22.18 和网络；**要带签名和 exe 文件信息只能在 Windows 上构建**，并设置环境变量 `CUECLOCK_SIGN_PFX_BASE64` / `CUECLOCK_SIGN_PFX_PASSWORD`）：
    ```bash
    cd app && npm ci            # 只需第一次
    node ../windows/build-windows.mjs
@@ -18,7 +18,8 @@
 
 解压到固定位置（如 `C:\CueClock\`），双击 `CueClock.exe`。详见 zip 里的 `使用说明.txt`：
 
-- **没有代码签名**：第一次运行 SmartScreen 会提示「未知发布者」，点「更多信息」→「仍要运行」。要消除提示需要购买代码签名证书，目前没做。
+- **代码签名：Fawen（自签名）**：`CueClock.exe` 用名为「Fawen」的自签名证书做了 Authenticode 数字签名（右键 exe → 属性 → 数字签名，发布者是 Fawen；文件被改动签名就会失效）。**自签名证书别的电脑默认不信任**，第一次运行 SmartScreen 仍可能提示：点「更多信息」→「仍要运行」。想让这台电脑信任它：以管理员身份运行 zip 里的 `trust-fawen-certificate.ps1`（把 `Fawen-CodeSigning.cer` 导入本机「受信任的根证书颁发机构」和「受信任的发布者」，只需一次）。要让**所有**电脑直接信任、并逐步消除 SmartScreen 提示，需要向证书机构购买代码签名证书（目前没买）。
+  - 签名私钥只在 `~/CueClock-run/signing/`（本机，不进仓库）和仓库的加密 Secrets（`CUECLOCK_SIGN_PFX_BASE64` / `CUECLOCK_SIGN_PFX_PASSWORD`）里；公钥证书 `windows/Fawen-CodeSigning.cer` 在仓库里。只有在 Windows 上构建（GitHub Actions）才会签名；在 macOS 上交叉打包出来的 zip 是**未签名**的。
 - **防火墙**：第一次运行选「专用网络」并允许；要接收 UDP 触发（监听端口）必须允许。
 - **数据**：`%APPDATA%\CueClock\`（配置、自动备份、日志、操作记录）。换电脑 / 重装用「配置管理 → 导出备份包 / 从备份包恢复」。
 - **关闭窗口** 只是收到系统托盘，引擎和日程继续跑；真正退出走托盘右键菜单。
@@ -53,7 +54,7 @@
 
 ## 给开发者
 
-- 打包脚本不依赖 wine，也不改 exe 的图标 / 版本信息（需要 Windows 上的 rcedit）；窗口 / 任务栏图标在运行时设置（`app/electron/main.ts`，`app.setAppUserModelId` + `BrowserWindow.icon`）。
+- 打包脚本不依赖 wine。在 Windows 上构建时写入 exe 的图标（`app/assets/icon.ico`）和版本信息（公司 / 版权 = Fawen）并签名（`windows/sign.ps1`）；在 macOS / Linux 上交叉打包则跳过这两步。窗口 / 任务栏图标另外在运行时设置（`app/electron/main.ts`，`app.setAppUserModelId` + `BrowserWindow.icon`）。
 - Windows 特有的代码：`engine/src/atomic.ts`（改名覆盖在目标被占用时退避重试，修自 CI 在真实 Windows 上发现的 `EPERM`）、`engine/src/health.ts`（ping 参数）、`engine/src/paths.ts`（`%APPDATA%\CueClock`）、`app/electron/autostart.ts`（登录项）。
 - 本地开发（Windows）：`cd engine && npm ci && npm test`；`cd app && npm ci && node node_modules/electron/install.js && npm test && npm start`。
   （新版 npm 默认不执行依赖的安装脚本，`npm ci` 不会下载 Electron 运行时；如果 `npm start` 找不到 Electron，就运行上面那条 `node node_modules/electron/install.js`。）
