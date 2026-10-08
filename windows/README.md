@@ -55,4 +55,5 @@
 
 - 打包脚本不依赖 wine，也不改 exe 的图标 / 版本信息（需要 Windows 上的 rcedit）；窗口 / 任务栏图标在运行时设置（`app/electron/main.ts`，`app.setAppUserModelId` + `BrowserWindow.icon`）。
 - Windows 特有的代码：`engine/src/atomic.ts`（改名覆盖在目标被占用时退避重试，修自 CI 在真实 Windows 上发现的 `EPERM`）、`engine/src/health.ts`（ping 参数）、`engine/src/paths.ts`（`%APPDATA%\CueClock`）、`app/electron/autostart.ts`（登录项）。
-- 本地开发（Windows）：`cd engine && npm ci && npm test`；`cd app && npm ci && npm test && npm start`。
+- 本地开发（Windows）：`cd engine && npm ci && npm test`；`cd app && npm ci && node node_modules/electron/install.js && npm test && npm start`。
+  （新版 npm 默认不执行依赖的安装脚本，`npm ci` 不会下载 Electron 运行时；如果 `npm start` 找不到 Electron，就运行上面那条 `node node_modules/electron/install.js`。）

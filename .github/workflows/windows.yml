@@ -41,6 +41,8 @@ jobs:
         shell: bash
         run: |
           npm ci
+          # 新版 npm 默认不执行依赖的安装脚本，Electron 的运行时文件不会自动下载：手动下载一次（界面自检要用）
+          node node_modules/electron/install.js
           npm run typecheck
           npm test
 
