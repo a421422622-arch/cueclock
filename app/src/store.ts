@@ -550,7 +550,7 @@ export const dismissLastApplied = () => set({ lastApplied: null });
 
 export function edit(fn: (draft: Project) => void): void {
   if (!state.project) return;
-  if (state.configurationView !== 'draft') { toast('当前查看引擎配置，只读；请切到编辑草稿'); return; }
+  if (state.configurationView !== 'draft') { toast('当前是「运行」视图，只读；请切到顶栏「编辑」'); return; }
   if (state.engineUpdate && !state.engineUpdate.compatible) { toast('界面与引擎协议或功能版本不兼容，请先确认重启引擎后再编辑'); return; }
   if (isLocked()) { denyLocked(); return; }
   const next = structuredClone(state.project);

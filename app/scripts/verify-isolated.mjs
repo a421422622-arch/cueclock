@@ -25,14 +25,18 @@ function execute(name, binary, args, cwd, overrides = {}, timeout = 90000) {
     const child = spawn(binary, args, { cwd, env: { ...env, ...overrides }, windowsHide: true, shell: process.platform === 'win32' && binary === 'npm' });
     let output = '';
     child.stdout.on('data', (s) => { output += s; }); child.stderr.on('data', (s) => { output += s; });
-    const timer = setTimeout(() => child.kill(), timeout);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; child.kill(); }, timeout);
     child.on('error', (e) => { clearTimeout(timer); reject(e); });
     child.on('close', async (code) => {
       clearTimeout(timer);
       await writeFile(path.join(evidence, `${name}.log`), output);
-      results.push({ name, exitCode: code });
-      console.log(`${name}: ${code === 0 ? 'PASS' : 'FAIL'}`);
-      if (code !== 0) reject(new Error(`${name} 失败，日志：${evidence}`)); else resolve(output);
+      // 超时被结束时 Electron 会正常退出（退出码 0、没有结果输出），必须按失败处理并说明原因
+      if (timedOut) output += `\n[verify] ${name} 超过 ${timeout / 1000} 秒未结束，已终止`;
+      if (timedOut) await writeFile(path.join(evidence, `${name}.log`), output);
+      results.push({ name, exitCode: timedOut ? 'timeout' : code });
+      console.log(`${name}: ${code === 0 && !timedOut ? 'PASS' : timedOut ? `FAIL（超过 ${timeout / 1000} 秒）` : 'FAIL'}`);
+      if (code !== 0 || timedOut) reject(new Error(`${name} 失败，日志：${evidence}`)); else resolve(output);
     });
   });
 }
@@ -82,7 +86,8 @@ try {
     const record = { state, port }; daemons.push(record);
     const args = [path.join(root, 'app/dist/electron/main.cjs'), `--${mode}`, '--daemon-port', String(port), '--state-dir', state, '--project', file];
     if (mode === 'smoke-ui') args.push('--screenshot', path.join(evidence, 'smoke-ui.png'), '--clipping-dir', path.join(evidence, 'clipping'));
-    const output = await execute(mode, binary, args, root, { CUECLOCK_HOME: state, CUECLOCK_AUTOSTART_HOME: path.join(folder, 'login-home') }, 60000);
+    // smoke-ui 覆盖的真实界面流程较多（运行配置、快速跳转、模板、帧率、截断矩阵、补充截图），给 150 秒
+    const output = await execute(mode, binary, args, root, { CUECLOCK_HOME: state, CUECLOCK_AUTOSTART_HOME: path.join(folder, 'login-home') }, mode === 'smoke-ui' ? 150000 : 60000);
     if (mode === 'smoke-test') {
       if (!output.includes('SMOKE_OK engine.running=true')) throw new Error('引擎冒烟结果未确认');
     } else {

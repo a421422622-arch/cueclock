@@ -254,7 +254,7 @@ export function Timeline() {
             <div className="track master-track" style={{ width: W, height: masterHeight }} onDoubleClick={(e) => addCue(e)}>
               {mainShown.map(({ mark, row, flip, w }) => <CueMark key={mark.key} tl={tl} mark={mark} color={color} pxh={pxh} snap={snap} row={row} flip={flip} w={w} sel={sel} master />)}
               <MoreBadges layout={mainLayout} onFocus={focusAt} />
-              {!tl.cues.length && <span className="track-empty">{readonly ? '运行配置没有事件点；切到编辑草稿可新增' : '双击主时间轴新建多目标事件，或双击下面的目标小时间轴'}</span>}
+              {!tl.cues.length && <span className="track-empty">{readonly ? '运行配置没有事件点；切到「编辑」可新增' : '双击主时间轴新建多目标事件，或双击下面的目标小时间轴'}</span>}
             </div>
           </div>
           {expanded && filtered.map((track) => <TrackRow key={track.device.id} track={track} tl={tl} project={project}

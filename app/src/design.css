@@ -10,7 +10,7 @@
 /* ───────── 基础 ───────── */
 body { font-size: 13px; line-height: 1.45; font-feature-settings: "tnum" 1, "cv11" 1; -webkit-font-smoothing: antialiased; }
 .icon { flex: none; vertical-align: -3px; }
-::selection { background: color-mix(in srgb, var(--amber) 35%, transparent); }
+::selection { background: color-mix(in srgb, var(--accent) 35%, transparent); }
 * { scrollbar-width: thin; scrollbar-color: #2c3240 transparent; }
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #2c3240; border-radius: 6px; border: 2px solid transparent; background-clip: content-box; }
@@ -21,7 +21,7 @@ button { display: inline-flex; align-items: center; justify-content: center; gap
 button:hover:not(:disabled) { background: var(--s4); border-color: #434b5c; }
 button:active:not(:disabled) { transform: translateY(.5px); }
 button:focus-visible { outline: none; box-shadow: var(--ring); }
-button.primary { background: var(--accent); border-color: var(--accent); color: #1a1205; font-weight: 600; box-shadow: 0 1px 0 #ffffff33 inset, 0 1px 8px color-mix(in srgb, var(--amber) 25%, transparent); }
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; box-shadow: 0 1px 0 #ffffff33 inset, 0 1px 8px color-mix(in srgb, var(--accent) 25%, transparent); }
 button.primary:hover:not(:disabled) { background: #ffc269; border-color: #ffc269; }
 button.danger { color: #ff9b9b; }
 button.danger:hover:not(:disabled) { border-color: var(--err); background: color-mix(in srgb, var(--err) 14%, var(--s2)); }
@@ -51,8 +51,8 @@ select { padding-right: 4px; }
 .projname:hover:not(:focus) { background: var(--s2); border-color: var(--line); }
 .savestate { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 12px; background: var(--s2); border: 1px solid var(--line); font-size: 11.5px; color: var(--muted); }
 .savestate::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
-.savestate.dirty, .savestate.saving { color: var(--amber); border-color: var(--accent-line); background: var(--accent-soft); }
-.savestate.dirty::before, .savestate.saving::before { background: var(--amber); }
+.savestate.dirty, .savestate.saving { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); background: color-mix(in srgb, var(--warn) 12%, transparent); }
+.savestate.dirty::before, .savestate.saving::before { background: var(--warn); }
 .savestate.error, .savestate.conflict { color: var(--err); border-color: color-mix(in srgb, var(--err) 50%, transparent); }
 .savestate.error::before, .savestate.conflict::before { background: var(--err); }
 .clock { display: flex; flex-direction: column; align-items: center; padding: 0 6px; }
@@ -64,8 +64,8 @@ select { padding-right: 4px; }
 .next .v em { color: var(--cyan); font-variant-numeric: tabular-nums; margin-left: 4px; }
 .estop { background: color-mix(in srgb, var(--err) 12%, var(--s2)); border-color: color-mix(in srgb, var(--err) 55%, transparent); color: #ff9b9b; font-weight: 600; min-height: 32px; padding: 0 14px; border-radius: 16px; }
 .estop:hover:not(:disabled) { background: color-mix(in srgb, var(--err) 22%, var(--s2)); border-color: var(--err); }
-.estop.on { background: var(--warn); border-color: var(--warn); color: #231805; box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 25%, transparent); }
-.estop.on:hover:not(:disabled) { background: #ffcb62; }
+.estop.on { background: var(--paused); border-color: var(--paused); color: var(--on-paused); box-shadow: 0 0 0 3px color-mix(in srgb, var(--paused) 25%, transparent); }
+.estop.on:hover:not(:disabled) { background: color-mix(in srgb, var(--paused) 85%, #fff); }
 .alertpill, .lockpill { border-radius: 16px; min-height: 30px; }
 .alertpill.warn, .lockpill { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); background: color-mix(in srgb, var(--warn) 10%, var(--s2)); }
 .alertpill.bad { color: #ff9b9b; border-color: color-mix(in srgb, var(--err) 55%, transparent); background: color-mix(in srgb, var(--err) 12%, var(--s2)); }
@@ -448,16 +448,16 @@ button.link { background: none; border: 0; }
 .configuration-switch button { height: 26px; padding: 0 10px; gap: 5px; font-size: 12px; border: 0; background: none; color: var(--muted); border-radius: calc(var(--r-md) - 2px); }
 .configuration-switch button:hover:not([aria-pressed="true"]) { color: var(--ink2); background: var(--s3); }
 .configuration-switch button[aria-pressed="true"] { background: var(--s4); color: var(--ink); box-shadow: 0 1px 2px rgb(0 0 0 / .3); }
-.configuration-view.draft .configuration-switch button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.configuration-view.draft .configuration-switch button[aria-pressed="true"] { background: color-mix(in srgb, var(--editing) 14%, transparent); color: var(--editing); }
 .configuration-state { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; white-space: nowrap; color: var(--muted); }
 .configuration-state > i { width: 7px; height: 7px; border-radius: 50%; background: var(--subtle); flex: none; }
 .configuration-state.ok { color: var(--ok); } .configuration-state.ok > i { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent); }
-.configuration-state.warn { color: var(--amber); } .configuration-state.warn > i { background: var(--amber); }
+.configuration-state.warn { color: var(--warn); } .configuration-state.warn > i { background: var(--warn); }
 .configuration-state.bad { color: var(--err); } .configuration-state.bad > i { background: var(--err); }
-.configuration-state.draft { color: var(--accent); } .configuration-state.draft > i { background: var(--accent); }
+.configuration-state.draft { color: var(--editing); } .configuration-state.draft > i { background: var(--editing); }
 .configuration-refresh { width: 28px; height: 28px; padding: 0; justify-content: center; }
 /* 草稿模式：中间区域顶部一条强调色线，和「正在运行」一眼可分 */
-.center.draft-mode .viewtabs { box-shadow: inset 0 2px 0 var(--accent); }
+.center.draft-mode .viewtabs { box-shadow: inset 0 2px 0 var(--editing); }
 /* 中间区域变窄：先收起未选中页签的文字，再收起状态文字（悬停仍有完整说明） */
 @container (max-width: 860px) { .viewtabs > span:not(.on) em { display: none; } .viewtabs > span:not(.on) { padding: 0 11px; } }
 @container (max-width: 600px) { .configuration-state > span { display: none; } .viewtabs > span em { display: none; } }
@@ -490,8 +490,8 @@ button.primary:disabled { background: var(--s3); border-color: var(--line); colo
 .ln .sys { color: var(--subtle); }
 
 /* ───────── 检查并应用：正在执行的动作 / 今天剩余日程 ───────── */
-.apply-inflight { margin: 0 0 14px; padding: 10px 12px; border-radius: var(--r-md); border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent); background: color-mix(in srgb, var(--amber) 8%, var(--s2)); }
-.apply-inflight .sech { margin-top: 0; color: var(--amber); }
+.apply-inflight { margin: 0 0 14px; padding: 10px 12px; border-radius: var(--r-md); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); background: color-mix(in srgb, var(--warn) 8%, var(--s2)); }
+.apply-inflight .sech { margin-top: 0; color: var(--warn); }
 .apply-inflight ul { margin: 6px 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
 .apply-inflight li { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
 .apply-inflight li span { color: var(--muted); }
@@ -503,7 +503,7 @@ button.primary:disabled { background: var(--s3); border-color: var(--line); colo
 .today-changes .n { overflow-wrap: anywhere; }
 .today-changes .t { color: var(--muted); white-space: nowrap; }
 .today-changes li.added .k { color: var(--ok); }
-.today-changes li.removed .k, .today-changes li.gone-past .k, .today-changes li.already-fired .k { color: var(--amber); }
+.today-changes li.removed .k, .today-changes li.gone-past .k, .today-changes li.already-fired .k { color: var(--warn); }
 .today-changes li.moved .k, .today-changes li.changed .k, .today-changes li.mode .k { color: var(--cyan); }
 button.danger-outline { border-color: color-mix(in srgb, var(--err) 55%, transparent); color: var(--err); background: transparent; }
 button.danger-outline:hover:not(:disabled) { background: color-mix(in srgb, var(--err) 12%, transparent); }
@@ -517,7 +517,7 @@ button.danger-outline:hover:not(:disabled) { background: color-mix(in srgb, var(
 .resume-summary > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 
 /* 本模式有「已配好动作但未启用」的事件时出现的批量启用按钮 */
-.enable-all { height: 24px; padding: 0 9px; gap: 5px; font-size: 11.5px; color: var(--amber); border-color: var(--accent-line); background: var(--accent-soft); flex: none; white-space: nowrap; }
+.enable-all { height: 24px; padding: 0 9px; gap: 5px; font-size: 11.5px; color: var(--warn); border-color: var(--accent-line); background: var(--accent-soft); flex: none; white-space: nowrap; }
 .enable-all:disabled { color: var(--subtle); border-color: var(--line); background: transparent; opacity: 1; }
 
 /* ───────── 在线检测记录窗口 ───────── */
@@ -546,7 +546,7 @@ button.danger-outline:hover:not(:disabled) { background: color-mix(in srgb, var(
 .ping-list .det { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink2); }
 .health-bar { display: flex; align-items: center; gap: 12px; margin: 0 0 8px; padding: 6px 10px; border-radius: var(--r-md); background: var(--s2); border: 1px solid var(--line); font-size: 12px; color: var(--muted); }
 .health-bar > span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-.health-bar[data-paused="true"] { border-color: color-mix(in srgb, var(--amber) 50%, transparent); background: color-mix(in srgb, var(--amber) 8%, var(--s2)); color: var(--amber); }
+.health-bar[data-paused="true"] { border-color: color-mix(in srgb, var(--paused) 50%, transparent); background: color-mix(in srgb, var(--paused) 8%, var(--s2)); color: var(--paused); }
 
 /* 设备行：名字前是在线状态灯，轨道颜色是名字后的小色块 */
 .dev .n .statusdot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--subtle); }
@@ -573,9 +573,9 @@ button.danger-outline:hover:not(:disabled) { background: color-mix(in srgb, var(
 .padtile .pf { position: absolute; left: 10px; bottom: 8px; display: inline-flex; align-items: center; gap: 5px; font-size: 10.5px; font-weight: 600; letter-spacing: .2px; padding: 1px 7px; border-radius: 9px; background: color-mix(in srgb, var(--s1) 70%, transparent); color: var(--muted); }
 .padtile .pf.on { color: var(--ok); } .padtile .pf.on i { width: 6px; height: 6px; border-radius: 50%; background: var(--ok); }
 .padtile .pf.off { color: var(--muted); }
-.padtile .pf.warn { color: var(--amber); }
+.padtile .pf.warn { color: var(--warn); }
 .padtile.unknown { border-style: dashed; opacity: .88; }
-.padtile.mismatch { outline: 2px solid color-mix(in srgb, var(--amber) 80%, transparent); outline-offset: -2px; }
+.padtile.mismatch { outline: 2px solid color-mix(in srgb, var(--warn) 80%, transparent); outline-offset: -2px; }
 
 
 /* 备份包 */
@@ -660,7 +660,7 @@ button:active:not(:disabled) { transform: translateY(.5px); }
 
 
 /* 检查器：选中项有未应用改动时，可以只保存并应用这一项 */
-.item-apply { display: flex; align-items: center; gap: 8px; margin: 10px 14px 0; padding: 7px 7px 7px 11px; border-radius: var(--r-md); background: var(--accent-soft); border: 1px solid var(--accent-line); color: var(--amber); font-size: 12px; }
+.item-apply { display: flex; align-items: center; gap: 8px; margin: 10px 14px 0; padding: 7px 7px 7px 11px; border-radius: var(--r-md); background: color-mix(in srgb, var(--warn) 12%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); color: var(--warn); font-size: 12px; }
 .item-apply > span { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .item-apply small { color: var(--muted); font-size: 11px; }
 .item-apply button { height: 26px; padding: 0 10px; font-size: 12px; flex: none; }
@@ -679,3 +679,69 @@ button:active:not(:disabled) { transform: translateY(.5px); }
 .logtools .logsearch { height: 26px; width: 160px; min-width: 60px; flex: 0 1 160px; font-size: 12px; }
 .logtools .logday { flex: 0 1 auto; min-width: 0; }
 .logfoot { flex: none; padding: 3px 12px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--line); background: var(--s1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 字段说明按需出现：纯文字说明默认收起；聚焦该项、点 ⓘ 固定、或「显示全部说明」时显示。状态（错误 / 预览 / 结果）一直显示 */
+.fv > .hint.help { display: none; }
+.fv:focus-within > .hint.help, .fv > .hint.help.pinned, .hints-all .fv > .hint.help { display: block; }
+.fl .hint-i { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; min-height: 0; margin-left: 5px; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: transparent; color: var(--subtle); font: 600 9px/1 var(--mono); vertical-align: 1px; cursor: help; opacity: .7; }
+.fl .hint-i:hover, .fl .hint-i.on { opacity: 1; color: var(--ink2); border-color: var(--ink2); }
+.hints-all .fl .hint-i { display: none; }
+
+/* 软件设置：搜索、已改标记 */
+.settings-search { position: sticky; top: -16px; z-index: 2; display: flex; flex-direction: column; gap: 4px; margin: -4px 0 6px; padding: 6px 0 8px; background: var(--s1); }
+.settings-search input { height: 32px; font-size: 13px; }
+.settings-search .hint { margin: 0; font-size: 11px; }
+.fl.mod { position: relative; color: var(--ink2); }
+.fl.mod::before { content: ""; position: absolute; left: -9px; top: 6px; bottom: 6px; width: 3px; border-radius: 2px; background: var(--accent); }
+.fv > .reset-default { display: inline-block; margin-left: 8px; padding: 0; height: auto; font-size: 11.5px; color: var(--muted); background: none; border: 0; text-decoration: underline; text-underline-offset: 2px; }
+.fv > .reset-default:hover { color: var(--ink); }
+
+/* 新建设备：模板菜单 */
+.addmenu { display: inline-flex; }
+.side .sechead { position: relative; }
+.addmenu-pop { position: absolute; top: calc(100% + 4px); left: 8px; right: 8px; z-index: 40; padding: 4px; background: var(--s1); border: 1px solid var(--line); border-radius: var(--r-lg); box-shadow: 0 12px 32px #0008; display: flex; flex-direction: column; gap: 2px; }
+.addmenu-pop button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; height: auto; padding: 7px 10px; text-align: left; background: none; border: 0; border-radius: var(--r-md); font-size: 12.5px; color: var(--ink); white-space: normal; }
+.addmenu-pop button:hover, .addmenu-pop button:focus-visible { background: var(--s2); }
+.addmenu-pop small { color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.4; }
+
+/* ⌘K 快速跳转 */
+.palette-bg { align-items: flex-start; padding-top: 12vh; }
+.palette { width: min(640px, 92vw); max-height: 70vh; display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+.palette-input { display: flex; align-items: center; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--line); color: var(--muted); }
+.palette-input input { flex: 1; height: 30px; border: 0; background: none; box-shadow: none; font-size: 15px; padding: 0; }
+.palette-input input:focus { box-shadow: none; }
+.palette kbd { display: inline-block; min-width: 18px; padding: 1px 5px; border: 1px solid var(--line); border-radius: 4px; font: 10.5px/1.5 var(--mono); color: var(--muted); text-align: center; }
+.palette-list { flex: 1; overflow: auto; padding: 6px; }
+.palette-item { display: flex; align-items: baseline; gap: 10px; padding: 7px 10px; border-radius: var(--r-md); cursor: pointer; min-width: 0; }
+.palette-item.on { background: var(--s2); }
+.palette-item .g { flex: none; width: 56px; font-size: 11px; color: var(--subtle); }
+.palette-item .l { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); font-size: 13px; }
+.palette-item .s { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11.5px; }
+.palette-foot { display: flex; gap: 16px; padding: 7px 14px; border-top: 1px solid var(--line); font-size: 11px; color: var(--muted); }
+.viewtabs .palette-open { flex: none; margin-right: 6px; }
+/* 说明按钮固定在标签列右侧，不随长标签换行 */
+.fl:has(.hint-i) { position: relative; padding-right: 18px; }
+.fl .hint-i { position: absolute; right: 2px; top: 8px; margin: 0; }
+
+
+/* ───── 颜色语义（2026-10-09 界面焕新）─────
+ * --accent：品牌与主按钮、选中、焦点；--warn：需要留意（草稿未应用、警告）；--err：错误 / 离线；
+ * --paused：自动日程已暂停（手动状态）；--editing：正在编辑草稿。正常状态尽量不用颜色。
+ * data-palette 切换整套强调色，供挑选方案；默认 classic = 原来的琥珀色外观。 */
+:root { --on-accent: #1a1205; --paused: var(--warn); --on-paused: #231805; --editing: var(--accent); }
+html[data-palette="calm"] { --accent: #6ea8fe; --on-accent: #0b1424; --accent-soft: color-mix(in srgb, #6ea8fe 14%, transparent); --accent-line: color-mix(in srgb, #6ea8fe 45%, transparent); --ring: 0 0 0 3px color-mix(in srgb, #6ea8fe 30%, transparent); --paused: #b794f6; --on-paused: #170c2b; --editing: #6ea8fe; }
+html[data-palette="neutral"] { --accent: #e8eaf0; --on-accent: #111318; --accent-soft: color-mix(in srgb, #e8eaf0 10%, transparent); --accent-line: color-mix(in srgb, #e8eaf0 35%, transparent); --ring: 0 0 0 3px color-mix(in srgb, #e8eaf0 25%, transparent); --paused: #b794f6; --on-paused: #170c2b; --editing: #5ac8fa; }
+
+/* 顶栏：运行 / 编辑 + 状态（合并后全界面唯一一处） */
+.top .mode-control { gap: 6px; padding: 0; }
+.top .mode-control .configuration-switch button { height: 28px; padding: 0 10px; gap: 5px; font-size: 12.5px; }
+.savestate.ok { color: var(--ok); }
+.savestate.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); } .savestate.warn::before { background: var(--warn); }
+.savestate.bad { color: var(--err); border-color: color-mix(in srgb, var(--err) 50%, transparent); } .savestate.bad::before { background: var(--err); }
+.mode-control.draft .savestate.saved { color: var(--editing); border-color: color-mix(in srgb, var(--editing) 40%, transparent); } .mode-control.draft .savestate.saved::before { background: var(--editing); }
+.savestate.mode-state { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.configuration-tools { display: flex; align-items: center; gap: 6px; flex: none; }
+/* 顶栏让位给「运行 / 编辑」：配置管理只留图标（悬停显示全名和当前配置），下一事件框可收窄 */
+.top .projbtn { padding: 0 9px; }
+.top .nic { flex: none; }
+.top .next { flex: 0 1 230px; min-width: 110px; }

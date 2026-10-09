@@ -398,7 +398,7 @@ function CommandBody({ a, onChange, triggerTemplate = false, sliderSample }: { a
 
   return (
     <>
-      <Field label="指令" hint={cmd.note}>
+      <Field label="指令" hint={cmd.note} status>
         <span className="row">
           <select value={a.commandId} onChange={(e) => onChange({ ...a, commandId: e.target.value, args: {} })}>
             {commands.map((c) => (
@@ -409,7 +409,7 @@ function CommandBody({ a, onChange, triggerTemplate = false, sliderSample }: { a
         </span>
       </Field>
       {(cmd.params ?? []).map((p) => (
-        <Field key={p.name} label={p.label || p.name} hint={p.default === undefined ? <span className={missing.includes(p.name) ? 'err' : ''}>必填</span> : `默认 ${p.default || '（空）'}`}>
+        <Field key={p.name} label={p.label || p.name} hint={p.default === undefined ? <span className={missing.includes(p.name) ? 'err' : ''}>必填</span> : `默认 ${p.default || '（空）'}`} status>
           <input className={`mono ${missing.includes(p.name) ? 'bad' : ''}`} value={a.args?.[p.name] ?? ''} placeholder={p.default ?? ''} onChange={(e) => setArg(p.name, e.target.value)} />
         </Field>
       ))}
@@ -480,7 +480,7 @@ function SceneBody({ a, onChange }: { a: Extract<Action, { type: 'scene' }>; onC
   }
   return (
     <>
-      <Field label="场景" hint={scene.note}>
+      <Field label="场景" hint={scene.note} status>
         <span className="row">
           <select value={a.sceneId} onChange={(e) => onChange({ ...a, sceneId: e.target.value })}>
             {scenes.map((s) => (
@@ -493,7 +493,7 @@ function SceneBody({ a, onChange }: { a: Extract<Action, { type: 'scene' }>; onC
       <Field label="整体偏移" hint="整个场景相对事件点后移；场景内部的延时只在场景内部生效，不会顺延后面的动作">
         <span className="row"><NumInput value={a.offsetMs ?? 0} onChange={(x) => onChange({ ...a, offsetMs: x ?? 0 })} width={64} />ms</span>
       </Field>
-      <Field label="将发送" hint={resolved && resolved.errors.length > 0 ? <span className="err">{resolved.errors.join('；')}</span> : `${items.length} 个执行点`}>
+      <Field label="将发送" hint={resolved && resolved.errors.length > 0 ? <span className="err">{resolved.errors.join('；')}</span> : `${items.length} 个执行点`} status>
         <div className="sceneprev">
           {items.length === 0 && <span className="dim">（场景是空的）</span>}
           {items.map((x, i) => (

@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import type { NetworkSettings, NicInfo } from '@engine/network.ts';
-import { closeSettings, lockNow, openUnlock, removeLockPassword, rpc, setConfigurationPage, setLockPassword, toast, useStore } from '../store.ts';
+import { closeSettings, getState as useStoreGet, lockNow, openSettings, openUnlock, removeLockPassword, rpc, setConfigurationPage, setLockPassword, toast, useStore } from '../store.ts';
 import { checkNewPassword } from '../lib/lockUi.ts';
 import { resetLayout } from '../lib/layoutStore.ts';
 import { autoZoomController } from '../lib/autoZoomRuntime.ts';
 import { appBridge } from '../transport.ts';
 import type { AppState } from '../transport.ts';
 import { RpcFailure } from '../transport.ts';
-import { Check, Field, NumInput, Seg, useAdvanced } from './fields.tsx';
+import { Check, Field, hintsAll, NumInput, palette, Seg, setHintsAll, setPalette, useAdvanced } from './fields.tsx';
+import type { Palette } from './fields.tsx';
 import { RestartEngineButton } from './EngineVersion.tsx';
 import { ConfigurationFiles } from './ConfigurationFiles.tsx';
 
@@ -38,20 +39,45 @@ export function SettingsDialog() {
         <div className="mb">
           <div id="configuration-files-panel" className="configuration-panel" role="tabpanel" aria-labelledby="configuration-files-tab" hidden={page !== 'files'}><ConfigurationFiles /></div>
           <div id="configuration-software-panel" className="configuration-panel" role="tabpanel" aria-labelledby="configuration-software-tab" hidden={page !== 'software'}>
-            <div className="hint configuration-intro">用于这台电脑的引擎、网络、启动和编辑锁设置，不写入配置文件。</div>
-            <div className="sech">引擎版本与运行</div>
-            <EngineVersionSection />
-            <NetworkSection />
-            <StartupSection />
-            <RuntimeSection />
-            <LockSection />
-            <ExitSection />
+            <SoftwareSettings />
           </div>
         </div>
         <div className="mf"><button onClick={closeSettings}>关闭</button></div>
       </div>
     </div>
   );
+}
+
+/** 软件设置的分区：常用的在前；搜索按标题和关键词过滤整个分区。 */
+const SECTIONS: { id: string; title: string; keywords: string; render: () => React.ReactNode }[] = [
+  { id: 'network', title: '本机网络', keywords: '网卡 网络 IP 子网 源端口 本地端口 端口 监听 触发器 广播 路由', render: () => <NetworkSection /> },
+  { id: 'startup', title: '启动与后台', keywords: '开机 自启 自动启动 登录 守护 关闭按钮 关闭窗口 托盘 菜单栏 后台 询问', render: () => <StartupSection /> },
+  { id: 'runtime', title: '无人值守运行', keywords: '休眠 睡眠 防止休眠 日志 保留 天数 永久 日志文件夹', render: () => <RuntimeSection /> },
+  { id: 'ui', title: '界面', keywords: '布局 缩放 窗口 说明 提示 帮助 显示全部说明 配色 颜色 主题 退出 停止引擎', render: () => <ExitSection /> },
+  { id: 'lock', title: '编辑锁', keywords: '密码 锁定 解锁 编辑锁 权限', render: () => <LockSection /> },
+  { id: 'engine', title: '引擎版本与运行', keywords: '引擎 版本 重启引擎 更新', render: () => <><div className="sech">引擎版本与运行</div><EngineVersionSection /></> },
+];
+
+let pendingQuery = '';
+/** 从快速跳转打开「软件设置」并预先填好搜索词。 */
+export function openSettingsSearch(query: string): void {
+  pendingQuery = query;
+  if (useStoreGet().settingsOpen) closeSettings(); // 已打开时重新挂载，让搜索词生效
+  setTimeout(openSettings, 0);
+}
+
+function SoftwareSettings() {
+  const [q, setQ] = useState(() => { const x = pendingQuery; pendingQuery = ''; return x; });
+  const terms = q.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const shown = SECTIONS.filter((x) => terms.every((t) => `${x.title} ${x.keywords}`.toLowerCase().includes(t)));
+  return <>
+    <div className="settings-search">
+      <input type="search" value={q} placeholder="搜索设置，如：源端口、日志、开机、密码…" aria-label="搜索设置" onChange={(e) => setQ(e.target.value)} />
+      <span className="hint">只影响这台电脑，不写入配置文件。左侧有色条的是改过的项。</span>
+    </div>
+    {shown.length === 0 && <div className="empty">没有匹配「{q}」的设置。</div>}
+    {shown.map((x) => <section key={x.id} className="settings-section" data-section={x.id}>{x.render()}</section>)}
+  </>;
 }
 
 function EngineVersionSection() {
@@ -156,10 +182,10 @@ function NetworkSection() {
         </Field>
         {adv.toggle}
         {adv.shown && <>
-        <Field label="本地源端口" hint="留空 = 每次启动由系统随机分配，之后一直用这个端口。固定后，设备回包都回到这个端口，便于防火墙放行。每条指令还可以在它的「高级选项」里单独选「每次随机」或「指定端口」。目标端口请在每条指令里设置">
+        <Field label="本地源端口" modified={port !== undefined} onReset={() => setPort(undefined)} hint="留空 = 每次启动由系统随机分配，之后一直用这个端口。固定后，设备回包都回到这个端口，便于防火墙放行。每条指令还可以在它的「高级选项」里单独选「每次随机」或「指定端口」。目标端口请在每条指令里设置">
           <NumInput value={port} min={1} max={65535} width={90} allowEmpty onChange={setPort} />
         </Field>
-        <Field label="触发器监听" hint="接收触发的 UDP 端口绑定在哪里">
+        <Field label="触发器监听" modified={listenAll} onReset={() => setListenAll(false)} hint="接收触发的 UDP 端口绑定在哪里；改完点下面的「应用并重启引擎」">
           <Check checked={listenAll} onChange={setListenAll} label="监听所有网卡" />
           <div className="hint">{listenAll ? '⚠ 所有网卡都能收到触发包（含办公网/外网口），请确保触发器有来源白名单' : addrs.length ? `只监听已勾选的网卡：${addrs.join('、')}` : '没勾选网卡时监听所有网卡'}</div>
         </Field>
@@ -217,7 +243,7 @@ function StartupSection() {
             )}
             {!st.isPackaged && <div className="hint">当前是开发版运行：启动项登记的是本目录的 Electron，移动或删除本目录后会失效。</div>}
           </Field>
-          <Field label="点关闭按钮时" hint="无论选哪个，引擎都在后台独立运行，定时日程和 UDP 触发不受影响。停止引擎请用下面的「退出并停止引擎」或托盘菜单">
+          <Field label="关闭按钮" modified={st.closeAction !== 'ask'} onReset={() => void appBridge!.appAction('setCloseAction', 'ask')} hint="无论选哪个，引擎都在后台独立运行，定时日程和 UDP 触发不受影响。停止引擎请用下面的「退出并停止引擎」或托盘菜单">
             <Seg value={st.closeAction} options={[{ value: 'ask', label: '每次询问' }, { value: 'tray', label: `收到${st.isMac ? '菜单栏' : '托盘'}` }, { value: 'quit', label: '退出界面' }]} onChange={(v) => void appBridge!.appAction('setCloseAction', v)} />
           </Field>
           <Field label="登录守护" hint="macOS：下次登录后，软件异常退出由系统重新拉起；正常退出不拉起。崩溃重试间隔至少10秒。">
@@ -243,11 +269,11 @@ function RuntimeSection() {
   return <>
     <div className="sech">无人值守运行</div>
     <div className="form wide">
-      <Field label="防止休眠" hint="macOS后台引擎运行时阻止系统空闲休眠。显示器仍可休眠；合盖、手动休眠、断电不受此选项保证。">
+      <Field label="防止休眠" modified={options?.preventSleep === true} onReset={() => save({ preventSleep: false })} hint="macOS后台引擎运行时阻止系统空闲休眠。显示器仍可休眠；合盖、手动休眠、断电不受此选项保证。">
         <Check checked={options?.preventSleep === true} disabled={!options?.sleepSupported} label="引擎运行时防止空闲休眠" onChange={(on) => save({ preventSleep: on })} />
         {options && <div className="hint">{!options.sleepSupported ? '当前系统不支持后台引擎防休眠。' : options.sleepActive ? '当前后台防休眠进程已启动。' : '当前未开启后台防休眠。'}</div>}
       </Field>
-      <Field label="本地日志" hint={keep === undefined ? '当前引擎版本不支持修改（需要重启引擎）' : `每天一个文件，保存在这台电脑上；在日志区选日期就能查看。${keep === 0 ? '永久保留不会自动删除，请留意磁盘空间。' : `超过 ${keep} 天的自动删除。`}`}>
+      <Field label="本地日志" modified={keep !== undefined && keep !== 30} onReset={() => save({ logKeepDays: 30 })} hint={keep === undefined ? '当前引擎版本不支持修改（需要重启引擎）' : `每天一个文件，保存在这台电脑上；在日志区选日期就能查看。${keep === 0 ? '永久保留不会自动删除，请留意磁盘空间。' : `超过 ${keep} 天的自动删除。`}`}>
         <span className="row">
           <select value={keep ?? 30} disabled={keep === undefined} aria-label="日志保留天数" onChange={(e) => save({ logKeepDays: Number(e.target.value) })}>
             {[...new Set([...KEEP_CHOICES, keep ?? 30])].map((d) => <option key={d} value={d}>{d === 0 ? '永久保留' : `保留 ${d} 天`}</option>)}
@@ -321,9 +347,20 @@ function ExitSection() {
   const bridge = appBridge;
   const autoZoom = autoZoomController();
   const [autoOn, setAutoOn] = useState(() => autoZoom?.enabled() ?? false);
+  const [allHints, setAllHints] = useState(hintsAll);
+  const [pal, setPal] = useState<Palette>(palette);
   const layoutSection = (
     <>
-      <div className="sech" style={{ marginTop: 16 }}>界面布局</div>
+      <div className="sech" style={{ marginTop: 16 }}>界面</div>
+      <div className="form wide">
+        <Field label="字段说明" modified={allHints} onReset={() => { setHintsAll(false); setAllHints(false); }} hint="关闭时，各项的说明文字收起：点标签旁的 i、或光标在这一项时才显示，界面更紧凑。错误和预览不受影响，一直显示">
+          <Check checked={allHints} onChange={(v) => { setHintsAll(v); setAllHints(v); }} label="显示全部说明" />
+        </Field>
+        <Field label="配色" modified={pal !== 'calm'} onReset={() => { setPalette('calm'); setPal('calm'); }} hint="沉稳（默认）= 蓝色强调、暂停用紫色，和警告分开；经典 = 原来的琥珀色强调；中性 = 按钮和选中不用彩色，只有状态（警告、错误、暂停、编辑中）用颜色。只影响这台电脑">
+          <Seg<Palette> value={pal} options={[{ value: 'calm', label: '沉稳' }, { value: 'classic', label: '经典' }, { value: 'neutral', label: '中性' }]} onChange={(v) => { setPalette(v); setPal(v); }} />
+        </Field>
+      </div>
+      <div className="sech">界面布局</div>
       <div className="row">
         <button onClick={() => { resetLayout(); toast('界面布局已恢复默认'); }}>恢复默认界面布局</button>
         <span className="hint">左侧栏、检查器、日志、日历详情的大小都可以拖动分隔条调整（双击分隔条恢复该项）；这里一次全部恢复。菜单「视图 → 恢复默认界面布局」同样。</span>

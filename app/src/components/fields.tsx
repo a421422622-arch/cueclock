@@ -31,16 +31,60 @@ export function useAdvanced(setCount: number, summary: string, label = '高级�
   return { shown, toggle };
 }
 
-export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: ReactNode }) {
+/**
+ * 表单一行。hint 为纯文字时是「说明」：默认收起，聚焦这一项、悬停或点标签旁的 ⓘ 时显示，
+ * 「软件设置 → 界面 → 显示全部说明」打开后常驻。hint 是元素（红字错误、绿字预览等）或以 ⚠ 开头、
+ * 或传了 status 时是「状态」，一直显示。
+ */
+export function Field({ label, children, hint, status, modified, onReset }: {
+  label: string; children: ReactNode; hint?: ReactNode; status?: boolean;
+  /** 与默认值不同：标签左侧显示色条；给了 onReset 就显示「恢复默认」 */
+  modified?: boolean; onReset?: () => void;
+}) {
+  const [pinned, setPinned] = useState(false);
+  const help = !status && typeof hint === 'string' && hint !== '' && !hint.startsWith('⚠');
   return (
     <>
-      <label className="fl">{label}</label>
+      <label className={`fl ${modified ? 'mod' : ''}`} title={modified ? '已改（与默认值不同）' : undefined}>
+        {label}
+        {help && <button type="button" className={`hint-i ${pinned ? 'on' : ''}`} aria-label={`${label}说明`} aria-pressed={pinned} title={hint as string} tabIndex={-1} onClick={() => setPinned(!pinned)}>i</button>}
+      </label>
       <div className="fv">
         {children}
-        {hint && <div className="hint">{hint}</div>}
+        {modified && onReset && <button type="button" className="link reset-default" onClick={onReset}>恢复默认</button>}
+        {hint !== undefined && hint !== null && hint !== '' && <div className={`hint ${help ? `help ${pinned ? 'pinned' : ''}` : ''}`}>{hint}</div>}
       </div>
     </>
   );
+}
+
+const HINTS_KEY = 'cueclock-hints-all';
+/** 「显示全部说明」：本机记住，作用于整个界面（给 html 加 class）。 */
+export function hintsAll(): boolean {
+  try { return localStorage.getItem(HINTS_KEY) === '1'; } catch { return false; }
+}
+export function setHintsAll(on: boolean): void {
+  try { localStorage.setItem(HINTS_KEY, on ? '1' : '0'); } catch { /* 本次有效 */ }
+  document.documentElement.classList.toggle('hints-all', on);
+}
+export function applyHintsPreference(): void {
+  document.documentElement.classList.toggle('hints-all', hintsAll());
+  applyPalette(palette());
+}
+
+/** 配色方案：calm（默认，2026-10-09 用户选定）= 蓝色强调、暂停用紫色；classic = 原琥珀色；neutral = 中性强调、只有状态用颜色。本机记住。 */
+export type Palette = 'classic' | 'calm' | 'neutral';
+const PALETTE_KEY = 'cueclock-palette';
+export function palette(): Palette {
+  try { const v = localStorage.getItem(PALETTE_KEY); return v === 'classic' || v === 'neutral' ? v : 'calm'; } catch { return 'calm'; }
+}
+export function applyPalette(p: Palette): void {
+  if (p === 'classic') delete document.documentElement.dataset.palette;
+  else document.documentElement.dataset.palette = p;
+}
+export function setPalette(p: Palette): void {
+  try { localStorage.setItem(PALETTE_KEY, p); } catch { /* 本次有效 */ }
+  applyPalette(p);
 }
 
 export function Seg<T extends string>({

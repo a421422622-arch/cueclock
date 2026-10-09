@@ -1,4 +1,5 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { CommandPalette } from './components/CommandPalette.tsx';
 import { cancelDeferredApply, closeResumeSummary, showLogTab, discardDraft, handleEditShortcut, init, keepDraftOverEngine, lockNow, openSettings, openUnlock, reloadFromEngine, restoreDraft, setView, toast, useStore } from './store.ts';
 import { ApplyDialog } from './components/ApplyDialog.tsx';
 import { PingMonitor } from './components/PingMonitor.tsx';
@@ -43,6 +44,7 @@ export function App() {
   const draftOffer = useStore((s) => s.draftOffer);
   const logCollapsed = useStore((s) => s.logCollapsed);
   const layout = useLayout();
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   useEffect(() => {
     void init();
@@ -55,8 +57,13 @@ export function App() {
     zoom?.apply();
     window.addEventListener('resize', onResize);
     document.addEventListener('keydown', handleEditShortcut);
+    const onPalette = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k') { e.preventDefault(); setPaletteOpen((o) => !o); }
+    };
+    document.addEventListener('keydown', onPalette);
     return () => {
       document.removeEventListener('keydown', handleEditShortcut);
+      document.removeEventListener('keydown', onPalette);
       off?.();
       offLayout?.();
       offAuto?.();
@@ -146,6 +153,7 @@ export function App() {
             <span className={view === 'calendar' ? 'on' : ''} title="日历与预览" onClick={() => setView('calendar')}><Icon name="calendar" size={15} /><em>日历与预览</em></span>
             <span className={view === 'pad' ? 'on' : ''} title="操作面板" onClick={() => setView('pad')}><Icon name="pad" size={15} /><em>操作面板</em></span>
             <b className="grow" />
+            <button className="ico palette-open" title={`快速跳转：搜索设备、指令、事件点、设置（${navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'}+K）`} aria-label="快速跳转" onClick={() => setPaletteOpen(true)}><Icon name="search" size={15} /></button>
             <RuntimeConfiguration />
           </div>
           {view === 'overview' ? <Overview /> : view === 'timeline' ? <Timeline /> : view === 'calendar' ? <CalendarView /> : <PadView />}
@@ -162,6 +170,7 @@ export function App() {
       {unlockOpen && <UnlockDialog />}
       {backupOpen && <BackupDialog />}
       {batchHealthOpen && <BatchHealthDialog />}
+      {paletteOpen && <CommandPalette onClose={() => setPaletteOpen(false)} />}
       {toastMsg && <div className="toast">{toastMsg}</div>}
     </div>
   );

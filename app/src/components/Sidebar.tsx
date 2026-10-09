@@ -10,6 +10,8 @@ import { describeDeviceState } from '../lib/deviceState.ts';
 import { engineNow } from '../store.ts';
 import { Icon } from './Icon.tsx';
 import { deviceColor, GROUP_COLORS } from '../lib/colors.ts';
+import { DEVICE_TEMPLATES, fromTemplate, newCommandFor } from '../lib/deviceTemplates.ts';
+import type { DeviceTemplate } from '../lib/deviceTemplates.ts';
 
 /** 列表里的快速测试：有必填参数就转到右侧填写；否则直接发，结果用提示条说明。 */
 async function quickTest(c: Command): Promise<void> {
@@ -31,21 +33,20 @@ export function Sidebar() {
   const sel = useStore((s) => s.sel);
   const health = useStore((s) => s.status?.engine?.devices);
 
-  const addDevice = () => {
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const addDevice = (tpl: DeviceTemplate) => {
+    setTemplatesOpen(false);
     if (!beginDraft()) return;
-    const id = genId('d');
-    edit((p) => { p.devices.push({ id, name: '新设备', ip: '192.168.1.100', color: GROUP_COLORS[p.devices.length % GROUP_COLORS.length], format: 'ascii', terminator: 'none' }); });
-    select({ kind: 'device', id });
+    const made = fromTemplate(tpl, { device: genId('d'), command: () => genId('cmd') }, GROUP_COLORS[project.devices.length % GROUP_COLORS.length]!);
+    edit((p) => { p.devices.push(made.device); if (made.commands.length) (p.commands ??= []).push(...made.commands); });
+    select({ kind: 'device', id: made.device.id });
+    if (made.commands.length) toast(`已建好设备和 ${made.commands.length} 条指令（${made.commands.map((c) => c.name.split(' · ').pop()).join('、')}），在「指令」页签里`);
   };
   const addCommand = () => {
     if (!beginDraft()) return;
     const id = genId('cmd');
-    edit((p) => {
-      const first = p.devices[0];
-      (p.commands ??= []).push({
-        id, name: '新指令', targets: first ? [first.id] : [], port: first?.port ?? 5000, format: 'ascii', payload: 'HELLO', params: [],
-      });
-    });
+    const selected = sel?.kind === 'device' ? project.devices.find((d) => d.id === sel.id) : undefined;
+    edit((p) => { (p.commands ??= []).push(newCommandFor(selected ?? p.devices[0], id)); });
     select({ kind: 'command', id });
   };
   const addScene = () => {
@@ -76,7 +77,10 @@ export function Sidebar() {
       <div className="sidebody">
         {tab === 'dev' ? (
           <>
-            <div className="sechead">UDP 设备 <span><button title="批量设置在线检测（Ping / UDP 探测、间隔）" onClick={() => openBatchHealth()} disabled={readonly || project.devices.length === 0}>批量检测…</button> <button className="ico add" title="新建设备" onClick={addDevice}><Icon name="plus" size={14} /></button></span></div>
+            <div className="sechead">UDP 设备 <span><button title="批量设置在线检测（Ping / UDP 探测、间隔）" onClick={() => openBatchHealth()} disabled={readonly || project.devices.length === 0}>批量检测…</button> <span className="addmenu"><button className="ico add" title="新建设备（选模板）" aria-expanded={templatesOpen} onClick={() => setTemplatesOpen(!templatesOpen)}><Icon name="plus" size={14} /></button>
+              {templatesOpen && <div className="addmenu-pop" role="menu" onMouseLeave={() => setTemplatesOpen(false)}>
+                {DEVICE_TEMPLATES.map((t) => <button key={t.id} role="menuitem" onClick={() => addDevice(t)}><b>{t.label}</b><small>{t.note}</small></button>)}
+              </div>}</span></span></div>
             {project.devices.length === 0 && <div className="empty">还没有设备。点右上角＋添加接收端的 IP 和端口。</div>}
             {project.devices.map((d) => {
               // 名字前的圆点 = 在线状态（绿在线 / 黄异常 / 红离线 / 灰未检测或已禁用）；轨道颜色是名字后面的小色块

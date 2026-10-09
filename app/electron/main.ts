@@ -404,6 +404,32 @@ async function askOnClose(): Promise<void> {
 
 // ───────────── 自检 ─────────────
 
+/** 隔离 smoke-ui 的补充截图（放在帧率与截断检查之后：中途截图会让帧率测量误判窗口不可见）。只截图，不判定。 */
+async function smokeShots(w: BrowserWindow, dir: string): Promise<void> {
+  const js = (code: string) => w.webContents.executeJavaScript(code, true) as Promise<unknown>;
+  const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const shot = async (name: string) => { await pause(400); writeFileSync(path.join(dir, `${name}.png`), (await w.webContents.capturePage()).toPNG()); };
+  try {
+    await js(`document.dispatchEvent(new KeyboardEvent('keydown',{key:'k',ctrlKey:true,bubbles:true}))`);
+    await pause(200);
+    await js(`(() => { const e = document.querySelector('.palette input'); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(e, '开'); e.dispatchEvent(new Event('input', {bubbles:true})); })()`);
+    await shot('extra-palette');
+    await js(`document.querySelector('.palette input').dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))`);
+    await js(`[...document.querySelectorAll('.side .tabs span')].find(e => e.textContent.includes('设备'))?.click()`);
+    await pause(200);
+    await js(`document.querySelector('.addmenu .add')?.click()`);
+    await shot('extra-device-templates');
+    await js(`document.querySelector('.addmenu .add')?.click()`);
+    // 配色方案对比：同一画面（运行总览 + 检查器）三套配色各截一张
+    for (const p of ['classic', 'calm', 'neutral']) {
+      await js(`(() => { const r = document.documentElement; if (${JSON.stringify(p)} === 'classic') delete r.dataset.palette; else r.dataset.palette = ${JSON.stringify(p)}; })()`);
+      await shot(`palette-${p}`);
+    }
+    await js(`delete document.documentElement.dataset.palette`);
+  } catch (e) { console.error('[smoke] 补充截图失败：', (e as Error).message); }
+}
+
+
 async function smokeUi(): Promise<void> {
   const wc = win!.webContents;
   const js = (code: string) => wc.executeJavaScript(code) as Promise<unknown>;
@@ -425,6 +451,7 @@ async function smokeUi(): Promise<void> {
   })`).catch((e) => ({ error: String(e) }));
   const runtimeConfiguration = await smokeRuntimeConfiguration(win!, {
     readFailure: (active) => { smokeReadFailure = active; },
+    shot: async (name) => { const dir = argValue('--clipping-dir'); if (dir) { mkdirSync(dir, { recursive: true }); writeFileSync(path.join(dir, `${name}.png`), (await win!.webContents.capturePage()).toPNG()); } },
     disconnect: () => client!.close(),
     reconnect: () => client!.connect(),
   });
@@ -446,6 +473,7 @@ async function smokeUi(): Promise<void> {
   const clippingDir = argValue('--clipping-dir');
   const logPerformance = await smokeLogPerformance(win!, (method, params) => client!.request(method, params), clippingDir && path.join(clippingDir, 'performance'));
   const clipping = await smokeClipping(win!, clippingDir, argv.includes('--smoke-break-css'));
+  if (clippingDir) await smokeShots(win!, clippingDir);
   const layoutShot = argValue('--layout-screenshot');
   if (layoutShot) writeFileSync(layoutShot, (await win!.webContents.capturePage()).toPNG());
   // 从左侧统一入口检查两个页面，软件设置不再依赖右侧按钮。

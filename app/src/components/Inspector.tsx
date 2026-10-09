@@ -31,7 +31,7 @@ export function Inspector() {
   const locked = useStore((s) => s.lock.enabled && !s.lock.unlocked);
   const project = useStore(displayedProject)!;
   let title = '检查器';
-  let body: React.ReactNode = <div className="empty big">选中模式、目标或事件点查看详情。切到编辑草稿后可修改；双击目标小时间轴可新建事件点。</div>;
+  let body: React.ReactNode = <div className="empty big">选中模式、目标或事件点查看详情。切到顶栏「编辑」后可修改；双击目标小时间轴可新建事件点。</div>;
 
   if (sel?.kind === 'cue') {
     const tl = project.timelines.find((t) => t.id === sel.timelineId);
@@ -67,7 +67,7 @@ export function Inspector() {
   return (
     <section className="insp">
       <h3>{title}</h3>
-      {readonly && <div className="inspector-source"><Icon name="lock" size={13} /><span>正在查看引擎配置，只读</span><button onClick={beginDraft}>编辑草稿</button></div>}
+      {readonly && <div className="inspector-source"><Icon name="lock" size={13} /><span>运行中的配置，只读</span><button onClick={beginDraft}>编辑</button></div>}
       {!readonly && <ItemApplyBar item={itemRef(sel)} />}
       <div className="ibody" inert={locked}><fieldset className="inspector-fields" disabled={readonly}>{body}</fieldset></div>
     </section>
@@ -360,7 +360,7 @@ function DeviceInspector({ id }: { id: string }) {
       <div className="sech">测试发送</div>
       <div className="form">
         <Field label="端口"><NumInput value={testPort} min={1} max={65535} width={80} allowEmpty onChange={setTestPort} /></Field>
-        <Field label="内容" hint={res}>
+        <Field label="内容" hint={res} status>
           <input className="mono" value={payload} placeholder={(d.format ?? 'ascii') === 'hex' ? 'A5 01 FF' : 'SCENE 1'} onChange={(e) => setPayload(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && payload && void send()} />
         </Field>
       </div>

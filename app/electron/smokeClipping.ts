@@ -80,9 +80,9 @@ export async function smokeClipping(win: BrowserWindow, outputDir?: string, brea
     const shot = (name: string) => capture(`${width}-${name}`);
     await click('.viewtabs span', '运行总览'); await shot('overview');
     await click('.viewtabs span', '模式与时间轴');
-    await click('.configuration-switch button', '查看正在运行'); await pause(150); await shot('runtime-timeline');
+    await click('.configuration-switch button', '运行'); await pause(150); await shot('runtime-timeline');
     await click('.mode-master .cue'); await shot('runtime-inspector');
-    await click('.configuration-switch button', '编辑草稿'); await shot('timeline');
+    await click('.configuration-switch button', '编辑'); await shot('timeline');
     await click('.master-label .name'); await shot('inspector-mode');
     await click('button[title="编辑模式组"]'); await shot('inspector-group');
     await click('.mode-master .cue'); await shot('inspector-cue');
@@ -96,7 +96,7 @@ export async function smokeClipping(win: BrowserWindow, outputDir?: string, brea
     if (!await js<boolean>(`!!document.querySelector('.sidebody .dev')`)) await click('button[title="新建触发器"]');
     else await click('.sidebody .dev');
     await shot('inspector-trigger');
-    await click('.viewtabs span', '操作面板'); await click('.configuration-switch button', '查看正在运行'); await shot('pad-operation');
+    await click('.viewtabs span', '操作面板'); await click('.configuration-switch button', '运行'); await shot('pad-operation');
     if (!await js<boolean>(`(() => {
       const toggle=document.querySelector('.padgrid .padtile.toggle'),slider=document.querySelector('.padgrid .padtile.slider');
       return toggle?.classList.contains('unknown') && toggle.querySelector('.pb')?.textContent==='状态未知'
@@ -123,10 +123,10 @@ export async function smokeClipping(win: BrowserWindow, outputDir?: string, brea
       await js(`document.querySelector('.padtile.slider .pl').style.removeProperty('transform')`);
       if(!outsideRejected)throw new Error('负对照失败：按钮内容越界未检出');
     }
-    await click('.configuration-switch button', '编辑草稿'); await click('.padtabs > span'); await shot('inspector-pad');
+    await click('.configuration-switch button', '编辑'); await click('.padtabs > span'); await shot('inspector-pad');
     for (const kind of ['button', 'toggle', 'slider']) { await click(`.padgrid .padtile.${kind}:not(.add)`); await shot(`inspector-pad-${kind}`); }
-    await click('.configuration-switch button', '查看正在运行');
-    await click('.configuration-switch button', '编辑草稿');
+    await click('.configuration-switch button', '运行');
+    await click('.configuration-switch button', '编辑');
     await click('.projbtn'); await shot('configuration-files');
     // 实际导出→修改测试副本→文件控件→真实previewBundle，绝不确认还原或写入网络设置。
     const beforeBundle = await js(`window.cueclock.rpc('getProject').then(r=>{if(!r.ok)throw Error(r.error.message);return {rev:r.result.rev,instanceId:r.result.instanceId};})`);

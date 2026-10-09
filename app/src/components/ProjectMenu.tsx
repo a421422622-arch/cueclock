@@ -8,8 +8,8 @@ export function ProjectMenu({ file }: { file: string | null }) {
   return (
     <div className="projmenu">
       <button className="projbtn" onClick={() => openConfiguration('files')}
-        title={`配置管理 · 当前配置：${configName(file)}`} aria-haspopup="dialog" aria-expanded={open}>
-        <Icon name="folder" size={14} />配置管理
+        title={`配置管理 · 当前配置：${configName(file)}`} aria-label="配置管理" aria-haspopup="dialog" aria-expanded={open}>
+        <Icon name="folder" size={15} />
       </button>
     </div>
   );

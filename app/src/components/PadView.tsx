@@ -10,7 +10,7 @@ import { Icon } from './Icon.tsx';
 type Flash = 'ok' | 'bad';
 
 /**
- * 操作面板：一块按钮网格，现场手动操作。跟随全局「查看正在运行 / 编辑草稿」：
+ * 操作面板：一块按钮网格，现场手动操作。跟随顶栏「运行 / 编辑」：
  * 运行视图点按钮就执行（用正在运行的配置）；草稿视图点按钮选中、在右侧检查器里改绑定。
  */
 export function PadView() {
@@ -96,7 +96,7 @@ export function PadView() {
       </div>
 
       <div className={`hint padmode ${editing ? 'editing' : ''}`}>{editing
-        ? <><b>编辑草稿：</b>点按钮选中，在右侧检查器里改绑定；改完「检查并应用」才生效。要操作按钮请切回「查看正在运行」。</>
+        ? <><b>编辑中：</b>点按钮选中，在右侧检查器里改绑定；改完「检查并应用」才生效。要操作按钮请切回顶栏「运行」。</>
         : <><b>操作：</b>点按钮立即执行（使用正在运行的配置）。带「设备回读」角标的按钮显示设备真实状态；其余按钮的亮灭与数值只是最后一次操作记录。暂停自动日程时仍可手动操作。</>}</div>
       {pad && (
         <div className={`padgrid ${editing ? 'editing' : ''}`} style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}>
