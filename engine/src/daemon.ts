@@ -11,7 +11,7 @@ import type { LogEntry } from './engine.ts';
 import { ProjectStore, normalizeProject } from './store.ts';
 import { validateCommand, validateProject, validateScene } from './validate.ts';
 import { simulateDays } from './simulate.ts';
-import { appendLogEntry, attachFileLogger, readAlerts } from './logfile.ts';
+import { appendLogEntry, attachFileLogger, DEFAULT_LOG_KEEP_DAYS, listLogDays, pruneLogs, readAlerts, readLogDay, validLogKeepDays } from './logfile.ts';
 import { defaultStateDir } from './paths.ts';
 import { dateKey, isDateKey } from './calendar.ts';
 import { buildPayload } from './payload.ts';
@@ -56,6 +56,8 @@ export interface DaemonSettings {
   /** 急停状态。急停是安全开关，引擎重启（崩溃、断电）后必须保持，不能悄悄恢复调度 */
   paused?: boolean;
   preventSleep?: boolean;
+  /** 本地日志保留天数（默认 30；0 = 永久保留）。机器级 */
+  logKeepDays?: number;
   /** 后台在线检测（ping / 探测）整体暂停，用来省资源。机器级，重启后保持 */
   healthPaused?: boolean;
   /** 编辑锁的密码记录（加盐哈希）。机器级，不进配置文件 */
@@ -150,6 +152,7 @@ export class Daemon {
         network,
         paused: raw.paused === true,
         preventSleep: raw.preventSleep === true,
+        logKeepDays: validLogKeepDays(raw.logKeepDays) ? raw.logKeepDays : undefined,
         healthPaused: raw.healthPaused === true,
         overrides: raw.overrides && typeof raw.overrides === 'object' && !Array.isArray(raw.overrides) ? raw.overrides : undefined,
         lock: isLockRecord(raw.lock) ? raw.lock : undefined,
@@ -270,6 +273,14 @@ export class Daemon {
 
   // ───────────── 引擎生命周期 ─────────────
 
+  private get logKeepDays(): number {
+    return this.settings.logKeepDays ?? DEFAULT_LOG_KEEP_DAYS;
+  }
+
+  private runtimeOptions() {
+    return { preventSleep: this.settings.preventSleep === true, sleepSupported: this.sleepGuard.supported, sleepActive: this.sleepGuard.active, logKeepDays: this.logKeepDays, logsDir: this.logsDir };
+  }
+
   private get logsDir(): string {
     return path.join(this.stateDir, 'logs');
   }
@@ -346,7 +357,7 @@ export class Daemon {
     this.startError = null;
     this.lastStartFailure = null;
     this.detachFileLog?.();
-    this.detachFileLog = attachFileLogger(engine, path.join(this.stateDir, 'logs'));
+    this.detachFileLog = attachFileLogger(engine, this.logsDir, () => this.logKeepDays);
     this.broadcast({ event: 'status', data: this.statusPayload() });
   }
 
@@ -658,20 +669,42 @@ export class Daemon {
       }
 
       case 'getRuntimeOptions':
-        return { preventSleep: this.settings.preventSleep === true, sleepSupported: this.sleepGuard.supported, sleepActive: this.sleepGuard.active };
+        return this.runtimeOptions();
 
       case 'setRuntimeOptions': {
         const p = obj(params);
-        if (typeof p.preventSleep !== 'boolean') throw new RpcError('bad-request', 'preventSleep 必须是布尔值');
+        if (p.preventSleep === undefined && p.logKeepDays === undefined) throw new RpcError('bad-request', '没有要修改的选项');
+        if (p.preventSleep !== undefined && typeof p.preventSleep !== 'boolean') throw new RpcError('bad-request', 'preventSleep 必须是布尔值');
         if (p.preventSleep && !this.sleepGuard.supported) throw new RpcError('bad-request', '当前系统不支持后台引擎防休眠');
-        const preventSleep = p.preventSleep;
+        if (p.logKeepDays !== undefined && !validLogKeepDays(p.logKeepDays)) throw new RpcError('bad-request', '日志保留天数应为 1~3650 的整数，0 表示永久保留');
+        const preventSleep = p.preventSleep as boolean | undefined, logKeepDays = p.logKeepDays as number | undefined;
         return this.serialize(async () => {
-          this.sleepGuard.set(preventSleep && !!this.engine);
-          this.settings = { ...this.settings, preventSleep };
+          if (preventSleep !== undefined) {
+            this.sleepGuard.set(preventSleep && !!this.engine);
+            this.settings = { ...this.settings, preventSleep };
+          }
+          if (logKeepDays !== undefined) this.settings = { ...this.settings, logKeepDays };
           await this.persistSettings();
-          this.recordAudit({ action: '运行选项', detail: `运行时防止电脑休眠：${preventSleep ? '开' : '关'}` });
-          return { preventSleep, sleepSupported: this.sleepGuard.supported, sleepActive: this.sleepGuard.active };
+          if (preventSleep !== undefined) this.recordAudit({ action: '运行选项', detail: `运行时防止电脑休眠：${preventSleep ? '开' : '关'}` });
+          if (logKeepDays !== undefined) {
+            this.recordAudit({ action: '运行选项', detail: `本地日志保留：${logKeepDays === 0 ? '永久' : `${logKeepDays} 天`}` });
+            if (logKeepDays > 0) await pruneLogs(this.logsDir, logKeepDays).catch(() => []);
+          }
+          return this.runtimeOptions();
         });
+      }
+
+      case 'listLogDays':
+        return { dir: this.logsDir, keepDays: this.logKeepDays, days: await listLogDays(this.logsDir) };
+
+      case 'readLogDay': {
+        const p = obj(params);
+        if (typeof p.date !== 'string') throw new RpcError('bad-request', 'date 必须是 YYYY-MM-DD');
+        try {
+          return await readLogDay(this.logsDir, p.date, Math.min(50_000, Math.max(1, Number(p.limit ?? 20_000))));
+        } catch (e) {
+          throw new RpcError('bad-request', (e as Error).message);
+        }
       }
 
       case 'getAudit': {
@@ -778,6 +811,8 @@ export class Daemon {
         const format = p.format === 'hex' ? 'hex' : p.format === 'ascii' ? 'ascii' : null;
         if (!format) throw new RpcError('bad-request', 'format 必须是 ascii 或 hex');
         const terminator = (['none', 'cr', 'lf', 'crlf'] as const).find((t) => t === p.terminator);
+        const sourcePort = p.sourcePort === undefined || p.sourcePort === null ? undefined : p.sourcePort === 'random' ? 'random' as const : Number(p.sourcePort);
+        if (typeof sourcePort === 'number' && !(Number.isInteger(sourcePort) && sourcePort >= 1 && sourcePort <= 65535)) throw new RpcError('bad-request', `源端口 ${String(p.sourcePort)} 非法（1-65535 或 random）`);
         try {
           buildPayload(format, String(p.payload ?? ''), terminator);
           if (p.reply) matchBuffer(Buffer.alloc(0), obj(p.reply, 'reply') as never);
@@ -785,7 +820,7 @@ export class Daemon {
           throw new RpcError('bad-request', (e as Error).message);
         }
         const result = await this.needEngine().sendTest({
-          ip, port, format, payload: String(p.payload), terminator, reply: (p.reply as never) ?? null,
+          ip, port, format, payload: String(p.payload), terminator, reply: (p.reply as never) ?? null, sourcePort,
         });
         return { result };
       }

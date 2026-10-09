@@ -509,19 +509,19 @@ export class Engine extends EventEmitter {
   }
 
   /** 发一次并等回包：UDP 走常驻套接字，TCP / PJLink 新建连接。回包校验（回包要符合什么）由 reply 决定。 */
-  private replyExchange(device: Device, action: { protocol?: SendProtocol; sendFrom?: string }, buf: Buffer, port: number, reply: NonNullable<UdpAction['reply']>): Promise<ReplyResult> {
+  private replyExchange(device: Device, action: { protocol?: SendProtocol; sendFrom?: string; sourcePort?: UdpAction['sourcePort'] }, buf: Buffer, port: number, reply: NonNullable<UdpAction['reply']>): Promise<ReplyResult> {
     const accept = (b: Buffer) => { try { return matchBuffer(b, reply).matched; } catch { return false; } };
     const transport = this.transport!;
     if (action.protocol === 'tcp' || action.protocol === 'pjlink') {
       if (!transport.sendTcp) return Promise.reject(new Error('当前传输层不支持 TCP'));
       return transport.sendTcp(device.ip, port, buf, { from: action.sendFrom, waitReply: true, timeoutMs: reply.timeoutMs, accept, ...(action.protocol === 'pjlink' ? { pjlink: { password: device.password } } : {}) });
     }
-    return transport.sendAndWaitReply(device.ip, port, buf, { from: action.sendFrom, timeoutMs: reply.timeoutMs, accept });
+    return transport.sendAndWaitReply(device.ip, port, buf, { from: action.sendFrom, sourcePort: action.sourcePort, timeoutMs: reply.timeoutMs, accept });
   }
 
   private healthSig(d: Device): string {
     const cmd = d.health?.mode === 'udp' ? this.project.commands?.find((c) => c.id === d.health!.probe?.commandId) : undefined;
-    return JSON.stringify([d.ip, d.port, d.password, d.enabled, d.health, cmd && [cmd.payload, cmd.port, cmd.reply, cmd.format, cmd.terminator, cmd.params, cmd.protocol, cmd.checksum]]);
+    return JSON.stringify([d.ip, d.port, d.password, d.enabled, d.health, cmd && [cmd.payload, cmd.port, cmd.reply, cmd.format, cmd.terminator, cmd.params, cmd.protocol, cmd.checksum, cmd.sourcePort]]);
   }
 
   /** 让后台检测循环与当前项目一致：没变的设备不动（不重置节奏），变了/删了的重启或停止，新增的启动。 */
@@ -1145,7 +1145,7 @@ export class Engine extends EventEmitter {
           if (!transport.sendTcp) throw new Error('当前传输层不支持 TCP');
           await transport.sendTcp(device.ip, port, buf, { from: action.sendFrom, waitReply: false, ...(action.protocol === 'pjlink' ? { pjlink: { password: device.password } } : {}) });
         } else {
-          await transport.send(device.ip, port, buf, { from: action.sendFrom });
+          await transport.send(device.ip, port, buf, { from: action.sendFrom, sourcePort: action.sourcePort });
         }
         this.log({ ...base, ...shown, t: ctx.startedAt, result: dry ? 'skipped' : 'sent', detail: dry ? '模拟，未发送' : `${device.name}${tag}` });
         record(dry ? 'skipped' : 'sent');
@@ -1220,12 +1220,13 @@ export class Engine extends EventEmitter {
     payload: string;
     terminator?: 'none' | 'cr' | 'lf' | 'crlf';
     reply?: UdpAction['reply'];
+    sourcePort?: UdpAction['sourcePort'];
   }): Promise<LogResult> {
     if (!this.running || !this.transport) throw new Error('引擎未运行');
     const device: Device = { id: '__test', name: `${p.ip}:${p.port}`, ip: p.ip, port: p.port };
     const action: UdpAction = {
       id: '__test', type: 'udp', targets: [], format: p.format, payload: p.payload,
-      terminator: p.terminator, reply: p.reply ?? null,
+      terminator: p.terminator, reply: p.reply ?? null, sourcePort: p.sourcePort,
     };
     const now = this.clock.now();
     return this.sendOne(device, action, { source: '手动测试', startedAt: now, manual: true });

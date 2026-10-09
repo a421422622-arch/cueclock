@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { displayedProject, viewingRuntime, edit, engineNow, keepDraftOverEngine, resumeSchedule, lockNow, openUnlock, prepareApply, reloadFromEngine, rpc, showLogTab, toast, useStore } from '../store.ts';
+import { displayedProject, finishEditing, viewingRuntime, edit, engineNow, keepDraftOverEngine, resumeSchedule, lockNow, openUnlock, prepareApply, reloadFromEngine, rpc, showLogTab, toast, useStore } from '../store.ts';
 import { mergeAlerts, unseenCount } from '../lib/alerts.ts';
 import type { SaveState } from '../store.ts';
 import { ProjectMenu } from './ProjectMenu.tsx';
@@ -90,6 +90,7 @@ export function TopBar() {
       {saveState !== 'saved' && saveState !== 'conflict' && !deferred && <button className="primary apply-open" disabled={saveState === 'saving' || conn !== 'connected'} onClick={() => void prepareApply()}>检查并应用</button>}
       {saveState === 'conflict' && <button className="primary apply-open" disabled={conn !== 'connected'} title="以本机草稿为准：先列出相对引擎当前配置的全部差异（含别处的修改会被覆盖的部分），确认后才应用" onClick={() => void keepDraftOverEngine()}>以我的草稿为准…</button>}
       {saveState === 'conflict' && <button onClick={() => void reloadFromEngine()}>放弃本地修改并重新加载</button>}
+      {saveState === 'saved' && !readonly && !deferred && <button className="primary apply-open" title="草稿与运行配置一致，没有要应用的改动；回到「查看正在运行」" onClick={finishEditing}>完成编辑</button>}
       <span className="grow" />
       <Clock />
       <button className={`estop ${paused ? 'on' : ''}`} disabled={!engine} onClick={togglePause} title="暂停期间到点的事件和 UDP 触发都不执行；面板、手动操作与在线检测仍可用。恢复时不补发错过的事件。">

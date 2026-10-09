@@ -1,12 +1,14 @@
 import { Menu } from 'electron';
 import path from 'node:path';
 import { configName } from '../src/lib/configName.ts';
+import type { CloseAction } from './prefs.ts';
 
 export interface MenuState {
   isMac: boolean;
   recent: string[];
   currentFile: string | null;
-  keepInTray: boolean;
+  /** 点窗口关闭按钮时怎么做 */
+  closeAction: CloseAction;
   launchAtLogin: boolean;
   /** 已登记但程序路径已失效（软件被移动/删除） */
   launchAtLoginStale: boolean;
@@ -18,7 +20,7 @@ export interface MenuActions {
   newProject(): void;
   openProject(file?: string): void;
   reveal(): void;
-  setKeepInTray(v: boolean): void;
+  setCloseAction(v: CloseAction): void;
   setLaunchAtLogin(v: boolean): void;
   showWindow(): void;
   /** 把各面板的大小恢复成默认（界面本机保存的布局） */
@@ -52,7 +54,12 @@ export function prefItems(s: MenuState, a: MenuActions): Item[] {
           sublabel: s.canLaunchAtLogin ? undefined : '当前系统暂不支持',
           click: (m) => a.setLaunchAtLogin(m.checked),
         },
-    { label: '关闭窗口后留在后台', type: 'checkbox', checked: s.keepInTray, click: (m) => a.setKeepInTray(m.checked) },
+    {
+      label: '点关闭按钮时',
+      submenu: ([['ask', '每次询问'], ['tray', `收到${s.isMac ? '菜单栏' : '托盘'}`], ['quit', '退出界面（引擎继续运行）']] as const).map<Item>(([v, label]) => ({
+        label, type: 'radio', checked: s.closeAction === v, click: () => a.setCloseAction(v),
+      })),
+    },
   ];
 }
 

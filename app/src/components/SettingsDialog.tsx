@@ -7,7 +7,7 @@ import { autoZoomController } from '../lib/autoZoomRuntime.ts';
 import { appBridge } from '../transport.ts';
 import type { AppState } from '../transport.ts';
 import { RpcFailure } from '../transport.ts';
-import { Check, Field, NumInput } from './fields.tsx';
+import { Check, Field, NumInput, Seg, useAdvanced } from './fields.tsx';
 import { RestartEngineButton } from './EngineVersion.tsx';
 import { ConfigurationFiles } from './ConfigurationFiles.tsx';
 
@@ -74,6 +74,7 @@ function NetworkSection() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ text: string; bad: boolean } | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  const adv = useAdvanced([port !== undefined, listenAll].filter(Boolean).length, '本地源端口、触发器监听所有网卡');
 
   const load = () =>
     rpc<NetInfo>('getNetwork')
@@ -153,13 +154,16 @@ function NetworkSection() {
           {addrs.length > 1 && <div className="hint">「默认」（第一个勾选的）用于目标不在任何已选子网时；受限广播 255.255.255.255 会从每块网卡各发一次。</div>}
           <button style={{ marginTop: 2 }} onClick={() => void load()}>刷新网卡列表</button>
         </Field>
-        <Field label="本地源端口" hint="高级。留空 = 每次启动由系统随机分配。固定后，设备回包都回到这个端口，便于防火墙放行。目标端口请在每条指令里设置">
+        {adv.toggle}
+        {adv.shown && <>
+        <Field label="本地源端口" hint="留空 = 每次启动由系统随机分配，之后一直用这个端口。固定后，设备回包都回到这个端口，便于防火墙放行。每条指令还可以在它的「高级选项」里单独选「每次随机」或「指定端口」。目标端口请在每条指令里设置">
           <NumInput value={port} min={1} max={65535} width={90} allowEmpty onChange={setPort} />
         </Field>
         <Field label="触发器监听" hint="接收触发的 UDP 端口绑定在哪里">
           <Check checked={listenAll} onChange={setListenAll} label="监听所有网卡" />
           <div className="hint">{listenAll ? '⚠ 所有网卡都能收到触发包（含办公网/外网口），请确保触发器有来源白名单' : addrs.length ? `只监听已勾选的网卡：${addrs.join('、')}` : '没勾选网卡时监听所有网卡'}</div>
         </Field>
+        </>}
       </div>
       <div className="row" style={{ gap: 10 }}>
         <button className="primary" disabled={!dirty || busy} onClick={apply}>{busy ? '应用中…' : '应用并重启引擎'}</button>
@@ -213,8 +217,8 @@ function StartupSection() {
             )}
             {!st.isPackaged && <div className="hint">当前是开发版运行：启动项登记的是本目录的 Electron，移动或删除本目录后会失效。</div>}
           </Field>
-          <Field label="后台常驻" hint="关闭窗口后界面继续留在托盘/菜单栏，引擎无论如何都在后台独立运行">
-            <Check checked={st.keepInTray} onChange={(v) => void appBridge!.appAction('setKeepInTray', v)} label={`关闭窗口后留在${st.isMac ? '菜单栏' : '托盘'}`} />
+          <Field label="点关闭按钮时" hint="无论选哪个，引擎都在后台独立运行，定时日程和 UDP 触发不受影响。停止引擎请用下面的「退出并停止引擎」或托盘菜单">
+            <Seg value={st.closeAction} options={[{ value: 'ask', label: '每次询问' }, { value: 'tray', label: `收到${st.isMac ? '菜单栏' : '托盘'}` }, { value: 'quit', label: '退出界面' }]} onChange={(v) => void appBridge!.appAction('setCloseAction', v)} />
           </Field>
           <Field label="登录守护" hint="macOS：下次登录后，软件异常退出由系统重新拉起；正常退出不拉起。崩溃重试间隔至少10秒。">
             <Check checked={st.guardAtLogin === true} disabled={!st.isMac || !st.launchAtLogin} label="异常退出自动拉起（下次登录生效）" onChange={(v) => void appBridge!.appAction('setGuardAtLogin', v).catch((e) => toast((e as Error).message))} />
@@ -226,17 +230,33 @@ function StartupSection() {
   );
 }
 
+type RuntimeOptions = { preventSleep: boolean; sleepSupported: boolean; sleepActive: boolean; logKeepDays?: number; logsDir?: string };
+const KEEP_CHOICES = [7, 30, 90, 180, 365, 0];
+
 function RuntimeSection() {
-  const [options, setOptions] = useState<{ preventSleep: boolean; sleepSupported: boolean; sleepActive: boolean } | null>(null);
+  const [options, setOptions] = useState<RuntimeOptions | null>(null);
   const [error, setError] = useState('');
-  useEffect(() => { void rpc<typeof options>('getRuntimeOptions').then(setOptions).catch((e) => setError((e as Error).message)); }, []);
+  useEffect(() => { void rpc<RuntimeOptions>('getRuntimeOptions').then(setOptions).catch((e) => setError((e as Error).message)); }, []);
+  const save = (patch: Partial<Pick<RuntimeOptions, 'preventSleep' | 'logKeepDays'>>) =>
+    void rpc<RuntimeOptions>('setRuntimeOptions', patch).then((r) => { setOptions(r); setError(''); }).catch((e) => setError((e as Error).message));
+  const keep = options?.logKeepDays;
   return <>
     <div className="sech">无人值守运行</div>
-    <div className="form wide"><Field label="防止休眠" hint="macOS后台引擎运行时阻止系统空闲休眠。显示器仍可休眠；合盖、手动休眠、断电不受此选项保证。">
-      <Check checked={options?.preventSleep === true} disabled={!options?.sleepSupported} label="引擎运行时防止空闲休眠" onChange={(on) => void rpc<NonNullable<typeof options>>('setRuntimeOptions', { preventSleep: on }).then((r) => { setOptions(r); setError(''); }).catch((e) => setError((e as Error).message))} />
-      {options && <div className="hint">{!options.sleepSupported ? '当前系统不支持后台引擎防休眠。' : options.sleepActive ? '当前后台防休眠进程已启动。' : '当前未开启后台防休眠。'}</div>}
-      {error && <span className="err hint">{error}</span>}
-    </Field></div>
+    <div className="form wide">
+      <Field label="防止休眠" hint="macOS后台引擎运行时阻止系统空闲休眠。显示器仍可休眠；合盖、手动休眠、断电不受此选项保证。">
+        <Check checked={options?.preventSleep === true} disabled={!options?.sleepSupported} label="引擎运行时防止空闲休眠" onChange={(on) => save({ preventSleep: on })} />
+        {options && <div className="hint">{!options.sleepSupported ? '当前系统不支持后台引擎防休眠。' : options.sleepActive ? '当前后台防休眠进程已启动。' : '当前未开启后台防休眠。'}</div>}
+      </Field>
+      <Field label="本地日志" hint={keep === undefined ? '当前引擎版本不支持修改（需要重启引擎）' : `每天一个文件，保存在这台电脑上；在日志区选日期就能查看。${keep === 0 ? '永久保留不会自动删除，请留意磁盘空间。' : `超过 ${keep} 天的自动删除。`}`}>
+        <span className="row">
+          <select value={keep ?? 30} disabled={keep === undefined} aria-label="日志保留天数" onChange={(e) => save({ logKeepDays: Number(e.target.value) })}>
+            {[...new Set([...KEEP_CHOICES, keep ?? 30])].map((d) => <option key={d} value={d}>{d === 0 ? '永久保留' : `保留 ${d} 天`}</option>)}
+          </select>
+          {appBridge && <button onClick={() => void appBridge!.appAction('revealLogs').catch((e) => toast((e as Error).message))} title={options?.logsDir}>打开日志文件夹</button>}
+        </span>
+      </Field>
+    </div>
+    {error && <span className="err hint">{error}</span>}
   </>;
 }
 

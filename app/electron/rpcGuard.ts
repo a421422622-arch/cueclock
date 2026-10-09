@@ -2,7 +2,7 @@ import type { EngineUpdate } from '../../engine/src/version.ts';
 
 /** 旧引擎期间仍然放行的只读/安全方法（含急停，急停是安全开关）。 */
 export const READ_ONLY_METHODS = new Set([
-  'ping', 'status', 'getProject', 'getLogs', 'getSettings', 'getNetwork', 'listInterfaces', 'validateProject', 'simulate', 'pause', 'resume',
+  'ping', 'status', 'getProject', 'getLogs', 'listLogDays', 'readLogDay', 'getSettings', 'getNetwork', 'listInterfaces', 'validateProject', 'simulate', 'pause', 'resume',
 ]);
 
 /**

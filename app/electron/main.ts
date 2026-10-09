@@ -6,7 +6,8 @@ import { DaemonClient } from '../../engine/src/client.ts';
 import { defaultStateDir } from '../../engine/src/paths.ts';
 import { RpcError } from '../../engine/src/protocol.ts';
 import type { DaemonInfo } from '../../engine/src/protocol.ts';
-import { loadPrefs, savePrefs } from './prefs.ts';
+import { CLOSE_ACTIONS, loadPrefs, savePrefs } from './prefs.ts';
+import type { CloseAction } from './prefs.ts';
 import { Supervisor } from './supervisor.ts';
 import { newProject, openProject, revealProject } from './projects.ts';
 import type { ProjectDeps } from './projects.ts';
@@ -103,7 +104,7 @@ function menuState(): MenuState {
     isMac,
     recent,
     currentFile: lastStatus?.daemon.projectFile ?? null,
-    keepInTray: prefs.keepInTray,
+    closeAction: prefs.closeAction,
     launchAtLogin: autostartState.enabled,
     launchAtLoginStale: autostartState.stale,
     canLaunchAtLogin: autostart.supported,
@@ -217,8 +218,8 @@ const actions: MenuActions & { togglePause(): void } = {
   reveal: () => revealProject(lastStatus?.daemon.projectFile ?? null),
   resetLayout: () => { showWindow(); sendToWindow('app:reset-layout'); },
   autoZoom: () => { showWindow(); sendToWindow('app:auto-zoom'); },
-  setKeepInTray: (v) => {
-    prefs = { ...prefs, keepInTray: v };
+  setCloseAction: (v) => {
+    prefs = { ...prefs, closeAction: v };
     savePrefs(stateDir, prefs);
     refreshUi();
   },
@@ -306,7 +307,14 @@ ipcMain.handle('app:action', async (_e, name: string, arg?: unknown) => {
     case 'openProject': return actions.openProject();
     case 'openRecent': return typeof arg === 'string' ? actions.openProject(arg) : undefined;
     case 'reveal': return actions.reveal();
-    case 'setKeepInTray': return actions.setKeepInTray(arg === true);
+    case 'revealLogs': {
+      const dir = path.join(stateDir, 'logs');
+      mkdirSync(dir, { recursive: true });
+      const err = await shell.openPath(dir);
+      if (err) throw new Error(err);
+      return;
+    }
+    case 'setCloseAction': return CLOSE_ACTIONS.includes(arg as CloseAction) ? actions.setCloseAction(arg as CloseAction) : undefined;
     case 'setLaunchAtLogin': return actions.setLaunchAtLogin(arg === true);
     case 'setGuardAtLogin':
       if (!(await ensureUnlocked('修改登录守护'))) return;
@@ -354,16 +362,44 @@ function createWindow(show: boolean): void {
   win.webContents.on('will-navigate', (e, url) => {
     if (!url.startsWith(devUrl ?? 'file://')) e.preventDefault();
   });
-  // 关窗口只隐藏（界面留在托盘/菜单栏），真正退出走菜单或托盘
+  // 点关闭按钮：按偏好收到托盘 / 退出界面，或者先问（默认）。菜单「退出」、Cmd+Q 走 before-quit，不经过这里的询问。
+  // 没有托盘时不能隐藏（用户会找不到界面），直接关窗 → 退出界面；引擎无论如何继续运行。
   win.on('close', (e) => {
-    if (!quitting && prefs.keepInTray && trayCtl) {
-      e.preventDefault();
-      win?.hide();
-    }
+    if (quitting || !trayCtl || ANY_SMOKE) return;
+    e.preventDefault();
+    if (prefs.closeAction === 'tray') win?.hide();
+    else if (prefs.closeAction === 'quit') actions.quit();
+    else void askOnClose();
   });
   win.on('closed', () => (win = null));
   if (devUrl) void win.loadURL(devUrl);
   else void win.loadFile(path.join(appRoot, 'dist', 'renderer', 'index.html'));
+}
+
+let asking = false;
+async function askOnClose(): Promise<void> {
+  if (asking || !win) return;
+  asking = true;
+  try {
+    const where = isMac ? '菜单栏' : '托盘';
+    const r = await dialog.showMessageBox(win, {
+      type: 'question',
+      message: '关闭 CueClock 窗口？',
+      detail: `「收到${where}」和「退出界面」都不影响引擎：定时日程和 UDP 触发照常运行。「退出并停止引擎」会停掉所有日程，还会再确认一次。`,
+      buttons: [`收到${where}`, '退出界面（引擎继续运行）', '退出并停止引擎…', '取消'],
+      defaultId: 0,
+      cancelId: 3,
+      checkboxLabel: '记住我的选择（可在「配置管理 → 软件设置」里改回每次询问；停止引擎不会被记住）',
+      checkboxChecked: false,
+      noLink: true,
+    });
+    const remember = (v: CloseAction) => { if (r.checkboxChecked) actions.setCloseAction(v); };
+    if (r.response === 0) { remember('tray'); win?.hide(); }
+    else if (r.response === 1) { remember('quit'); actions.quit(); }
+    else if (r.response === 2) await quitAndStopEngine();
+  } finally {
+    asking = false;
+  }
 }
 
 // ───────────── 自检 ─────────────
@@ -540,7 +576,7 @@ if (!ANY_SMOKE && !app.requestSingleInstanceLock()) {
     if (!ANY_SMOKE) showWindow();
   });
   app.on('window-all-closed', () => {
-    if (!prefs.keepInTray && !ANY_SMOKE) app.quit();
+    if (!trayCtl && !ANY_SMOKE) app.quit(); // 有托盘时窗口关闭的去向由 close 处理（隐藏或 quit）
   });
 
   void app.whenReady().then(async () => {
@@ -583,7 +619,7 @@ if (!ANY_SMOKE && !app.requestSingleInstanceLock()) {
       /* 忽略 */
     }
     // 没有托盘就不能隐藏启动，否则用户找不到界面
-    createWindow(SMOKE_UI || SMOKE_APP ? false : !(startHidden && trayCtl && prefs.keepInTray));
+    createWindow(SMOKE_UI || SMOKE_APP ? false : !(startHidden && trayCtl));
     if (SMOKE_UI) {
       try { await smokeUi(); }
       catch (e) { await writeThenExit('SMOKE_UI ' + JSON.stringify({ ready: false, error: (e as Error).message }), 1, process.stderr, (code) => app.exit(code)); }

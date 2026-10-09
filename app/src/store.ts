@@ -9,6 +9,8 @@ import { readRuntimeConfig, snapshotCurrent, appliedSnapshotMatches, sameConfigu
 import type { RuntimeConfigSnapshot } from './lib/runtimeConfig.ts';
 import { normalizeEngineStatus } from './lib/status.ts';
 import { diffToday } from './lib/todayDiff.ts';
+import { ITEM_LABEL, mergeItem } from './lib/itemApply.ts';
+import type { ItemRef } from './lib/itemApply.ts';
 import { LOG_BATCH_MS, mergeLogBatch } from './lib/logBuffer.ts';
 import { pauseSummary } from './lib/pauseSummary.ts';
 import type { PauseSummary } from './lib/pauseSummary.ts';
@@ -59,7 +61,11 @@ export interface AppState {
   issues: Issue[];
   applyPreview: { project: Project; instanceId: string; rev: number; version: number; changes: string[]; issues: Issue[]; inFlight: InFlightRun[];
     /** 今天剩余日程的变化；算不出来（断线 / 引擎未运行）为 null */
-    today: TodayDiff | null } | null;
+    today: TodayDiff | null;
+    /** 只应用草稿里的某一项时的说明（如：指令「开灯」）；整体应用为 undefined */
+    scope?: string } | null;
+  /** 最近一次成功应用的说明：改了什么、应用到哪个修订号 */
+  lastApplied: { at: number; rev: number; changes: string[]; scope?: string } | null;
   /** 已交给引擎、等动作链结束后自动应用的草稿版本；seen = 已在引擎状态里看到它在等待 */
   deferredApply: { version: number; project: Project; deadline: number; seen: boolean } | null;
   /** 刚恢复自动日程：暂停期间跳过了什么（恢复不补发） */
@@ -122,6 +128,7 @@ let state: AppState = {
   saveState: 'saved',
   issues: [],
   applyPreview: null,
+  lastApplied: null,
   deferredApply: null,
   resumeSummary: null,
   pingMonitorId: null,
@@ -447,8 +454,16 @@ export async function prepareApply(): Promise<void> {
 /** whenIdle：有动作链正在执行时交给引擎挂起，等它们结束再应用（不取消任何动作）。 */
 export async function applyConfiguration(whenIdle = false): Promise<void> {
   if (inflight || !state.applyPreview) return;
+  await commitApply(state.applyPreview, whenIdle);
+}
+
+type Preview = NonNullable<AppState['applyPreview']>;
+
+async function commitApply(preview: Preview, whenIdle: boolean): Promise<void> {
+  if (inflight) return;
   if (isLocked()) { denyLocked(); return; }
-  const preview = state.applyPreview, session = projectSession;
+  const session = projectSession;
+  const viewBefore = state.configurationView;
   inflight = true; set({ saveState: 'saving' });
   try {
     const r = await transport.request<{ rev: number; warnings: Issue[]; deferred?: boolean; deadline?: number; waitingFor?: number }>('applyProject', { project: preview.project, baseRev: preview.rev, instanceId: preview.instanceId, whenIdle });
@@ -458,16 +473,19 @@ export async function applyConfiguration(whenIdle = false): Promise<void> {
       toast(`已交给引擎：${r.waitingFor ?? ''} 个动作链结束后自动应用`);
       return;
     }
-    savedVersion = preview.version;
+    savedVersion = preview.version; // 只应用一项、草稿里还有别的改动时 version = -1，草稿保持「未应用」
     draftBase = preview.project; // 应用期间又改了的部分，起点就是刚应用的这一份
     const clean = editVersion === savedVersion;
     if (clean) clearDraft(); else writeDraft();
-    set({ rev: r.rev, issues: clean ? r.warnings : state.issues, saveState: clean ? 'saved' : 'dirty', applyPreview: null, configurationView: 'runtime' });
+    set({ rev: r.rev, issues: clean ? r.warnings : state.issues, saveState: clean ? 'saved' : 'dirty', applyPreview: null,
+      configurationView: preview.scope && !clean ? viewBefore : 'runtime',
+      lastApplied: { at: Date.now(), rev: r.rev, changes: preview.changes, scope: preview.scope } });
     const actual = await refreshRuntimeConfig();
     if (session !== projectSession) return;
-    if (!actual) toast('配置已应用，但引擎回读未核对；请刷新运行配置');
-    else if (appliedSnapshotMatches(actual, preview.project, r.rev, preview.instanceId)) toast(`引擎配置 r${actual.rev} 已回读核对，旧版本已备份`);
-    else toast(`配置已应用，但运行配置随后变化，当前从引擎读回版本 r${actual.rev}`);
+    const what = preview.scope ? `${preview.scope}已应用` : '配置已应用';
+    if (!actual) toast(`${what}，但引擎回读未核对；请刷新运行配置`);
+    else if (appliedSnapshotMatches(actual, preview.project, r.rev, preview.instanceId)) toast(`${what}：引擎配置 r${actual.rev} 已回读核对（${preview.changes.length} 处变更，旧版本已备份）${clean ? '' : '；草稿里其他改动仍未应用'}`);
+    else toast(`${what}，但运行配置随后变化，当前从引擎读回版本 r${actual.rev}`);
   } catch (e) {
     if (session !== projectSession) return;
     if (e instanceof RpcFailure && e.code === 'conflict') set({ saveState: 'conflict', applyPreview: null });
@@ -476,6 +494,59 @@ export async function applyConfiguration(whenIdle = false): Promise<void> {
     writeDraft(); toast(`应用失败：${(e as Error).message}`);
   } finally { inflight = false; }
 }
+
+/** 「检查并应用」时内容与运行配置一致：不用再提交，直接把草稿标记为与引擎一致并回到运行视图。 */
+export function confirmNoChanges(): void {
+  if (inflight || !state.applyPreview) return;
+  const same = sameConfiguration(state.applyPreview.project, state.runtimeSnapshot?.project ?? state.runningProject);
+  if (!same) { void applyConfiguration(); return; } // 只有清单不列的细节不同（如顺序以外的字段）：照常应用，保证一致
+  if (state.applyPreview.version === editVersion) { savedVersion = editVersion; clearDraft(); set({ saveState: 'saved', configurationView: 'runtime' }); }
+  set({ applyPreview: null });
+  toast('内容与运行配置一致，无需应用');
+}
+
+/** 编辑草稿但没有改动：结束编辑，回到运行视图。 */
+export function finishEditing(): void {
+  if (state.saveState !== 'saved') return;
+  void viewRuntime();
+}
+
+const itemTitle = (ref: ItemRef, name: string) => `${ITEM_LABEL[ref.kind]}「${name}」`;
+
+/**
+ * 只应用草稿里的这一项：合进引擎当前的运行配置后提交，草稿里别的改动保留、仍待应用。
+ * 有动作链正在执行时不直接提交，改为打开「检查并应用」对话框让用户选择立即还是等它们执行完。
+ */
+export async function applyItem(ref: ItemRef): Promise<void> {
+  if (isLocked()) { denyLocked(); return; }
+  if (inflight) return;
+  if (state.conn !== 'connected') { toast('请先连接引擎'); return; }
+  if (state.saveState === 'conflict') { toast('引擎配置已在别处改变：请先处理顶栏的冲突'); return; }
+  if (state.deferredApply) { toast('已有一份配置在等动作链结束后应用，请等它完成或取消'); return; }
+  const base = state.runtimeSnapshot, draft = state.project;
+  if (!base || !draft) { toast('还没有读回运行配置，请稍后再试'); return; }
+  const merged = mergeItem(base.project, draft, ref);
+  if (!merged) return;
+  if ('error' in merged) { toast(merged.error); return; }
+  const session = projectSession;
+  const scope = itemTitle(ref, merged.name);
+  try {
+    const r = await transport.request<{ instanceId: string; rev: number; changes: string[]; issues: Issue[]; inFlight?: InFlightRun[] }>('previewProject', { project: merged.project, baseRev: base.rev });
+    if (session !== projectSession) return;
+    if (r.changes.length === 0) { toast(`${scope}与运行配置一致，无需应用`); return; }
+    const errors = r.issues.filter((i) => i.level === 'error');
+    if (errors.length) { toast(`${scope}不能单独应用：${errors[0]!.message}${errors.length > 1 ? `（共 ${errors.length} 个错误）` : ''}。可能用到了还没应用的其他项，请用「检查并应用」整体应用`); return; }
+    const version = sameConfiguration(merged.project, state.project) ? editVersion : -1;
+    const preview: Preview = { ...r, inFlight: r.inFlight ?? [], today: null, project: merged.project, version, scope };
+    if (preview.inFlight.length > 0) { set({ applyPreview: { ...preview, today: await todayChanges(merged.project) } }); return; }
+    await commitApply(preview, false);
+  } catch (e) {
+    if (e instanceof RpcFailure && e.code === 'conflict') { void refreshRuntimeConfig(); toast('运行配置刚刚变化，已重新读取，请再点一次'); return; }
+    toast(`应用失败：${(e as Error).message}`);
+  }
+}
+
+export const dismissLastApplied = () => set({ lastApplied: null });
 
 export function edit(fn: (draft: Project) => void): void {
   if (!state.project) return;

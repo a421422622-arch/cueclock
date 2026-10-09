@@ -36,6 +36,7 @@ export function resolveCommandAction(cmd: Command, a: CommandAction): { action?:
     targets: a.targets && a.targets.length > 0 ? a.targets : cmd.targets,
     port: a.port ?? cmd.port,
     sendFrom: cmd.sendFrom,
+    sourcePort: cmd.sourcePort,
     protocol: cmd.protocol,
     checksum: cmd.checksum,
     format: cmd.format,

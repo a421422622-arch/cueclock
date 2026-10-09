@@ -1,5 +1,5 @@
 import { formatClock } from '@engine/time.ts';
-import { applyConfiguration, closeApplyPreview, useStore } from '../store.ts';
+import { applyConfiguration, closeApplyPreview, confirmNoChanges, useStore } from '../store.ts';
 import { TODAY_CHANGE_LABEL } from '../lib/todayDiff.ts';
 import type { TodayDiff } from '../lib/todayDiff.ts';
 
@@ -8,13 +8,14 @@ export function ApplyDialog() {
   const saving = useStore((s) => s.saveState === 'saving');
   if (!preview) return null;
   const errors = preview.issues.filter((i) => i.level === 'error');
-  const blocked = saving || errors.length > 0 || preview.changes.length === 0;
+  const blocked = saving || errors.length > 0;
+  const unchanged = preview.changes.length === 0;
   const running = preview.inFlight;
   return <div className="modal-bg" onMouseDown={(e) => { if (e.target === e.currentTarget && !saving) closeApplyPreview(); }}>
     <div className="modal apply-dialog" role="dialog" aria-modal="true" aria-labelledby="apply-title">
-      <h3 id="apply-title">检查并应用配置</h3>
+      <h3 id="apply-title">{preview.scope ? `应用${preview.scope}` : '检查并应用配置'}</h3>
       <div className="mb">
-        <p className="note">将应用这次预览的草稿。当前配置先备份；已发出的指令无法撤回。</p>
+        <p className="note">{preview.scope ? `只把草稿里的${preview.scope}合进正在运行的配置，草稿里的其他改动不受影响、仍待应用。` : '将应用这次预览的草稿。'}当前配置先备份；已发出的指令无法撤回。</p>
 
         {running.length > 0 && <div className="apply-inflight" role="alert">
           <div className="sech">此刻正在执行 <span>{running.length} 项 · 立即应用会取消它们的后续步骤</span></div>
@@ -36,7 +37,9 @@ export function ApplyDialog() {
       </div>
       <div className="mf">
         <button disabled={saving} onClick={closeApplyPreview}>返回编辑</button>
-        {running.length > 0
+        {unchanged && errors.length === 0
+          ? <button className="primary" disabled={saving} onClick={confirmNoChanges}>确定</button>
+          : running.length > 0
           ? <>
             <button className="danger-outline" disabled={blocked} onClick={() => void applyConfiguration(false)}>立即应用（取消上述动作）</button>
             <button className="primary" disabled={blocked} onClick={() => void applyConfiguration(true)}>{saving ? '提交中…' : '等它们执行完再应用'}</button>

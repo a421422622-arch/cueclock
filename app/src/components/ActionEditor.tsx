@@ -111,6 +111,7 @@ export interface SendValue {
   targets: string[];
   port?: number;
   sendFrom?: string;
+  sourcePort?: number | 'random';
   protocol?: SendProtocol;
   checksum?: ChecksumSpec;
   format: SendFormat;
@@ -161,7 +162,8 @@ export function SendEditor({
   const pv = previewPayload(v.format, shown, term, v.checksum);
   const reply = v.reply;
   // 少用的选项默认收起；只要有任何一项被设置过（非默认值），就自动展开，保证不会「设了却看不见」
-  const advCount = [!!v.sendFrom, !!v.checksum, (v.repeat ?? 1) > 1 || !!v.repeatGapMs, v.chase === true].filter(Boolean).length;
+  const globalPort = useStore((s) => s.status?.network?.settings.localPort);
+  const advCount = [!!v.sendFrom, v.sourcePort !== undefined, !!v.checksum, (v.repeat ?? 1) > 1 || !!v.repeatGapMs, v.chase === true].filter(Boolean).length;
   const advSet = advCount > 0;
   const [advOpen, setAdvOpen] = useState(false);
   const adv = advOpen || advSet;
@@ -305,7 +307,7 @@ export function SendEditor({
         <button type="button" className="link" aria-expanded={adv} disabled={advSet} onClick={() => setAdvOpen(!advOpen)}>
           <Icon name="chevron" size={13} style={{ transform: adv ? undefined : 'rotate(-90deg)' }} />高级选项
         </button>
-        <span className="hint">{advSet ? `已设置 ${advCount} 项，保持展开` : '从网卡、校验和、重复发送、断电恢复'}</span>
+        <span className="hint">{advSet ? `已设置 ${advCount} 项，保持展开` : '从网卡、源端口、校验和、重复发送、断电恢复'}</span>
       </div>
       {adv && <>
       {locals.length > 0 && (
@@ -317,6 +319,21 @@ export function SendEditor({
             ))}
             {v.sendFrom && !locals.includes(v.sendFrom) && <option value={v.sendFrom}>{v.sendFrom}（未在设置里选中）</option>}
           </select>
+        </Field>
+      )}
+      {protocol === 'udp' && (
+        <Field label="源端口" hint={v.sourcePort === undefined
+          ? `从哪个本机端口发出。跟随设置 = 用「软件设置 → 本地源端口」（现在：${globalPort ? globalPort : '启动时随机分配，之后固定'}）`
+          : v.sourcePort === 'random' ? '每次发送新开一个随机端口，发完（等完回包）就关；适合设备按「新会话」处理、或要求每次端口不同的场合'
+          : '固定从这个端口发，设备回包也回到这里；适合设备只接受某个来源端口、或防火墙只放行固定端口。不要和触发器监听端口相同'}>
+          <span className="row">
+            <Seg<'follow' | 'random' | 'fixed'>
+              value={v.sourcePort === undefined ? 'follow' : v.sourcePort === 'random' ? 'random' : 'fixed'}
+              options={[{ value: 'follow', label: '跟随设置' }, { value: 'random', label: '每次随机' }, { value: 'fixed', label: '指定端口' }]}
+              onChange={(m) => onChange({ sourcePort: m === 'follow' ? undefined : m === 'random' ? 'random' : (typeof v.sourcePort === 'number' ? v.sourcePort : (globalPort ?? 50000)) })}
+            />
+            {typeof v.sourcePort === 'number' && <NumInput value={v.sourcePort} min={1} max={65535} width={76} onChange={(x) => onChange({ sourcePort: x ?? 50000 })} />}
+          </span>
         </Field>
       )}
       {!pjlink && v.format !== 'osc' && (

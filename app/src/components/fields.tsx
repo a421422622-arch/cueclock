@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { GROUP_COLORS } from '../lib/colors.ts';
+import { Icon } from './Icon.tsx';
 
 export function ColorField({ value, onChange, label }: { value: string; onChange: (v: string) => void; label: string }) {
   return <div className="color-field">
@@ -9,6 +10,25 @@ export function ColorField({ value, onChange, label }: { value: string; onChange
       aria-label={`${label} ${color}`} aria-pressed={value.toLowerCase() === color.toLowerCase()}
       style={{ background: color }} onClick={() => onChange(color)} />)}</span>
   </div>;
+}
+
+/**
+ * 不常用的设置默认收起：返回折叠开关（放在 .form 网格里，占满一行）和是否展开。
+ * 只要有任何一项被设置过（setCount > 0）就保持展开，保证不会「设了却看不见」。
+ */
+export function useAdvanced(setCount: number, summary: string, label = '高级选项'): { shown: boolean; toggle: ReactNode } {
+  const [open, setOpen] = useState(false);
+  const forced = setCount > 0;
+  const shown = open || forced;
+  const toggle = (
+    <div className="adv-toggle">
+      <button type="button" className="link" aria-expanded={shown} disabled={forced} onClick={() => setOpen(!open)}>
+        <Icon name="chevron" size={13} style={{ transform: shown ? undefined : 'rotate(-90deg)' }} />{label}
+      </button>
+      <span className="hint">{forced ? `已设置 ${setCount} 项，保持展开` : summary}</span>
+    </div>
+  );
+  return { shown, toggle };
 }
 
 export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: ReactNode }) {

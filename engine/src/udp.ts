@@ -12,9 +12,14 @@ export interface ReplyResult {
   rttMs?: number;
 }
 
+/** 源端口：不填 = 用常驻套接字（软件设置里的本地源端口，没设就是启动时随机的一个）；'random' = 每次发送新开一个随机端口；数字 = 固定从这个端口发。 */
+export type SourcePort = number | 'random';
+
 export interface SendOpts {
   /** 指定从哪块本机网卡（IP）发；不指定则按目标所在子网自动选 */
   from?: string;
+  /** 只对 UDP 有效 */
+  sourcePort?: SourcePort;
 }
 
 export interface Transport {
@@ -73,6 +78,10 @@ export interface UdpTransportOptions {
  */
 export class UdpTransport implements Transport {
   private bound: Bound[] = [];
+  /** 指定源端口用的套接字：按「网卡 IP|端口」懒加载并常驻（同一端口的回包、并发发送都走它），close 时一起关 */
+  private fixed = new Map<string, Promise<dgram.Socket>>();
+  /** 「每次随机」临时开的套接字，发完 / 等完回包就关；close 时兜底 */
+  private ephemeral = new Set<dgram.Socket>();
   private waiters = new Set<Waiter>();
   private changeListeners = new Set<() => void>();
   private ready: Promise<void>;
@@ -94,11 +103,18 @@ export class UdpTransport implements Transport {
   }
 
   private async bindOne(address: string | undefined, order: number): Promise<Bound> {
+    const socket = await this.openSocket(address, this.opts.localPort ?? 0);
+    const cidr = address ? (this.nics().find((n) => n.address === address)?.cidr ?? 32) : 0;
+    return { address: address ?? '', cidr, socket, order };
+  }
+
+  /** 绑定一个发送套接字，收到的包交给等回包的请求（按套接字 + 来源 ip:port 匹配）。 */
+  private async openSocket(address: string | undefined, port: number): Promise<dgram.Socket> {
     const socket = dgram.createSocket('udp4');
     try {
       await new Promise<void>((resolve, reject) => {
         socket.once('error', reject);
-        socket.bind({ address, port: this.opts.localPort ?? 0, exclusive: true }, () => {
+        socket.bind({ address, port, exclusive: true }, () => {
           socket.removeListener('error', reject);
           socket.setBroadcast(true);
           resolve();
@@ -117,8 +133,33 @@ export class UdpTransport implements Transport {
       if (hit) hit.done({ status: 'confirmed', reply: msg });
       else if (mine[0]) mine[0].last = msg;
     });
-    const cidr = address ? (this.nics().find((n) => n.address === address)?.cidr ?? 32) : 0;
-    return { address: address ?? '', cidr, socket, order };
+    return socket;
+  }
+
+  /** 按源端口设置取出这次发送用的套接字；release 在发完（等完回包）后调用。 */
+  private async via(b: Bound, sourcePort: SourcePort | undefined): Promise<{ sock: dgram.Socket; release: () => void }> {
+    const keep = { sock: b.socket, release: () => {} };
+    if (sourcePort === undefined) return keep;
+    if (this.closed) throw new Error('发送通道已关闭');
+    const address = b.address || undefined;
+    if (sourcePort === 'random') {
+      const sock = await this.openSocket(address, 0);
+      this.ephemeral.add(sock);
+      return { sock, release: () => { this.ephemeral.delete(sock); try { sock.close(); } catch { /* 已关 */ } } };
+    }
+    if (b.socket.address().port === sourcePort) return keep; // 和常驻套接字同一端口：直接用它
+    const key = `${b.address}|${sourcePort}`;
+    let p = this.fixed.get(key);
+    if (!p) {
+      p = this.openSocket(address, sourcePort);
+      this.fixed.set(key, p);
+      p.catch(() => this.fixed.delete(key)); // 绑定失败（端口被占用）下次再试，不缓存失败
+    }
+    try {
+      return { sock: await p, release: () => {} };
+    } catch (e) {
+      throw new Error(`源端口 ${sourcePort} 绑定失败（${(e as NodeJS.ErrnoException).code ?? (e as Error).message}）：可能被其他程序或本软件的触发器监听占用`);
+    }
   }
 
   private insert(b: Bound): void {
@@ -198,9 +239,14 @@ export class UdpTransport implements Transport {
   async send(ip: string, port: number, data: Buffer, opts?: SendOpts): Promise<void> {
     await this.ready;
     await Promise.all(
-      this.pick(ip, opts?.from).map(
-        (b) => new Promise<void>((resolve, reject) => b.socket.send(data, port, ip, (err) => (err ? reject(err) : resolve()))),
-      ),
+      this.pick(ip, opts?.from).map(async (b) => {
+        const { sock, release } = await this.via(b, opts?.sourcePort);
+        try {
+          await new Promise<void>((resolve, reject) => sock.send(data, port, ip, (err) => (err ? reject(err) : resolve())));
+        } finally {
+          release();
+        }
+      }),
     );
   }
 
@@ -211,18 +257,19 @@ export class UdpTransport implements Transport {
     opts: SendOpts & { timeoutMs: number; accept: (reply: Buffer) => boolean },
   ): Promise<ReplyResult> {
     await this.ready;
-    const via = this.pick(ip, opts.from)[0]!; // 要等回包时只用一块网卡
+    const { sock, release } = await this.via(this.pick(ip, opts.from)[0]!, opts.sourcePort); // 要等回包时只用一块网卡
     return new Promise<ReplyResult>((resolve, reject) => {
       const t0 = performance.now();
       let timer: NodeJS.Timeout | undefined;
       const w: Waiter = {
-        sock: via.socket,
+        sock,
         ip,
         port,
         accept: opts.accept,
         done: (r) => {
           clearTimeout(timer);
           this.waiters.delete(w);
+          release();
           resolve({ ...r, rttMs: Math.round((performance.now() - t0) * 10) / 10 });
         },
       };
@@ -231,10 +278,11 @@ export class UdpTransport implements Transport {
         () => w.done(w.last ? { status: 'mismatch', reply: w.last } : { status: 'timeout' }),
         opts.timeoutMs,
       );
-      via.socket.send(data, port, ip, (err) => {
+      sock.send(data, port, ip, (err) => {
         if (err) {
           clearTimeout(timer);
           this.waiters.delete(w);
+          release();
           reject(err);
         }
       });
@@ -249,7 +297,11 @@ export class UdpTransport implements Transport {
     this.closed = true;
     if (this.timer) clearInterval(this.timer);
     await this.ready.catch(() => {});
-    await Promise.all(this.bound.map((b) => new Promise<void>((r) => b.socket.close(() => r()))));
+    const extra = (await Promise.allSettled([...this.fixed.values()])).flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
+    this.fixed.clear();
+    for (const s of this.ephemeral) try { s.close(); } catch { /* 已关 */ }
+    this.ephemeral.clear();
+    await Promise.all([...this.bound.map((b) => b.socket), ...extra].map((s) => new Promise<void>((r) => s.close(() => r()))));
     this.bound = [];
   }
 }

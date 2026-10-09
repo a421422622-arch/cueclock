@@ -17,6 +17,6 @@ export function describeAction(a: Action, rep?: { i: number; n: number }): strin
   const r = rep && rep.n > 1 ? ` [${rep.i + 1}/${rep.n}]` : '';
   const via = a.commandName ? `【${a.commandName}】` : '';
   const port = a.port ? `:${a.port}` : '';
-  const from = a.sendFrom ? ` ← ${a.sendFrom}` : '';
+  const from = a.sendFrom || a.sourcePort !== undefined ? ` ← ${a.sendFrom ?? ''}${a.sourcePort === 'random' ? '（源端口随机）' : a.sourcePort !== undefined ? `:${a.sourcePort}` : ''}` : '';
   return `${via}UDP → ${a.targets.join(',')}${port} ${a.format.toUpperCase()} ${body}${r}${reply}${from}`;
 }

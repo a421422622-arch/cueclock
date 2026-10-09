@@ -86,6 +86,8 @@ export interface UdpAction {
   port?: number;
   /** 从哪块本机网卡（IP）发；不填按目标所在子网自动选择 */
   sendFrom?: string;
+  /** UDP 源端口：不填 = 跟随软件设置（常驻端口）；'random' = 每次随机；数字 = 固定从这个端口发。TCP / PJLink 忽略 */
+  sourcePort?: number | 'random';
   /** 由指令展开而来时，记下指令名（日志/预览显示用） */
   commandName?: string;
   format: SendFormat;
@@ -135,6 +137,7 @@ export interface Command {
   targets: string[];
   port?: number;
   sendFrom?: string;
+  sourcePort?: number | 'random';
   protocol?: SendProtocol;
   checksum?: ChecksumSpec;
   format: SendFormat;

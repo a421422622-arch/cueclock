@@ -74,11 +74,44 @@ export async function smokeRuntimeConfiguration(win: BrowserWindow, faults: { re
   assert(!await js(`!!document.querySelector('.runtime-confirmed')`), '断线缓存被误标已核对');
   await faults.reconnect();
   await wait(`document.querySelector('[data-runtime-state]').textContent.includes('已回读核对')`);
+  // 只应用一项：草稿里同时改了事件时间和配置名称，「保存并应用」只把这个事件点合进运行配置。
+  const base = await rpc<typeof original>('getProject');
+  await click('.configuration-switch button', '编辑草稿');
+  await input('.projname', '只应用一项时不应带过去的名称');
+  await click('.master-cue');
+  await js(`document.querySelector('.master-cue').dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));`);
+  const movedTime = await cueTime();
+  await wait(`!!document.querySelector('.item-apply button')`);
+  await click('.item-apply button');
+  await wait(`!document.querySelector('.item-apply') && !!document.querySelector('.lastapplied-pill')`);
+  const partial = await rpc<typeof original>('getProject');
+  assert(partial.rev > base.rev && partial.project.timelines[0]!.cues[0]!.time === movedTime, '单项应用没有写入事件点');
+  assert(partial.project.name === base.project.name, '单项应用把草稿里的其他改动也带进了运行配置');
+  assert(await js(`!!document.querySelector('.savestate.dirty') && document.querySelector('.projname').value === '只应用一项时不应带过去的名称'`), '单项应用后草稿里的其他改动丢失');
+  await click('.lastapplied-pill'); await wait(`!!document.querySelector('.lastapplied-pop li')`);
+  assert(await js(`document.querySelector('.lastapplied-pop').textContent.includes('事件点')`), '更新说明没有列出变更');
+  await click('.lastapplied-pop button', '知道了');
+  // 改回名称后草稿与运行一致：检查并应用里给「确定」，不再提交
+  await input('.projname', partial.project.name);
+  await click('.apply-open'); await wait(`!!document.querySelector('.apply-dialog')`);
+  await click('.apply-dialog .mf button', '确定');
+  await wait(`!document.querySelector('.apply-dialog') && !!document.querySelector('.savestate.saved') && !!document.querySelector('.configuration-view.runtime')`);
+  assert((await rpc<typeof original>('getProject')).rev === partial.rev, '没有变化时仍然提交了配置');
+  // 进入草稿但不改：顶栏「完成编辑」回到运行视图
+  await click('.configuration-switch button', '编辑草稿');
+  await click('.top button', '完成编辑');
+  await wait(`!!document.querySelector('.configuration-view.runtime')`);
+  // 本地历史日志：今天的文件能列出并读入
+  const days = await rpc<{ days: { date: string }[] }>('listLogDays');
+  assert(days.days.length > 0, '没有列出本地日志');
+  await js(`(() => { const s = document.querySelector('.logday'); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(s, ${JSON.stringify(days.days[0]!.date)}); s.dispatchEvent(new Event('change', {bubbles:true})); })()`);
+  await wait(`document.querySelector('.logfoot').textContent.startsWith(${JSON.stringify(days.days[0]!.date)} + ' · 共') && !document.querySelector('.logfoot').textContent.includes('共 0 条')`);
+  await js(`(() => { const s = document.querySelector('.logday'); Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(s, ''); s.dispatchEvent(new Event('change', {bubbles:true})); })()`);
   // 还原隔离夹具，后面的全页面压力检查不继承此测试的内容。
   const current = await rpc<typeof original>('getProject');
   await rpc('applyProject', { project: original.project, baseRev: current.rev, instanceId: current.instanceId });
   await wait(`document.querySelector('.projname').value === ${JSON.stringify(original.project.name)}`);
   await click('.configuration-switch button', '查看正在运行');
   await wait(`document.querySelector('[data-runtime-state]').textContent.includes('已回读核对')`);
-  return { passed: true, checks: ['默认引擎回读只读', '只读禁止移动与新增', '草稿修改不改变引擎', '来回切换保留草稿', '确认应用后真实回读', '外部RPC更新与冲突草稿分离', '注入回读故障不误报核对', '实际断开客户端连接显示缓存，重连后重新核对'] };
+  return { passed: true, checks: ['默认引擎回读只读', '只读禁止移动与新增', '草稿修改不改变引擎', '来回切换保留草稿', '确认应用后真实回读', '外部RPC更新与冲突草稿分离', '注入回读故障不误报核对', '实际断开客户端连接显示缓存，重连后重新核对', '单项保存并应用只带这一项', '更新说明列出变更', '无变化时确定不提交', '完成编辑回到运行视图', '本地历史日志可按日期读取'] };
 }

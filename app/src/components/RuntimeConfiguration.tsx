@@ -1,5 +1,24 @@
-import { beginDraft, refreshRuntimeConfig, runtimeVerified, useStore, viewingRuntime, viewRuntime } from '../store.ts';
+import { useState } from 'react';
+import { beginDraft, dismissLastApplied, refreshRuntimeConfig, runtimeVerified, showLogTab, useStore, viewingRuntime, viewRuntime } from '../store.ts';
 import { Icon } from './Icon.tsx';
+
+/** 最近一次应用的更新说明：几处变更，点开看清单。 */
+export function LastApplied() {
+  const last = useStore((s) => s.lastApplied);
+  const [open, setOpen] = useState(false);
+  if (!last) return null;
+  const at = new Date(last.at).toLocaleTimeString('zh-CN', { hour12: false });
+  return <span className="lastapplied">
+    <button className="lastapplied-pill" aria-expanded={open} title={`${at} 已应用${last.scope ? ` ${last.scope}` : ''}，运行版本 r${last.rev}，${last.changes.length} 处变更。点击查看更新说明`} onClick={() => setOpen(!open)}>
+      <Icon name="check" size={12} />已更新 r{last.rev}
+    </button>
+    {open && <div className="lastapplied-pop" role="dialog" aria-label="更新说明">
+      <div className="lastapplied-head"><b>更新说明</b><span>{at} · 运行版本 r{last.rev}{last.scope ? ` · 只应用了${last.scope}` : ''}</span></div>
+      {last.changes.length ? <ul>{last.changes.map((c, i) => <li key={i}>{c}</li>)}</ul> : <p className="hint">没有内容变化。</p>}
+      <div className="lastapplied-foot"><button onClick={() => { showLogTab('audit'); setOpen(false); }}>查看操作记录</button><button onClick={() => { setOpen(false); dismissLastApplied(); }}>知道了</button></div>
+    </div>}
+  </span>;
+}
 
 /** 身份和内容均来自引擎；断线缓存与未核对状态必须显式显示。放在视图页签栏右侧，细节在悬停提示里。 */
 export function RuntimeConfiguration() {
@@ -32,6 +51,7 @@ export function RuntimeConfiguration() {
         ? <span data-runtime-state>{snapshot ? `r${snapshot.rev} · ` : ''}{state}</span>
         : <span>{dirty ? '草稿未应用' : '草稿'}<span hidden data-runtime-state>{state}</span></span>}
     </span>
+    <LastApplied />
     <button className="ico configuration-refresh" aria-label="刷新运行配置" title="重新从引擎读取运行配置" disabled={!connected || reading} onClick={() => void refreshRuntimeConfig()}><Icon name="refresh" size={14} /></button>
   </div>;
 }

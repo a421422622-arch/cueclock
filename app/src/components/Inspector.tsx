@@ -8,7 +8,10 @@ import { IntervalPicker } from './IntervalPicker.tsx';
 import type { Pad, PadTile } from '@engine/types.ts';
 import { changeKind, duplicateTile, groupNames, moveTile, sliderOutput, sliderRange, sliderSteps, tileLive } from '../lib/pad.ts';
 import { GROUP_COLORS } from '../lib/colors.ts';
-import { displayedProject, viewingRuntime, beginDraft, openPingMonitor, setPadId } from '../store.ts';
+import { applyItem, displayedProject, viewingRuntime, beginDraft, openPingMonitor, setPadId } from '../store.ts';
+import type { Selection } from '../store.ts';
+import { ITEM_LABEL, itemDiffers } from '../lib/itemApply.ts';
+import type { ItemRef } from '../lib/itemApply.ts';
 import { formatTime, parseTime } from '@engine/time.ts';
 import { isDateKey } from '@engine/calendar.ts';
 import { edit, engineNow, openBatchHealth, rpc, select, toast, useStore } from '../store.ts';
@@ -16,7 +19,7 @@ import { DAY_KIND_LABEL, genId, ruleText } from '../lib/labels.ts';
 import { ActionList, SendEditor } from './ActionEditor.tsx';
 import { TestResult, useCommandTest } from './TestSend.tsx';
 import { requiredParams } from '../lib/commandTest.ts';
-import { Check, ColorField, Field, NumInput, Seg, ValidatedInput } from './fields.tsx';
+import { Check, ColorField, Field, NumInput, Seg, useAdvanced, ValidatedInput } from './fields.tsx';
 import { RpcFailure } from '../transport.ts';
 import { cloneMode, cueDevices } from '../lib/timeline.ts';
 import { deviceColor, modeColor } from '../lib/colors.ts';
@@ -65,9 +68,31 @@ export function Inspector() {
     <section className="insp">
       <h3>{title}</h3>
       {readonly && <div className="inspector-source"><Icon name="lock" size={13} /><span>正在查看引擎配置，只读</span><button onClick={beginDraft}>编辑草稿</button></div>}
+      {!readonly && <ItemApplyBar item={itemRef(sel)} />}
       <div className="ibody" inert={locked}><fieldset className="inspector-fields" disabled={readonly}>{body}</fieldset></div>
     </section>
   );
+}
+
+const itemRef = (sel: Selection): ItemRef | null =>
+  !sel ? null : sel.kind === 'cue' ? { kind: 'cue', timelineId: sel.timelineId, cueId: sel.cueId } : sel.kind === 'padTile' ? { kind: 'pad', id: sel.padId } : { kind: sel.kind, id: sel.id };
+
+/** 选中的这一项在草稿里改过：可以只保存并应用它，不用等草稿里其他改动一起「检查并应用」。 */
+function ItemApplyBar({ item }: { item: ItemRef | null }) {
+  const differs = useStore((s) => !!item && itemDiffers(s.runtimeSnapshot?.project ?? s.runningProject, s.project, item));
+  const saving = useStore((s) => s.saveState === 'saving');
+  const conn = useStore((s) => s.conn === 'connected');
+  const issues = useStore((s) => s.issues.filter((i) => i.level === 'error').length);
+  const [busy, setBusy] = useState(false);
+  if (!item || !differs) return null;
+  const label = ITEM_LABEL[item.kind];
+  return <div className="item-apply" role="status">
+    <span><b>这个{label}有未应用的改动</b>{issues > 0 && <small>草稿里有 {issues} 个错误；只要与这个{label}无关，仍可单独应用</small>}</span>
+    <button className="primary" disabled={busy || saving || !conn} title={`只把这个${label}合进正在运行的配置并立即生效（旧版本先备份），草稿里其他改动保持未应用`}
+      onClick={() => { setBusy(true); void applyItem(item).finally(() => setBusy(false)); }}>
+      <Icon name="check" size={12} />{busy || saving ? '应用中…' : '保存并应用'}
+    </button>
+  </div>;
 }
 
 // ───────────── 事件点 ─────────────
@@ -81,6 +106,7 @@ function CueInspector({ timelineId, cueId }: { timelineId: string; cueId: string
   const focusedAction = sel?.kind === 'cue' ? sel.actionId : undefined;
   const targets = cueDevices(project, cue);
   const draftPending = useStore((s) => s.saveState !== 'saved');
+  const adv = useAdvanced(cue.defaultTarget ? 1 : 0, '默认目标');
   useEffect(() => {
     if (focusedAction) document.querySelector(`[data-action-id="${CSS.escape(focusedAction)}"]`)?.scrollIntoView({ block: 'nearest' });
   }, [focusedAction]);
@@ -113,16 +139,17 @@ function CueInspector({ timelineId, cueId }: { timelineId: string; cueId: string
         <Field label="所属">
           <span className="dim">{tl.name}</span>
         </Field>
-        <Field label="默认目标" hint="为此事件新加动作时预填；已有动作仍以各自的目标设置为准">
+        <Field label="启用">
+          <Check checked={cue.enabled !== false} onChange={(v) => patch((c) => (c.enabled = v))} label="参与调度" />
+        </Field>
+        {adv.toggle}
+        {adv.shown && <Field label="默认目标" hint="为此事件新加动作时预填；已有动作仍以各自的目标设置为准">
           <select value={cue.defaultTarget ?? ''} onChange={(e) => patch((c) => (c.defaultTarget = e.target.value || undefined))}>
             <option value="">不预填</option>
             {[...new Set(project.devices.map((d) => d.tag).filter(Boolean))].map((tag) => <option key={tag} value={`tag:${tag}`}>标签：{tag}</option>)}
             {project.devices.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
-        </Field>
-        <Field label="启用">
-          <Check checked={cue.enabled !== false} onChange={(v) => patch((c) => (c.enabled = v))} label="参与调度" />
-        </Field>
+        </Field>}
       </div>
       <div className="sech">动作（按顺序，延时会让后面的整体顺延） <span>{cue.actions.length}</span></div>
       <ActionList actions={cue.actions} defaultTarget={cue.defaultTarget} focusedAction={focusedAction} onChange={(next) => patch((c) => (c.actions = next))} />
@@ -290,6 +317,7 @@ function DeviceInspector({ id }: { id: string }) {
   const [payload, setPayload] = useState('');
   const [testPort, setTestPort] = useState<number | undefined>(d.port);
   const [res, setRes] = useState('');
+  const adv = useAdvanced([!!d.password, !!d.feedback].filter(Boolean).length, 'PJLink 密码、设备状态回读');
 
   const send = async () => {
     setRes('发送中…');
@@ -321,13 +349,14 @@ function DeviceInspector({ id }: { id: string }) {
         <Field label="标签" hint="动作里可以直接选「标签」作为目标，一次发给同标签的所有设备">
           <input value={d.tag ?? ''} placeholder="如：灯光、投影" onChange={(e) => patch((x) => (x.tag = e.target.value || undefined))} />
         </Field>
-        <Field label="PJLink 密码" hint="只用于「协议 = PJLink」的指令；设备没设密码就留空。明文保存在配置文件里——这是投影机的网络控制口令，别填重要密码。">
-          <input type="password" autoComplete="off" value={d.password ?? ''} placeholder="（可选）" onChange={(e) => patch((x) => (x.password = e.target.value || undefined))} />
-        </Field>
         <Field label="启用"><Check checked={d.enabled !== false} onChange={(v) => patch((x) => (x.enabled = v))} label="参与发送（关闭后动作跳过此设备）" /></Field>
+        {adv.toggle}
+        {adv.shown && <Field label="PJLink 密码" hint="只用于「协议 = PJLink」的指令；设备没设密码就留空。明文保存在配置文件里——这是投影机的网络控制口令，别填重要密码。">
+          <input type="password" autoComplete="off" value={d.password ?? ''} placeholder="（可选）" onChange={(e) => patch((x) => (x.password = e.target.value || undefined))} />
+        </Field>}
       </div>
       <HealthSection device={d} patch={patch} />
-      <FeedbackSection device={d} patch={patch} />
+      {adv.shown && <FeedbackSection device={d} patch={patch} />}
       <div className="sech">测试发送</div>
       <div className="form">
         <Field label="端口"><NumInput value={testPort} min={1} max={65535} width={80} allowEmpty onChange={setTestPort} /></Field>
@@ -354,6 +383,7 @@ function TriggerInspector({ id }: { id: string }) {
   const t = project.triggers.find((x) => x.id === id)!;
   const patch = (fn: (t: Trigger) => void) => edit((p) => { const x = p.triggers.find((y) => y.id === id); if (x) fn(x); });
   const any = t.allowFrom.includes('*');
+  const adv = useAdvanced([!!t.passcode, !!t.debounceMs || t.maxPerMinute !== undefined, t.requireConfirm === true].filter(Boolean).length, '口令前缀、防抖与限频、二次确认');
   return (
     <>
       <div className="form">
@@ -361,9 +391,6 @@ function TriggerInspector({ id }: { id: string }) {
         <Field label="监听端口"><NumInput value={t.port} min={1} max={65535} width={80} onChange={(v) => v !== undefined && patch((x) => (x.port = v))} /></Field>
         <Field label="来源" hint={any ? '⚠ 允许任意来源：局域网内任何设备都能触发' : '只接受这些来源，逗号分隔，支持网段 192.168.10.0/24；* 表示任意'}>
           <input className={`mono ${any ? 'warnb' : ''}`} value={t.allowFrom.join(', ')} onChange={(e) => patch((x) => (x.allowFrom = e.target.value.split(/[,\s]+/).filter(Boolean)))} />
-        </Field>
-        <Field label="口令前缀" hint="收到的内容必须以它开头（会先剥离）。UDP 是明文，只能防误触，防不了抓包">
-          <input className="mono" value={t.passcode ?? ''} placeholder="（可选）如 KEY1:" onChange={(e) => patch((x) => (x.passcode = e.target.value || undefined))} />
         </Field>
         <Field label="匹配">
           <span className="row">
@@ -374,6 +401,11 @@ function TriggerInspector({ id }: { id: string }) {
           </span>
           <input className="mono" style={{ marginTop: 6 }} value={t.match.pattern} onChange={(e) => patch((x) => (x.match.pattern = e.target.value))} />
         </Field>
+        {adv.toggle}
+        {adv.shown && <>
+        <Field label="口令前缀" hint="收到的内容必须以它开头（会先剥离）。UDP 是明文，只能防误触，防不了抓包">
+          <input className="mono" value={t.passcode ?? ''} placeholder="（可选）如 KEY1:" onChange={(e) => patch((x) => (x.passcode = e.target.value || undefined))} />
+        </Field>
         <Field label="限制">
           <span className="row">防抖 <NumInput value={t.debounceMs ?? 0} width={60} onChange={(v) => patch((x) => (x.debounceMs = v || undefined))} />ms　每分钟最多 <NumInput value={t.maxPerMinute} width={52} allowEmpty min={1} onChange={(v) => patch((x) => (x.maxPerMinute = v))} />次</span>
         </Field>
@@ -383,6 +415,7 @@ function TriggerInspector({ id }: { id: string }) {
             {t.requireConfirm && <>窗口 <NumInput value={t.confirmWindowMs ?? 5000} min={100} width={64} onChange={(v) => patch((x) => (x.confirmWindowMs = v))} />ms</>}
           </span>
         </Field>
+        </>}
       </div>
       <div className="sech">触发后执行的动作 <span>{t.actions.length}</span></div>
       {t.match.kind === 'regex' && <div className="hint pad">指令参数和自定义 UDP 内容可用 $1~$9 捕获组、$0 整个内容（去口令和尾换行）、$$ 字面 $。捕获值按字面代入，反斜杠不会变成发送转义。</div>}

@@ -78,7 +78,8 @@ export interface AppState {
   isMac: boolean;
   recent: string[];
   currentFile: string | null;
-  keepInTray: boolean;
+  /** 点窗口关闭按钮时：每次询问 / 收到托盘 / 退出界面 */
+  closeAction: 'ask' | 'tray' | 'quit';
   launchAtLogin: boolean;
   launchAtLoginStale: boolean;
   guardAtLogin?: boolean;

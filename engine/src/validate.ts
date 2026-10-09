@@ -123,8 +123,16 @@ export function validateProject(p: Project): Issue[] {
   };
 
   /** 一条会真正发送的 UDP 内容（指令展开后的，或自定义的）。 */
-  const checkSend = (path: string, a: Pick<Command, 'targets' | 'port' | 'format' | 'payload' | 'terminator' | 'repeat' | 'reply' | 'protocol' | 'checksum'> & { offsetMs?: number }) => {
+  const checkSend = (path: string, a: Pick<Command, 'targets' | 'port' | 'format' | 'payload' | 'terminator' | 'repeat' | 'reply' | 'protocol' | 'checksum' | 'sourcePort'> & { offsetMs?: number }) => {
     const protocol = a.protocol ?? 'udp';
+    if (a.sourcePort !== undefined) {
+      if (a.sourcePort !== 'random' && !validPort(a.sourcePort)) err(path, `源端口 ${String(a.sourcePort)} 非法（1-65535，或「每次随机」）`);
+      else if (protocol !== 'udp') warn(path, 'TCP / PJLink 不使用源端口设置（每次新建连接，由系统分配本地端口），这项会被忽略');
+      else if (typeof a.sourcePort === 'number') {
+        const clash = p.triggers.find((t) => t.port === a.sourcePort);
+        if (clash) err(path, `源端口 ${a.sourcePort} 和触发器「${clash.name}」的监听端口相同，发送时会绑定失败`);
+      }
+    }
     if (protocol !== 'udp' && protocol !== 'tcp' && protocol !== 'pjlink') {
       err(path, `传输协议 "${String(a.protocol)}" 不支持（只有 udp / tcp / pjlink）`);
       return;
